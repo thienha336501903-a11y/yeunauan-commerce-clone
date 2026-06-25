@@ -97,6 +97,9 @@
         </div>
       </div>
 
+      <!-- GROUPED PENDING ORDERS BOXES -->
+      <div id="pendingGroupedContainer" class="mb-8 hidden"></div>
+
       <!-- FILTER PANEL -->
       <div class="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 mb-8">
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -363,6 +366,7 @@
         allOrders = await ordersRes.json();
         
         renderSummaryStats();
+        renderPendingGrouped();
         renderOrders();
       } catch (err) {
         container.innerHTML = `
@@ -707,19 +711,18 @@
                   
                   <!-- Trạng thái / Actions -->
                   <td class="p-4 text-center">
-                    <div class="relative inline-block text-left group">
-                      <button class="inline-flex justify-center w-32 rounded-full px-4 py-2 text-xs font-black leading-5 transition shadow-sm ${badgeStyle}">
-                        ${status}
-                        <svg class="w-4 h-4 ml-1 -mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                      </button>
-                      <div class="origin-top-right absolute right-0 mt-1 w-32 rounded-xl shadow-lg bg-white ring-1 ring-black ring-opacity-5 divide-y divide-gray-100 focus:outline-none z-10 hidden group-hover:block hover:block">
-                        <div class="py-1">
-                          <button onclick="updateOrderStatus('${order.id}', 'Chờ duyệt')" class="block w-full text-left px-4 py-2.5 text-xs text-slate-700 hover:bg-slate-50 hover:text-slate-900 font-semibold">Chờ duyệt</button>
-                          <button onclick="updateOrderStatus('${order.id}', 'Đã duyệt')" class="block w-full text-left px-4 py-2.5 text-xs text-green-700 hover:bg-green-50 hover:text-green-900 font-black">Đã duyệt</button>
-                          <button onclick="updateOrderStatus('${order.id}', 'Từ chối')" class="block w-full text-left px-4 py-2.5 text-xs text-rose-700 hover:bg-rose-50 hover:text-rose-900 font-black">Từ chối</button>
-                        </div>
-                      </div>
-                    </div>
+                    <select 
+                      onchange="updateOrderStatus('${order.id}', this.value)"
+                      class="rounded-full px-3 py-1.5 text-xs font-black transition shadow-sm outline-none cursor-pointer border ${
+                        status === 'Chờ duyệt' ? 'bg-amber-100 text-amber-800 border-amber-200' :
+                        status === 'Đã duyệt' ? 'bg-green-100 text-green-800 border-green-200' :
+                        'bg-rose-100 text-rose-800 border-rose-200'
+                      }"
+                    >
+                      <option value="Chờ duyệt" class="bg-white text-amber-800 font-bold" ${status === 'Chờ duyệt' ? 'selected' : ''}>Chờ duyệt</option>
+                      <option value="Đã duyệt" class="bg-white text-green-800 font-bold" ${status === 'Đã duyệt' ? 'selected' : ''}>Đã duyệt</option>
+                      <option value="Từ chối" class="bg-white text-rose-800 font-bold" ${status === 'Từ chối' ? 'selected' : ''}>Từ chối</option>
+                    </select>
                   </td>
                 </tr>
               `;
@@ -727,6 +730,275 @@
           </tbody>
         </table>
       `;
+    }
+
+    // 8.1. RENDER PENDING ORDERS GROUPED BY COURSE
+    function renderPendingGrouped() {
+      const container = document.getElementById("pendingGroupedContainer");
+      if (!container) return;
+
+      const pendingOrders = allOrders.filter(o => o.status === "Chờ duyệt");
+      if (pendingOrders.length === 0) {
+        container.innerHTML = "";
+        container.classList.add("hidden");
+        return;
+      }
+
+      container.classList.remove("hidden");
+
+      // Group by course slug
+      const groups = {};
+      pendingOrders.forEach(order => {
+        const slug = order.course || "unknown";
+        if (!groups[slug]) {
+          groups[slug] = {
+            slug: slug,
+            courseName: order.courseName || slug,
+            orders: [],
+            newestCreatedAt: null
+          };
+        }
+        groups[slug].orders.push(order);
+
+        // Track newest created_at
+        const orderTime = order.created_at ? new Date(order.created_at).getTime() : 0;
+        if (!groups[slug].newestCreatedAt || orderTime > groups[slug].newestCreatedAt) {
+          groups[slug].newestCreatedAt = orderTime;
+        }
+      });
+
+      // Convert to array and sort by newestCreatedAt descending (newest first)
+      const sortedGroups = Object.values(groups).sort((a, b) => b.newestCreatedAt - a.newestCreatedAt);
+
+      container.innerHTML = `
+        <div class="mb-4 flex items-center justify-between">
+          <h3 class="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2 font-outfit">
+            <span class="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+            Học Viên Chờ Duyệt (Phân Theo Lớp)
+          </h3>
+          <span class="text-xs font-bold text-slate-500 bg-slate-100 px-3 py-1 rounded-full">
+            Tổng cộng: ${pendingOrders.length} đơn
+          </span>
+        </div>
+        
+        <div class="space-y-6">
+          ${sortedGroups.map(group => {
+            const courseSlug = group.slug;
+            const courseName = group.courseName;
+            const orders = group.orders;
+
+            return `
+              <div class="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm transition hover:shadow-md">
+                <!-- Group Header -->
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 mb-4 border-b border-slate-100">
+                  <div>
+                    <h4 class="text-lg font-black text-slate-900 font-outfit">${courseName}</h4>
+                    <p class="text-xs text-slate-400 font-mono mt-0.5">slug: ${courseSlug} • ${orders.length} học viên chờ duyệt</p>
+                  </div>
+                  
+                  <div class="flex gap-2 w-full sm:w-auto">
+                    <button 
+                      onclick="copyGroupGmails('${courseSlug}')"
+                      class="flex-1 sm:flex-initial bg-slate-900 hover:bg-pink-600 text-white font-bold px-4 py-2.5 rounded-xl transition text-xs flex items-center justify-center gap-1.5 shadow-sm"
+                    >
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
+                      Copy Gmail (${orders.length})
+                    </button>
+                    <button 
+                      onclick="approveGroupAll('${courseSlug}')"
+                      class="flex-1 sm:flex-initial bg-green-600 hover:bg-green-700 text-white font-bold px-4 py-2.5 rounded-xl transition text-xs flex items-center justify-center gap-1.5 shadow-sm"
+                    >
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                      Duyệt Nhanh Lớp này
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Students Box List -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  ${orders.map(order => {
+                    const time = order.time || "";
+                    const gmail = order.gmail || "";
+                    const note = order.note || "";
+                    const bill = order.billLink || "";
+
+                    // Calculate priority badge
+                    let priorityBadge = "";
+                    if (order.created_at) {
+                      const diffMs = new Date() - new Date(order.created_at);
+                      const diffHours = diffMs / (1000 * 60 * 60);
+
+                      if (diffHours > 24) {
+                        priorityBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-100 text-rose-800">🔴 Trễ (>24h)</span>`;
+                      } else if (diffHours >= 2) {
+                        priorityBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-800">🟡 Chờ (2-24h)</span>`;
+                      } else {
+                        priorityBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-green-100 text-green-800">🟢 Mới tạo</span>`;
+                      }
+                    }
+
+                    return `
+                      <div class="bg-slate-50 rounded-2xl p-4 border border-slate-100 flex flex-col justify-between hover:border-slate-200 transition">
+                        <div>
+                          <!-- User email & Copy -->
+                          <div class="flex items-center justify-between gap-2 mb-2">
+                            <div class="flex items-center gap-1.5 select-all">
+                              <span class="font-extrabold text-slate-800 text-sm break-all">${gmail}</span>
+                              <button 
+                                onclick="copyText('${gmail}')" 
+                                class="text-slate-300 hover:text-pink-600 transition shrink-0" 
+                                title="Copy email"
+                              >
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
+                              </button>
+                            </div>
+                            ${priorityBadge}
+                          </div>
+
+                          <!-- Details -->
+                          <div class="text-xs text-slate-500 space-y-1 mb-3">
+                            <p><span class="font-semibold">Thời gian:</span> ${time}</p>
+                            ${order.customer_name ? `<p><span class="font-semibold">Học viên:</span> ${order.customer_name}</p>` : ''}
+                            ${order.customer_phone ? `<p><span class="font-semibold">SĐT:</span> <span class="font-mono">${order.customer_phone}</span></p>` : ''}
+                          </div>
+
+                          <!-- Bill Preview -->
+                          ${bill ? `
+                            <div class="flex items-center gap-2 mb-3 bg-white p-2 rounded-xl border border-slate-100">
+                              <button 
+                                onclick="previewBill('${bill}')"
+                                class="w-10 h-10 rounded-lg overflow-hidden bg-slate-100 hover:ring-2 hover:ring-pink-500 transition-all shadow-sm shrink-0 border border-slate-100"
+                              >
+                                <img src="${bill}" class="w-full h-full object-cover">
+                              </button>
+                              <div class="text-[10px] text-slate-400">
+                                <p class="font-semibold text-slate-500">Ảnh giao dịch</p>
+                                <button onclick="copyText('${bill}')" class="hover:text-pink-600 font-bold transition">Copy link</button>
+                              </div>
+                            </div>
+                          ` : '<p class="text-slate-400 text-xs mb-3 italic">Không có hóa đơn</p>'}
+                        </div>
+
+                        <!-- Notes & Actions -->
+                        <div class="mt-2 pt-3 border-t border-slate-200/60 space-y-3">
+                          <div class="flex items-center gap-1.5">
+                            <input 
+                              type="text" 
+                              id="note-grouped-${order.id}" 
+                              value="${note}" 
+                              placeholder="Thêm ghi chú..." 
+                              class="w-full px-2.5 py-1.5 bg-white border border-slate-200 focus:border-pink-500 outline-none rounded-lg text-xs transition"
+                            >
+                            <button 
+                              onclick="updateGroupedOrderNote('${order.id}')"
+                              class="px-2 py-1.5 bg-slate-900 hover:bg-pink-600 text-white rounded-lg text-[9px] font-extrabold uppercase transition shrink-0"
+                            >
+                              Lưu
+                            </button>
+                          </div>
+
+                          <div class="flex gap-2">
+                            <button 
+                              onclick="updateOrderStatus('${order.id}', 'Đã duyệt')"
+                              class="flex-1 bg-green-500 hover:bg-green-600 text-white font-extrabold py-2 rounded-xl text-[10px] uppercase transition shadow-sm"
+                            >
+                              Duyệt đơn
+                            </button>
+                            <button 
+                              onclick="updateOrderStatus('${order.id}', 'Từ chối')"
+                              class="flex-1 bg-rose-500 hover:bg-rose-600 text-white font-extrabold py-2 rounded-xl text-[10px] uppercase transition shadow-sm"
+                            >
+                              Từ chối
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    `;
+                  }).join('')}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    async function copyGroupGmails(courseSlug) {
+      const orders = allOrders.filter(o => o.course === courseSlug && o.status === "Chờ duyệt");
+      const gmails = orders.map(o => o.gmail).filter(Boolean);
+
+      if (gmails.length === 0) {
+        alert("Không tìm thấy Gmail của học viên đang chờ duyệt ở khóa này.");
+        return;
+      }
+
+      await navigator.clipboard.writeText(gmails.join("\n"));
+      showToast(`Đã copy ${gmails.length} Gmail của lớp ${courseSlug}!`);
+    }
+
+    async function approveGroupAll(courseSlug) {
+      const pendingCount = allOrders.filter(o => o.course === courseSlug && o.status === "Chờ duyệt").length;
+
+      if (pendingCount === 0) {
+        alert("Khóa học này không có học viên nào ở trạng thái chờ duyệt.");
+        return;
+      }
+
+      const ok = confirm(`Duyệt hàng loạt ${pendingCount} học viên đang chờ duyệt của khóa "${courseSlug}"?\nHành động này sẽ cập nhật tất cả trạng thái đơn thành "Đã duyệt" và sao chép Gmail của họ vào clipboard.`);
+      if (!ok) return;
+
+      try {
+        const res = await fetch("/api/approve-all", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Admin-Password": currentAdminPassword
+          },
+          body: JSON.stringify({ course: courseSlug })
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+          const gmailText = (data.gmails || []).join("\n");
+          if (gmailText) {
+            await navigator.clipboard.writeText(gmailText);
+          }
+          alert(`Đã duyệt hàng loạt ${data.count} học viên thành công!\nDanh sách email của họ đã được tự động copy vào clipboard.`);
+          loadOrders();
+        } else {
+          alert(data.error || "Gặp lỗi khi duyệt hàng loạt.");
+        }
+      } catch (err) {
+        alert("Lỗi kết nối");
+      }
+    }
+
+    async function updateGroupedOrderNote(id) {
+      const noteInput = document.getElementById(`note-grouped-${id}`);
+      if (!noteInput) return;
+      const noteValue = noteInput.value.trim();
+
+      try {
+        const response = await fetch("/api/orders", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Admin-Password": currentAdminPassword
+          },
+          body: JSON.stringify({ id, note: noteValue })
+        });
+
+        if (response.ok) {
+          showToast("Đã cập nhật ghi chú nội bộ!");
+          loadOrders();
+        } else {
+          const data = await response.json();
+          alert(data.error || "Lỗi khi lưu ghi chú");
+        }
+      } catch (err) {
+        alert("Lỗi kết nối");
+      }
     }
 
     // 9. LIGHTBOX ACTIONS
