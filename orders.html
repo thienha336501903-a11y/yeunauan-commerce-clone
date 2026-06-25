@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin - Quản lý Học viên</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Manrope', sans-serif;
+    }
+    h1, h2, h3, h4, .font-outfit {
+      font-family: 'Outfit', sans-serif;
+    }
+    .glass-card {
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+    }
+    .custom-gradient {
+      background: linear-gradient(135deg, #1e1b4b 0%, #311042 50%, #4c0519 100%);
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen pb-16">
+
+  <!-- LOGIN MODAL (FULL SCREEN OVERLAY) -->
+  <div id="loginOverlay" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xl transition-all duration-500 hidden">
+    <div class="bg-white rounded-3xl p-8 max-w-md w-full mx-4 shadow-2xl border border-slate-100 transform scale-95 transition-transform duration-300" id="loginCard">
+      <div class="text-center mb-6">
+        <div class="w-16 h-16 bg-pink-500 text-white rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-pink-200">
+          <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+        </div>
+        <h2 class="text-3xl font-black text-slate-900 tracking-tight">Hệ Thống Admin</h2>
+        <p class="text-slate-500 mt-2 text-sm">Vui lòng nhập mật khẩu quản trị để truy cập trang quản lý đơn học viên.</p>
+      </div>
+      
+      <form id="loginForm" class="space-y-4">
+        <div>
+          <input 
+            type="password" 
+            id="adminPasswordInput" 
+            required 
+            placeholder="Mật khẩu bảo mật" 
+            class="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:border-pink-500 focus:ring-4 focus:ring-pink-100 transition font-mono text-center text-lg"
+          >
+        </div>
+        <p id="loginErrorMsg" class="text-red-500 text-sm text-center font-bold hidden"></p>
+        <button 
+          type="submit" 
+          class="w-full bg-slate-900 hover:bg-pink-600 text-white font-bold py-4 rounded-2xl transition duration-300 shadow-lg shadow-slate-900/10 hover:shadow-pink-500/20"
+        >
+          XÁC THỰC TRUY CẬP
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MAIN DASHBOARD CONTENT -->
+  <div id="dashboardContent" class="opacity-0 transition-opacity duration-500">
+    
+    <!-- HEADER -->
+    <header class="custom-gradient text-white py-12 px-4 shadow-xl relative overflow-hidden mb-8">
+      <div class="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(219,39,119,0.15),transparent_40%)]"></div>
+      <div class="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6 relative z-10">
+        <div>
+          <div class="flex items-center gap-2 mb-2">
+            <span class="w-3 h-3 rounded-full bg-pink-500 animate-pulse"></span>
+            <span class="text-xs uppercase font-extrabold tracking-widest text-pink-300">Hệ thống điều khiển</span>
+          </div>
+          <h1 class="text-4xl font-black tracking-tight">Quản Lý Học Viên</h1>
+          <p class="text-slate-300 mt-2">Duyệt học viên chuyển khoản đăng ký học tự động hoặc thủ công.</p>
+        </div>
+        
+        <!-- Navigation Tabs -->
+        <div class="flex bg-white/10 p-1.5 rounded-2xl backdrop-blur-md border border-white/10">
+          <a href="admin.html" class="text-white hover:bg-white/5 px-6 py-3 rounded-xl font-bold text-sm transition">
+            Khóa Học
+          </a>
+          <a href="orders.html" class="bg-white text-slate-900 px-6 py-3 rounded-xl font-bold text-sm shadow transition">
+            Học Viên
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <!-- CONTENT WRAPPER -->
+    <main class="max-w-6xl mx-auto px-4">
+      
+      <!-- DASHBOARD STATS -->
+      <div id="statsDashboard" class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+        <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm flex items-center justify-center col-span-3 py-12 text-slate-400">
+          <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-pink-500 mr-3"></div>
+          Đang tải thống kê...
+        </div>
+      </div>
+
+      <!-- FILTER PANEL -->
+      <div class="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 mb-8">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <!-- Text search -->
+          <div>
+            <label class="block text-xs uppercase font-extrabold text-slate-400 tracking-wider mb-2">Tìm kiếm học viên</label>
+            <input 
+              id="searchInput"
+              type="text" 
+              placeholder="Nhập email, khóa học..." 
+              class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-100 transition text-sm"
+            >
+          </div>
+
+          <!-- Status filter -->
+          <div>
+            <label class="block text-xs uppercase font-extrabold text-slate-400 tracking-wider mb-2">Lọc trạng thái</label>
+            <select 
+              id="statusFilter"
+              class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:border-pink-500 transition text-sm"
+            >
+              <option value="">Tất cả trạng thái</option>
+              <option value="Chờ duyệt">Chờ duyệt</option>
+              <option value="Đã duyệt">Đã duyệt</option>
+              <option value="Từ chối">Từ chối</option>
+            </select>
+          </div>
+
+          <!-- Course filter -->
+          <div>
+            <label class="block text-xs uppercase font-extrabold text-slate-400 tracking-wider mb-2">Lọc theo khóa học</label>
+            <select 
+              id="courseFilter"
+              class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:border-pink-500 transition text-sm"
+            >
+              <option value="">Tất cả khóa học</option>
+              <!-- JS generates options here -->
+            </select>
+          </div>
+        </div>
+
+        <!-- BATCH ACTIONS FOR FILTERED COURSE -->
+        <div id="batchActionPanel" class="mt-6 pt-6 border-t border-slate-100 flex flex-col sm:flex-row justify-between items-center gap-4 hidden">
+          <div class="text-sm font-semibold text-slate-700 flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-pink-500"></span>
+            Đang chọn khóa: <span id="selectedCourseLabel" class="font-extrabold text-pink-600">donut</span>
+          </div>
+
+          <div class="flex gap-2 w-full sm:w-auto">
+            <button 
+              onclick="copyPendingGmails()"
+              class="flex-1 sm:flex-initial bg-slate-900 hover:bg-slate-800 text-white font-bold px-5 py-3 rounded-2xl transition text-sm flex items-center justify-center gap-2"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
+              Copy Gmail Chờ Duyệt
+            </button>
+            <button 
+              onclick="approveAllPending()"
+              class="flex-1 sm:flex-initial bg-green-600 hover:bg-green-700 text-white font-bold px-5 py-3 rounded-2xl transition text-sm flex items-center justify-center gap-2"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+              Duyệt Tất Cả
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ORDERS TABLE / LIST -->
+      <div class="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+        <div class="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+          <h3 class="text-lg font-bold text-slate-900">Danh Sách Học Viên Đăng Ký</h3>
+          <button 
+            onclick="clearAllFilters()"
+            class="text-xs bg-white border border-slate-200 px-3.5 py-2 rounded-xl font-bold text-slate-500 hover:bg-slate-50 transition"
+          >
+            Mặc định / Xóa lọc
+          </button>
+        </div>
+
+        <div id="orderContainer" class="overflow-x-auto">
+          <!-- JS renders table here -->
+          <div class="text-center py-12 text-slate-400">
+            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-pink-500 mx-auto mb-4"></div>
+            Đang tải danh sách đăng ký học...
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- BILL PREVIEW MODAL (LIGHTBOX) -->
+  <div id="billModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md transition-all duration-300 hidden" onclick="closeBillModal()">
+    <div class="max-w-xl w-full max-h-[85vh] p-4 relative" onclick="event.stopPropagation()">
+      <button 
+        onclick="closeBillModal()" 
+        class="absolute -top-12 right-2 text-white bg-slate-900/60 p-2.5 rounded-full hover:bg-pink-600 transition"
+      >
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+      </button>
+      <div class="bg-white rounded-3xl overflow-hidden p-2 shadow-2xl">
+        <img id="billPreviewImage" src="" class="w-full max-h-[75vh] object-contain rounded-2xl mx-auto bg-slate-50">
+        <div class="p-4 text-center border-t border-slate-100">
+          <a id="billDownloadLink" href="" target="_blank" class="inline-flex items-center gap-2 text-sm font-bold text-pink-600 hover:text-pink-700">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+            Mở ảnh hóa đơn trong tab mới
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION -->
+  <div 
+    id="toast" 
+    class="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-6 py-3 rounded-full font-bold text-sm opacity-0 shadow-2xl transition duration-300 pointer-events-none"
+  >
+    Đã sao chép
+  </div>
+
+  <!-- JS CONTROLLER -->
+  <script>
+    let allOrders = [];
+    let courseList = [];
+    let currentAdminPassword = "";
+
+    // 1. SHOW TOAST NOTIFICATION
+    function showToast(text) {
+      const toast = document.getElementById("toast");
+      toast.innerText = text;
+      toast.classList.remove("opacity-0");
+      toast.classList.add("translate-y-[-10px]");
+
+      setTimeout(() => {
+        toast.classList.add("opacity-0");
+        toast.classList.remove("translate-y-[-10px]");
+      }, 2000);
+    }
+
+    // 2. COPY TEXT TO CLIPBOARD
+    function copyText(text) {
+      if (!text) return;
+      navigator.clipboard.writeText(text).then(() => {
+        showToast("Đã copy vào clipboard!");
+      });
+    }
+
+    // 3. CHECK AUTH AND MANAGE LOGIN MODAL
+    async function verifyAuth(password) {
+      try {
+        const response = await fetch('/api/check-auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password })
+        });
+        const result = await response.json();
+        return result.success;
+      } catch (err) {
+        return false;
+      }
+    }
+
+    async function initSecurity() {
+      const cachedPassword = sessionStorage.getItem("admin_password");
+      
+      if (cachedPassword) {
+        const isValid = await verifyAuth(cachedPassword);
+        if (isValid) {
+          currentAdminPassword = cachedPassword;
+          showDashboard();
+          return;
+        }
+      }
+
+      showLoginModal();
+    }
+
+    function showLoginModal() {
+      const overlay = document.getElementById("loginOverlay");
+      const card = document.getElementById("loginCard");
+      
+      overlay.classList.remove("hidden");
+      setTimeout(() => {
+        card.classList.remove("scale-95");
+      }, 50);
+
+      document.getElementById("loginForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const pwdInput = document.getElementById("adminPasswordInput").value.trim();
+        const errMsg = document.getElementById("loginErrorMsg");
+
+        const isValid = await verifyAuth(pwdInput);
+        if (isValid) {
+          currentAdminPassword = pwdInput;
+          sessionStorage.setItem("admin_password", pwdInput);
+          overlay.classList.add("hidden");
+          showDashboard();
+        } else {
+          errMsg.innerText = "Mật khẩu quản trị sai. Vui lòng nhập lại!";
+          errMsg.classList.remove("hidden");
+        }
+      });
+    }
+
+    function showDashboard() {
+      const dash = document.getElementById("dashboardContent");
+      dash.classList.remove("hidden");
+      setTimeout(() => {
+        dash.classList.remove("opacity-0");
+      }, 50);
+      loadDashboardData();
+    }
+
+    // 4. LOAD INITIAL DATA (COURSES & ORDERS)
+    async function loadDashboardData() {
+      try {
+        // Load courses list first (to populate filter and title maps)
+        const coursesRes = await fetch("/api/courses", {
+          headers: { "X-Admin-Password": currentAdminPassword }
+        });
+        
+        if (coursesRes.status === 401) {
+          sessionStorage.removeItem("admin_password");
+          window.location.reload();
+          return;
+        }
+        
+        courseList = await coursesRes.json();
+        populateCourseFilter(courseList);
+
+        // Load orders list
+        await loadOrders();
+
+        // Listen for filter changes
+        document.getElementById("searchInput").addEventListener("input", renderOrders);
+        document.getElementById("statusFilter").addEventListener("change", renderOrders);
+        document.getElementById("courseFilter").addEventListener("change", () => {
+          const selectedCourse = document.getElementById("courseFilter").value;
+          const batchPanel = document.getElementById("batchActionPanel");
+          const label = document.getElementById("selectedCourseLabel");
+          
+          if (selectedCourse) {
+            label.innerText = selectedCourse;
+            batchPanel.classList.remove("hidden");
+          } else {
+            batchPanel.classList.add("hidden");
+          }
+          renderOrders();
+        });
+
+      } catch (err) {
+        console.error("Lỗi khi tải dữ liệu:", err);
+      }
+    }
+
+    async function loadOrders() {
+      const container = document.getElementById("orderContainer");
+      try {
+        const ordersRes = await fetch("/api/orders", {
+          cache: "no-store",
+          headers: { "X-Admin-Password": currentAdminPassword }
+        });
+        
+        allOrders = await ordersRes.json();
+        
+        renderSummaryStats();
+        renderOrders();
+      } catch (err) {
+        container.innerHTML = `
+          <div class="text-center py-12 text-red-500 font-bold">
+            Không tải được danh sách đơn hàng từ API.
+          </div>
+        `;
+      }
+    }
+
+    // 5. STATS & CHART RENDERER
+    function parseLocalDate(isoStr) {
+      if (!isoStr) return null;
+      const date = new Date(isoStr);
+      return date.toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
+    }
+
+    function formatVND(amount) {
+      return amount.toLocaleString("vi-VN") + "đ";
+    }
+
+    function getCoursePriceNumber(courseSlug) {
+      const course = courseList.find(c => c.slug === courseSlug);
+      if (!course || !course.price) return 0;
+      const cleaned = course.price.replace(/[^\d]/g, '');
+      return parseInt(cleaned, 10) || 0;
+    }
+
+    function renderSummaryStats() {
+      const dashboard = document.getElementById("statsDashboard");
+      if (!dashboard) return;
+
+      const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
+
+      const todayOrders = allOrders.filter(o => parseLocalDate(o.created_at) === todayStr);
+      const todayNewCount = todayOrders.length;
+      const todayApprovedCount = todayOrders.filter(o => o.status === "Đã duyệt").length;
+      const todayPendingCount = todayOrders.filter(o => o.status === "Chờ duyệt").length;
+      
+      const todayRevenue = todayOrders
+        .filter(o => o.status === "Đã duyệt")
+        .reduce((sum, o) => sum + getCoursePriceNumber(o.course), 0);
+
+      const last7Days = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const dateStr = d.toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
+        const day = d.toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", day: "2-digit" });
+        const month = d.toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", month: "2-digit" });
+        const label = `${day}/${month}`;
+        
+        last7Days.push({
+          dateStr,
+          label,
+          count: 0,
+          approvedCount: 0,
+          revenue: 0
+        });
+      }
+
+      allOrders.forEach(o => {
+        const orderDateStr = parseLocalDate(o.created_at);
+        const dayData = last7Days.find(d => d.dateStr === orderDateStr);
+        if (dayData) {
+          dayData.count++;
+          if (o.status === "Đã duyệt") {
+            dayData.approvedCount++;
+            dayData.revenue += getCoursePriceNumber(o.course);
+          }
+        }
+      });
+
+      const maxCount = Math.max(...last7Days.map(d => d.count), 1);
+
+      const chartHtml = last7Days.map(day => {
+        const percent = (day.count / maxCount) * 100;
+        const heightStyle = day.count > 0 ? `height: max(6px, ${percent}%)` : `height: 0%`;
+
+        return `
+          <div class="flex flex-col items-center flex-1 group relative h-full justify-end">
+            <!-- Tooltip -->
+            <div class="absolute bottom-full mb-2 bg-slate-900 text-white text-[10px] p-2.5 rounded-2xl shadow-xl opacity-0 pointer-events-none group-hover:opacity-100 transition duration-150 z-20 w-36 text-center">
+              <p class="font-black text-pink-400 border-b border-white/10 pb-1 mb-1">${day.label}</p>
+              <p class="font-bold">Đơn mới: <span class="text-white">${day.count}</span></p>
+              <p class="text-green-400 font-bold">Đã duyệt: ${day.approvedCount}</p>
+              <p class="text-pink-300 font-black mt-1">D.Thu: ${formatVND(day.revenue)}</p>
+            </div>
+            
+            <!-- Bar -->
+            <div 
+              class="w-7 sm:w-9 bg-gradient-to-t from-pink-600 to-rose-400 hover:from-pink-500 hover:to-rose-300 rounded-t-lg transition-all duration-300 shadow-sm hover:shadow-md cursor-pointer"
+              style="${heightStyle}"
+            ></div>
+            
+            <!-- Label -->
+            <span class="text-[10px] font-bold text-slate-400 mt-2 select-none">${day.label}</span>
+          </div>
+        `;
+      }).join('');
+
+      dashboard.innerHTML = `
+        <!-- Cột 1: Hôm nay -->
+        <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-4">
+              <h4 class="text-base font-black text-slate-900 tracking-tight flex items-center gap-2">
+                <svg class="w-5 h-5 text-pink-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                Thống Kê Hôm Nay
+              </h4>
+              <span class="text-[9px] font-black bg-pink-100 text-pink-700 px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse">Live</span>
+            </div>
+            
+            <div class="space-y-3">
+              <div class="flex justify-between items-center py-1.5 border-b border-slate-50">
+                <span class="text-xs font-semibold text-slate-500">Đơn mới</span>
+                <span class="text-sm font-black text-slate-800">${todayNewCount}</span>
+              </div>
+              <div class="flex justify-between items-center py-1.5 border-b border-slate-50">
+                <span class="text-xs font-semibold text-slate-500">Đã duyệt</span>
+                <span class="text-sm font-black text-green-600">${todayApprovedCount}</span>
+              </div>
+              <div class="flex justify-between items-center py-1.5 border-b border-slate-50">
+                <span class="text-xs font-semibold text-slate-500">Chờ duyệt</span>
+                <span class="text-sm font-black text-amber-600">${todayPendingCount}</span>
+              </div>
+            </div>
+          </div>
+          
+          <div class="mt-5 pt-4 border-t border-slate-100 flex justify-between items-center">
+            <span class="text-xs font-black text-slate-400 uppercase tracking-wider">Doanh thu</span>
+            <span class="text-xl font-black text-pink-600">${formatVND(todayRevenue)}</span>
+          </div>
+        </div>
+
+        <!-- Cột 2 & 3: 7 ngày gần đây -->
+        <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm lg:col-span-2 flex flex-col justify-between min-h-[220px]">
+          <div class="flex items-center justify-between mb-2">
+            <h4 class="text-base font-black text-slate-900 tracking-tight flex items-center gap-2">
+              <svg class="w-5 h-5 text-pink-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2"></path></svg>
+              Đơn Mới 7 Ngày Gần Đây
+            </h4>
+            <span class="text-[10px] font-semibold text-slate-400 select-none">Rê chuột vào cột để xem doanh thu chi tiết</span>
+          </div>
+          
+          <div class="flex-1 flex items-end justify-between h-36 px-2 pt-6 pb-1 border-b border-slate-100" id="chartBarsContainer">
+            ${chartHtml}
+          </div>
+        </div>
+      `;
+    }
+
+    // 6. POPULATE COURSE FILTER SELECT
+    function populateCourseFilter(courses) {
+      const select = document.getElementById("courseFilter");
+      select.innerHTML = '<option value="">Tất cả khóa học</option>' + 
+        courses.map(c => `<option value="${c.slug}">${c.courseName || c.slug}</option>`).join('');
+    }
+
+    // 7. GET FILTERED DATA
+    function getFilteredOrders() {
+      const keyword = document.getElementById("searchInput").value.toLowerCase().trim();
+      const status = document.getElementById("statusFilter").value;
+      const courseSlug = document.getElementById("courseFilter").value;
+
+      return allOrders.filter(order => {
+        // Status filter
+        if (status && order.status !== status) return false;
+        
+        // Course filter
+        if (courseSlug && order.course !== courseSlug) return false;
+        
+        // Keyword filter (email, phone, name, course name)
+        if (keyword) {
+          const text = [
+            order.gmail || "",
+            order.course || "",
+            order.courseName || "",
+            order.customer_name || "",
+            order.customer_phone || "",
+            order.status || "",
+            order.note || ""
+          ].join(" ").toLowerCase();
+
+          if (!text.includes(keyword)) return false;
+        }
+
+        return true;
+      });
+    }
+
+    // 8. RENDER ORDERS TABLE
+    function renderOrders() {
+      const container = document.getElementById("orderContainer");
+      const orders = getFilteredOrders();
+
+      if (orders.length === 0) {
+        container.innerHTML = `
+          <div class="p-12 text-center text-slate-500">
+            Không tìm thấy đăng ký nào phù hợp với bộ lọc hiện tại.
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = `
+        <table class="w-full text-left text-sm border-collapse">
+          <thead>
+            <tr class="bg-slate-50 text-slate-400 border-b border-slate-100 uppercase text-[10px] font-extrabold tracking-wider">
+              <th class="p-4">Thời gian</th>
+              <th class="p-4">Độ ưu tiên</th>
+              <th class="p-4">Khóa học</th>
+              <th class="p-4">Học viên / Gmail</th>
+              <th class="p-4">Hóa đơn</th>
+              <th class="p-4 w-60">Ghi chú nội bộ</th>
+              <th class="p-4 text-center">Trạng thái duyệt</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            ${orders.map(order => {
+              const time = order.time || "";
+              const course = order.course || "";
+              const courseName = order.courseName || course;
+              const gmail = order.gmail || "";
+              const note = order.note || "";
+              const status = order.status || "Chờ duyệt";
+              const bill = order.billLink || "";
+
+              let badgeStyle = "bg-amber-100 text-amber-800";
+              if (status === "Đã duyệt") badgeStyle = "bg-green-100 text-green-800";
+              if (status === "Từ chối") badgeStyle = "bg-rose-100 text-rose-800";
+
+              // Tính độ ưu tiên dựa trên thời gian chờ duyệt
+              let priorityBadge = "";
+              if (status === "Chờ duyệt" && order.created_at) {
+                const diffMs = new Date() - new Date(order.created_at);
+                const diffHours = diffMs / (1000 * 60 * 60);
+
+                if (diffHours > 24) {
+                  priorityBadge = `
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold bg-rose-100 text-rose-800 shadow-sm" title="Đã chờ quá 24h chưa được xử lý">
+                      <span class="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping"></span>
+                      🔴 Trễ (>24h)
+                    </span>
+                  `;
+                } else if (diffHours >= 2) {
+                  priorityBadge = `
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold bg-amber-100 text-amber-800" title="Chờ xử lý từ 2h - 24h">
+                      <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                      🟡 Chờ (2-24h)
+                    </span>
+                  `;
+                } else {
+                  priorityBadge = `
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold bg-green-100 text-green-800" title="Đơn mới dưới 2h">
+                      <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                      🟢 Mới tạo (<2h)
+                    </span>
+                  `;
+                }
+              } else {
+                priorityBadge = `<span class="text-slate-400 text-xs font-semibold">⚪ Đã xử lý</span>`;
+              }
+
+              return `
+                <tr class="hover:bg-slate-50/50 transition duration-150">
+                  <!-- Thời gian -->
+                  <td class="p-4 whitespace-nowrap text-slate-500 font-medium">
+                    ${time}
+                  </td>
+                  
+                  <!-- Độ ưu tiên -->
+                  <td class="p-4 whitespace-nowrap">
+                    ${priorityBadge}
+                  </td>
+                  
+                  <!-- Khóa học -->
+                  <td class="p-4">
+                    <div class="font-extrabold text-slate-900">${courseName}</div>
+                    <div class="text-xs text-slate-400 font-mono">slug: ${course}</div>
+                  </td>
+                  
+                  <!-- Gmail & Info -->
+                  <td class="p-4">
+                    <div class="flex items-center gap-1.5 group">
+                      <span class="font-bold text-slate-800 select-all">${gmail}</span>
+                      <button 
+                        onclick="copyText('${gmail}')" 
+                        class="text-slate-300 hover:text-pink-600 transition" 
+                        title="Copy email"
+                      >
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
+                      </button>
+                    </div>
+                    ${(order.customer_name || order.customer_phone) ? `
+                      <div class="text-xs text-slate-500 mt-1">
+                        ${order.customer_name ? `<span>Name: ${order.customer_name}</span>` : ''}
+                        ${order.customer_phone ? `<span class="ml-2 font-mono">Phone: ${order.customer_phone}</span>` : ''}
+                      </div>
+                    ` : ''}
+                  </td>
+                  
+                  <!-- Bill chuyển khoản -->
+                  <td class="p-4">
+                    ${bill ? `
+                      <div class="flex items-center gap-3">
+                        <button 
+                          onclick="previewBill('${bill}')"
+                          class="w-12 h-12 rounded-xl overflow-hidden bg-slate-100 hover:ring-2 hover:ring-pink-500 transition-all shadow-sm shrink-0 border border-slate-100"
+                        >
+                          <img src="${bill}" class="w-full h-full object-cover">
+                        </button>
+                        <button 
+                          onclick="copyText('${bill}')"
+                          class="text-xs font-semibold text-slate-400 hover:text-pink-600 transition"
+                          title="Copy Link hóa đơn"
+                        >
+                          Copy link
+                        </button>
+                      </div>
+                    ` : '<span class="text-slate-400 text-xs">Không có bill</span>'}
+                  </td>
+                  
+                  <!-- Note -->
+                  <td class="p-4">
+                    <div class="flex items-center gap-2">
+                      <input 
+                        type="text" 
+                        id="note-${order.id}" 
+                        value="${note}" 
+                        placeholder="Thêm ghi chú..." 
+                        class="w-full px-3 py-2 bg-slate-50 border border-slate-100 hover:border-slate-200 focus:border-pink-500 outline-none rounded-xl text-xs transition"
+                      >
+                      <button 
+                        onclick="updateOrderNote('${order.id}')"
+                        class="px-2.5 py-2 bg-slate-900 hover:bg-pink-600 text-white rounded-xl text-[10px] font-bold uppercase transition"
+                      >
+                        Lưu
+                      </button>
+                    </div>
+                  </td>
+                  
+                  <!-- Trạng thái / Actions -->
+                  <td class="p-4 text-center">
+                    <div class="relative inline-block text-left group">
+                      <button class="inline-flex justify-center w-32 rounded-full px-4 py-2 text-xs font-black leading-5 transition shadow-sm ${badgeStyle}">
+                        ${status}
+                        <svg class="w-4 h-4 ml-1 -mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                      </button>
+                      <div class="origin-top-right absolute right-0 mt-1 w-32 rounded-xl shadow-lg bg-white ring-1 ring-black ring-opacity-5 divide-y divide-gray-100 focus:outline-none z-10 hidden group-hover:block hover:block">
+                        <div class="py-1">
+                          <button onclick="updateOrderStatus('${order.id}', 'Chờ duyệt')" class="block w-full text-left px-4 py-2.5 text-xs text-slate-700 hover:bg-slate-50 hover:text-slate-900 font-semibold">Chờ duyệt</button>
+                          <button onclick="updateOrderStatus('${order.id}', 'Đã duyệt')" class="block w-full text-left px-4 py-2.5 text-xs text-green-700 hover:bg-green-50 hover:text-green-900 font-black">Đã duyệt</button>
+                          <button onclick="updateOrderStatus('${order.id}', 'Từ chối')" class="block w-full text-left px-4 py-2.5 text-xs text-rose-700 hover:bg-rose-50 hover:text-rose-900 font-black">Từ chối</button>
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      `;
+    }
+
+    // 9. LIGHTBOX ACTIONS
+    function previewBill(url) {
+      const modal = document.getElementById("billModal");
+      const img = document.getElementById("billPreviewImage");
+      const link = document.getElementById("billDownloadLink");
+
+      img.src = url;
+      link.href = url;
+      modal.classList.remove("hidden");
+    }
+
+    function closeBillModal() {
+      document.getElementById("billModal").classList.add("hidden");
+    }
+
+    // 10. UPDATE ORDER STATUS (PUT API)
+    async function updateOrderStatus(id, newStatus) {
+      try {
+        const response = await fetch("/api/orders", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Admin-Password": currentAdminPassword
+          },
+          body: JSON.stringify({ id, status: newStatus })
+        });
+
+        if (response.ok) {
+          showToast(`Đã chuyển đơn hàng sang [${newStatus}]`);
+          loadOrders();
+        } else {
+          const data = await response.json();
+          alert(data.error || "Lỗi cập nhật trạng thái");
+        }
+      } catch (err) {
+        alert("Lỗi kết nối máy chủ");
+      }
+    }
+
+    // 11. UPDATE ORDER NOTE (PUT API)
+    async function updateOrderNote(id) {
+      const noteInput = document.getElementById(`note-${id}`);
+      if (!noteInput) return;
+      const noteValue = noteInput.value.trim();
+
+      try {
+        const response = await fetch("/api/orders", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Admin-Password": currentAdminPassword
+          },
+          body: JSON.stringify({ id, note: noteValue })
+        });
+
+        if (response.ok) {
+          showToast("Đã cập nhật ghi chú nội bộ!");
+          loadOrders();
+        } else {
+          const data = await response.json();
+          alert(data.error || "Lỗi khi lưu ghi chú");
+        }
+      } catch (err) {
+        alert("Lỗi kết nối");
+      }
+    }
+
+    // 12. BATCH OPERATIONS FOR CHOSEN COURSE
+    async function copyPendingGmails() {
+      const selectedCourse = document.getElementById("courseFilter").value;
+      if (!selectedCourse) return;
+
+      const orders = allOrders.filter(o => o.course === selectedCourse && o.status === "Chờ duyệt");
+      const gmails = orders.map(o => o.gmail).filter(Boolean);
+
+      if (gmails.length === 0) {
+        alert("Không tìm thấy Gmail của học viên đang chờ duyệt ở khóa này.");
+        return;
+      }
+
+      await navigator.clipboard.writeText(gmails.join("\n"));
+      showToast(`Đã sao chép ${gmails.length} Gmail học viên!`);
+    }
+
+    async function approveAllPending() {
+      const selectedCourse = document.getElementById("courseFilter").value;
+      if (!selectedCourse) return;
+
+      const pendingCount = allOrders.filter(o => o.course === selectedCourse && o.status === "Chờ duyệt").length;
+
+      if (pendingCount === 0) {
+        alert("Khóa học này không có học viên nào ở trạng thái chờ duyệt.");
+        return;
+      }
+
+      const ok = confirm(`Duyệt hàng loạt ${pendingCount} học viên đang chờ duyệt của khóa "${selectedCourse}"?\nHành động này sẽ cập nhật tất cả trạng thái đơn thành "Đã duyệt" và sao chép Gmail của họ vào bộ nhớ tạm.`);
+      if (!ok) return;
+
+      try {
+        const res = await fetch("/api/approve-all", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Admin-Password": currentAdminPassword
+          },
+          body: JSON.stringify({ course: selectedCourse })
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+          const gmailText = (data.gmails || []).join("\n");
+          if (gmailText) {
+            await navigator.clipboard.writeText(gmailText);
+          }
+          alert(`Đã duyệt hàng loạt ${data.count} học viên thành công!\nDanh sách email của họ đã được tự động copy vào clipboard của bạn.`);
+          loadOrders();
+        } else {
+          alert(data.error || "Gặp lỗi khi duyệt hàng loạt.");
+        }
+      } catch (err) {
+        alert("Lỗi kết nối");
+      }
+    }
+
+    // 13. RESET FILTERS
+    function clearAllFilters() {
+      document.getElementById("searchInput").value = "";
+      document.getElementById("statusFilter").value = "";
+      document.getElementById("courseFilter").value = "";
+      document.getElementById("batchActionPanel").classList.add("hidden");
+      renderOrders();
+    }
+
+    // START CONTROLLER
+    initSecurity();
+  </script>
+</body>
+</html>
