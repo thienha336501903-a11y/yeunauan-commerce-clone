@@ -40,6 +40,7 @@ export default async function handler(req, res) {
         sort_order: c.sort_order,
         description: c.description || "",
         teacher_name: c.teacher_name || "",
+        created_at: c.created_at,
         ...(c.raw_data || {})
       }));
 

@@ -528,6 +528,90 @@
       });
     }
 
+    // Helpers for course modal enhancements
+    function formatCurrencyVN(val) {
+      if (!val) return "";
+      const cleanNumberStr = val.toString().replace(/\D/g, "");
+      if (cleanNumberStr === "") {
+        return val;
+      }
+      const number = parseInt(cleanNumberStr, 10);
+      return number.toLocaleString("en-US") + "đ";
+    }
+
+    function setupImagePaste(inputElement) {
+      if (!inputElement) return;
+
+      inputElement.addEventListener("paste", async (e) => {
+        const items = (e.clipboardData || window.clipboardData).items;
+        let imageItem = null;
+        
+        for (const item of items) {
+          if (item.type.indexOf("image") !== -1) {
+            imageItem = item;
+            break;
+          }
+        }
+
+        if (imageItem) {
+          e.preventDefault();
+
+          const file = imageItem.getAsFile();
+          if (!file) return;
+
+          const originalValue = inputElement.value;
+          
+          inputElement.disabled = true;
+          inputElement.value = "Đang tải ảnh...";
+          inputElement.classList.add("bg-slate-100", "text-slate-400");
+
+          try {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onloadend = async () => {
+              const base64Data = reader.result.split(',')[1];
+              const payload = {
+                fileData: base64Data,
+                fileType: file.type
+              };
+
+              try {
+                const response = await fetch("/api/upload", {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "X-Admin-Password": currentAdminPassword
+                  },
+                  body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success && data.url) {
+                  inputElement.value = data.url;
+                  showToast("Đã tải ảnh lên thành công!");
+                } else {
+                  showToast("Tải ảnh thất bại: " + (data.error || "Lỗi không xác định"));
+                  inputElement.value = originalValue;
+                }
+              } catch (err) {
+                showToast("Lỗi kết nối máy chủ khi tải ảnh");
+                inputElement.value = originalValue;
+              } finally {
+                inputElement.disabled = false;
+                inputElement.classList.remove("bg-slate-100", "text-slate-400");
+              }
+            };
+          } catch (err) {
+            showToast("Lỗi đọc ảnh từ clipboard");
+            inputElement.value = originalValue;
+            inputElement.disabled = false;
+            inputElement.classList.remove("bg-slate-100", "text-slate-400");
+          }
+        }
+      });
+    }
+
     // 7. COURSE MODAL ACTIONS (OPEN / CLOSE / SUBMIT)
     function openCourseModal(course = null) {
       const modal = document.getElementById("courseModal");
@@ -561,6 +645,24 @@
         document.getElementById("courseId").value = "";
         document.getElementById("courseActiveInput").checked = true;
         document.getElementById("courseSortOrderInput").value = 0;
+
+        // Auto-fill bank details from the most recently created course
+        if (allCourses && allCourses.length > 0) {
+          const sorted = [...allCourses].sort((a, b) => {
+            const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+            const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+            return dateB - dateA;
+          });
+          
+          const latestCourse = sorted[0];
+          if (latestCourse) {
+            document.getElementById("bankNameInput").value = latestCourse.bankName || "";
+            document.getElementById("bankAccountInput").value = latestCourse.bankAccount || "";
+            document.getElementById("bankOwnerInput").value = latestCourse.bankOwner || "";
+            document.getElementById("transferNoteInput").value = latestCourse.transferNote || "";
+            document.getElementById("qrImageUrlInput").value = latestCourse.qrImageUrl || "";
+          }
+        }
       }
     }
 
@@ -575,7 +677,7 @@
       const id = document.getElementById("courseId").value;
       const slug = document.getElementById("courseSlugInput").value.trim();
       const courseName = document.getElementById("courseTitleInput").value.trim();
-      const price = document.getElementById("coursePriceInput").value.trim();
+      const price = formatCurrencyVN(document.getElementById("coursePriceInput").value.trim());
       const sort_order = parseInt(document.getElementById("courseSortOrderInput").value, 10) || 0;
       const teacher_name = document.getElementById("courseTeacherInput").value.trim();
       const active = document.getElementById("courseActiveInput").checked;
@@ -705,6 +807,17 @@
 
     // START CONTROLLER
     initSecurity();
+
+    // Attach listeners for image inputs paste events and price input blur event
+    setupImagePaste(document.getElementById("courseImageUrlInput"));
+    setupImagePaste(document.getElementById("qrImageUrlInput"));
+    
+    const priceInput = document.getElementById("coursePriceInput");
+    if (priceInput) {
+      priceInput.addEventListener("blur", function() {
+        this.value = formatCurrencyVN(this.value);
+      });
+    }
   </script>
 </body>
 </html>
