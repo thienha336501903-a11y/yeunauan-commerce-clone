@@ -63,7 +63,8 @@ export async function syncCourseToExternalSystems(courseData) {
         })
       });
       if (res.ok) {
-        results.portal = "SUCCESS";
+        const resData = await res.json().catch(() => ({}));
+        results.portal = resData.projectRef ? `SUCCESS (${resData.projectRef})` : "SUCCESS";
       } else {
         const errData = await res.json().catch(() => ({}));
         results.portal = "FAILED";
@@ -136,7 +137,8 @@ export async function syncEnrollmentToExternalSystems(orderData, actionType) {
         body: JSON.stringify({ action, email, courseSlug })
       });
       if (res.ok) {
-        results.portal = "SUCCESS";
+        const resData = await res.json().catch(() => ({}));
+        results.portal = resData.projectRef ? `SUCCESS (${resData.projectRef})` : "SUCCESS";
       } else {
         const errData = await res.json().catch(() => ({}));
         results.portal = "FAILED";
