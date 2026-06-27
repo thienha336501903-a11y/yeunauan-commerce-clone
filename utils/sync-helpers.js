@@ -64,7 +64,14 @@ export async function syncCourseToExternalSystems(courseData) {
       });
       if (res.ok) {
         const resData = await res.json().catch(() => ({}));
-        results.portal = resData.projectRef ? `SUCCESS (${resData.projectRef})` : "SUCCESS";
+        let portalStatus = "SUCCESS";
+        if (resData.projectRef) {
+          portalStatus += ` (DB: ${resData.projectRef})`;
+        }
+        if (resData.postId) {
+          portalStatus += ` (PostID: ${resData.postId})`;
+        }
+        results.portal = portalStatus;
       } else {
         const errData = await res.json().catch(() => ({}));
         results.portal = "FAILED";
@@ -138,7 +145,14 @@ export async function syncEnrollmentToExternalSystems(orderData, actionType) {
       });
       if (res.ok) {
         const resData = await res.json().catch(() => ({}));
-        results.portal = resData.projectRef ? `SUCCESS (${resData.projectRef})` : "SUCCESS";
+        let portalStatus = "SUCCESS";
+        if (resData.projectRef) {
+          portalStatus += ` (DB: ${resData.projectRef})`;
+        }
+        if (resData.postId) {
+          portalStatus += ` (PostID: ${resData.postId})`;
+        }
+        results.portal = portalStatus;
       } else {
         const errData = await res.json().catch(() => ({}));
         results.portal = "FAILED";
