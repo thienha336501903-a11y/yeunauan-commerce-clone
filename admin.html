@@ -445,6 +445,25 @@
                   ${course.description || "Chưa có mô tả ngắn."}
                 </p>
 
+                <!-- Trạng thái đồng bộ -->
+                <div class="mb-4 flex flex-wrap gap-2 text-[9px] uppercase font-black tracking-wider">
+                  <span class="px-2 py-0.5 rounded ${
+                    course.sync_lms_status === 'SUCCESS' ? 'bg-green-50 text-green-700 border border-green-200/50' : 'bg-rose-50 text-rose-700 border border-rose-200/50'
+                  }">
+                    LMS: ${course.sync_lms_status || 'PENDING'}
+                  </span>
+                  <span class="px-2 py-0.5 rounded ${
+                    course.sync_portal_status === 'SUCCESS' ? 'bg-green-50 text-green-700 border border-green-200/50' : 'bg-rose-50 text-rose-700 border border-rose-200/50'
+                  }">
+                    Portal: ${course.sync_portal_status || 'PENDING'}
+                  </span>
+                  ${course.sync_error ? `
+                    <div class="w-full text-rose-600 text-[10px] font-medium lowercase truncate mt-1" title="${course.sync_error}">
+                      Lỗi: ${course.sync_error}
+                    </div>
+                  ` : ''}
+                </div>
+
                 <div class="bg-slate-50 rounded-2xl p-3 text-xs break-all text-slate-500 mb-5 font-mono flex justify-between items-center border border-slate-100">
                   <span class="truncate mr-2">${link}</span>
                   <button 
@@ -457,24 +476,32 @@
               </div>
 
               <!-- Button actions -->
-              <div class="grid grid-cols-3 gap-2 border-t border-slate-50 pt-4">
+              <div class="grid grid-cols-4 gap-2 border-t border-slate-50 pt-4">
                 <button 
                   onclick="toggleCourseActive('${id}', ${active})"
-                  class="text-xs font-bold py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition"
+                  class="text-[10px] font-bold py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition text-center"
                 >
                   ${active ? "Tắt" : "Bật"}
                 </button>
                 
                 <button 
                   onclick='openCourseModal(${JSON.stringify(course).replace(/'/g, "&apos;")})'
-                  class="text-xs font-bold py-2.5 rounded-xl bg-slate-900 text-white hover:bg-pink-600 transition"
+                  class="text-[10px] font-bold py-2 rounded-lg bg-slate-900 text-white hover:bg-pink-600 transition text-center"
                 >
-                  Chỉnh Sửa
+                  Sửa
+                </button>
+
+                <button 
+                  onclick="syncCourseManual('${slug}')"
+                  class="text-[10px] font-bold py-2 rounded-lg border border-pink-200 text-pink-600 hover:bg-pink-50 transition text-center"
+                  title="Đồng bộ lại khóa học này"
+                >
+                  Sync
                 </button>
                 
                 <button 
                   onclick="deleteCourse('${id}', '${name}')"
-                  class="text-xs font-bold py-2.5 rounded-xl text-red-600 hover:bg-red-50 transition border border-transparent hover:border-red-100"
+                  class="text-[10px] font-bold py-2 rounded-lg text-red-600 hover:bg-red-50 transition border border-transparent hover:border-red-100 text-center"
                 >
                   Xóa
                 </button>
@@ -799,6 +826,52 @@
         } else {
           const data = await response.json();
           alert(data.error || "Không thể xóa khóa học");
+        }
+      } catch (err) {
+        alert("Lỗi kết nối");
+      }
+    }
+
+    // 9.1. SYNC COURSE MANUALLY
+    async function syncCourseManual(slug) {
+      const course = allCourses.find(c => c.slug === slug);
+      if (!course) return;
+      
+      showToast("Đang đồng bộ khóa học...");
+      
+      const payload = {
+        id: course.id,
+        slug: course.slug,
+        courseName: course.courseName,
+        price: course.price,
+        sort_order: course.sort_order,
+        teacher_name: course.teacher_name,
+        description: course.description,
+        imageUrl: course.imageUrl,
+        active: course.active,
+        bankName: course.bankName,
+        bankAccount: course.bankAccount,
+        bankOwner: course.bankOwner,
+        transferNote: course.transferNote,
+        qrImageUrl: course.qrImageUrl
+      };
+
+      try {
+        const response = await fetch("/api/courses", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Admin-Password": currentAdminPassword
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (response.ok) {
+          showToast("Đồng bộ thành công!");
+          loadCourses();
+        } else {
+          const data = await response.json();
+          alert(data.error || "Không thể đồng bộ khóa học");
         }
       } catch (err) {
         alert("Lỗi kết nối");

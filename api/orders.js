@@ -51,6 +51,9 @@ export default async function handler(req, res) {
           note: o.note || "",
           customer_phone: o.customer_phone || "",
           customer_name: o.customer_name || "",
+          sync_lms_status: o.sync_lms_status || "PENDING",
+          sync_portal_status: o.sync_portal_status || "PENDING",
+          sync_error: o.sync_error || "",
           ...(o.raw_data || {})
         };
       });
@@ -84,7 +87,29 @@ export default async function handler(req, res) {
 
       if (error) throw error;
 
-      return res.status(200).json({ success: true, data });
+      // Sync to external systems if status has changed
+      let syncResults = null;
+      if (status !== undefined) {
+        try {
+          const { syncEnrollmentToExternalSystems } = await import("../utils/sync-helpers.js");
+          const actionType = status === "Đã duyệt" ? "create" : "revoke";
+          syncResults = await syncEnrollmentToExternalSystems(data, actionType);
+
+          // Update database with sync status
+          await supabase
+            .from("orders")
+            .update({
+              sync_lms_status: syncResults.lms,
+              sync_portal_status: syncResults.portal,
+              sync_error: syncResults.error
+            })
+            .eq("id", id);
+        } catch (syncErr) {
+          console.error("Order sync trigger error:", syncErr);
+        }
+      }
+
+      return res.status(200).json({ success: true, data: { ...data, syncResults } });
     }
 
     return res.status(405).json({ error: "Method not allowed" });

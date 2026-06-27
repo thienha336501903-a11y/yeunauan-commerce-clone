@@ -41,6 +41,9 @@ export default async function handler(req, res) {
         description: c.description || "",
         teacher_name: c.teacher_name || "",
         created_at: c.created_at,
+        sync_lms_status: c.sync_lms_status || "PENDING",
+        sync_portal_status: c.sync_portal_status || "PENDING",
+        sync_error: c.sync_error || "",
         ...(c.raw_data || {})
       }));
 
@@ -93,7 +96,33 @@ export default async function handler(req, res) {
 
       if (error) throw error;
 
-      return res.status(201).json({ success: true, data });
+      // Sync to external systems
+      let syncResults = { lms: "PENDING", portal: "PENDING", error: null };
+      try {
+        const { syncCourseToExternalSystems } = await import("../utils/sync-helpers.js");
+        syncResults = await syncCourseToExternalSystems({
+          slug,
+          courseName: title || courseName,
+          price,
+          imageUrl,
+          active,
+          teacher_name
+        });
+        
+        // Update database with sync status
+        await supabase
+          .from("courses")
+          .update({
+            sync_lms_status: syncResults.lms,
+            sync_portal_status: syncResults.portal,
+            sync_error: syncResults.error
+          })
+          .eq("id", data.id);
+      } catch (syncErr) {
+        console.error("Course sync trigger error:", syncErr);
+      }
+
+      return res.status(201).json({ success: true, data: { ...data, syncResults } });
     }
 
     if (req.method === "PUT") {
@@ -144,7 +173,33 @@ export default async function handler(req, res) {
 
       if (error) throw error;
 
-      return res.status(200).json({ success: true, data });
+      // Sync to external systems
+      let syncResults = { lms: "PENDING", portal: "PENDING", error: null };
+      try {
+        const { syncCourseToExternalSystems } = await import("../utils/sync-helpers.js");
+        syncResults = await syncCourseToExternalSystems({
+          slug,
+          courseName: title || courseName,
+          price,
+          imageUrl,
+          active,
+          teacher_name
+        });
+        
+        // Update database with sync status
+        await supabase
+          .from("courses")
+          .update({
+            sync_lms_status: syncResults.lms,
+            sync_portal_status: syncResults.portal,
+            sync_error: syncResults.error
+          })
+          .eq("id", id);
+      } catch (syncErr) {
+        console.error("Course sync trigger error:", syncErr);
+      }
+
+      return res.status(200).json({ success: true, data: { ...data, syncResults } });
     }
 
     if (req.method === "DELETE") {

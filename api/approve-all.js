@@ -21,7 +21,7 @@ export default async function handler(req, res) {
     }
 
     // Cập nhật tất cả các đơn hàng của khóa học từ "Chờ duyệt" thành "Đã duyệt"
-    // và lấy về danh sách email của học viên vừa được duyệt
+    // và lấy về danh sách thông tin đơn hàng của học viên vừa được duyệt
     const { data: updatedOrders, error } = await supabase
       .from("orders")
       .update({
@@ -30,11 +30,34 @@ export default async function handler(req, res) {
       })
       .eq("course_slug", course)
       .eq("status", "Chờ duyệt")
-      .select("customer_email");
+      .select("id, customer_email, course_slug");
 
     if (error) throw error;
 
     const gmails = (updatedOrders || []).map((o) => o.customer_email).filter(Boolean);
+
+    // Đồng bộ quyền học viên sang các hệ thống ngoại vi
+    if (updatedOrders && updatedOrders.length > 0) {
+      try {
+        const { syncEnrollmentToExternalSystems } = await import("../utils/sync-helpers.js");
+        for (const order of updatedOrders) {
+          if (!order.customer_email) continue;
+          
+          const syncResults = await syncEnrollmentToExternalSystems(order, "create");
+          
+          await supabase
+            .from("orders")
+            .update({
+              sync_lms_status: syncResults.lms,
+              sync_portal_status: syncResults.portal,
+              sync_error: syncResults.error
+            })
+            .eq("id", order.id);
+        }
+      } catch (syncErr) {
+        console.error("Bulk approve sync error:", syncErr);
+      }
+    }
 
     return res.status(200).json({
       success: true,
