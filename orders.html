@@ -668,14 +668,14 @@
                       </div>
                     ` : ''}
                     ${status === "Đã duyệt" ? `
-                      <div class="text-[9px] mt-1 text-slate-500 flex flex-wrap gap-1.5 font-bold uppercase">
-                        <span>LMS: <strong class="${order.sync_lms_status === 'SUCCESS' ? 'text-green-600' : 'text-red-500'}">${order.sync_lms_status || 'PENDING'}</strong></span>
-                        <span>Portal: <strong class="${order.sync_portal_status === 'SUCCESS' ? 'text-green-600' : 'text-red-500'}">${order.sync_portal_status || 'PENDING'}</strong></span>
-                        ${order.sync_lms_status === 'FAILED' || order.sync_portal_status === 'FAILED' ? `
-                          <button onclick="syncEnrollmentManual('${order.id}')" class="text-pink-600 hover:underline capitalize" title="Click để đồng bộ lại học viên này">Re-sync</button>
-                        ` : ''}
+                      <div class="text-[10px] mt-1.5 text-slate-600 flex flex-col gap-0.5 font-semibold">
+                        <div>LMS enrollment sync: <strong class="${order.sync_lms_status === 'SUCCESS' ? 'text-emerald-600' : 'text-rose-600'}">${order.sync_lms_status || 'PENDING'}</strong></div>
+                        <div>Portal enrollment sync: <strong class="${order.sync_portal_status === 'SUCCESS' ? 'text-emerald-600' : 'text-rose-600'}">${order.sync_portal_status || 'PENDING'}</strong></div>
+                        <div class="mt-1">
+                          <button onclick="syncEnrollmentManual('${order.id}')" class="bg-slate-100 hover:bg-pink-50 text-pink-600 hover:text-pink-700 text-[10px] px-2 py-0.5 rounded border border-slate-200 transition font-bold" title="Click để đồng bộ lại học viên này">Re-sync</button>
+                        </div>
                       </div>
-                      ${order.sync_error ? `<div class="text-[9px] text-red-500 max-w-[200px] truncate" title="${order.sync_error}">Lỗi: ${order.sync_error}</div>` : ''}
+                      ${order.sync_error ? `<div class="text-[9px] text-rose-500 mt-1 max-w-[200px] break-words" title="${order.sync_error}">Lỗi: ${order.sync_error}</div>` : ''}
                     ` : ''}
                   </td>
                   
@@ -1063,7 +1063,7 @@
             "Content-Type": "application/json",
             "X-Admin-Password": currentAdminPassword
           },
-          body: JSON.stringify({ id: order.id, status: order.status }) // PUT với cùng status để ép chạy lại sync
+          body: JSON.stringify({ id: order.id, action: "resync" })
         });
 
         if (response.ok) {

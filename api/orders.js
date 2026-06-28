@@ -62,13 +62,46 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "PUT") {
-      const { id, status, note, customer_name, customer_phone } = req.body;
+      const { id, status, note, customer_name, customer_phone, action } = req.body;
 
       if (!id) {
         return res.status(400).json({ error: "Thiếu ID đơn hàng để cập nhật" });
       }
 
-      // Chuẩn bị dữ liệu cập nhật
+      // Manual resync action
+      if (action === "resync") {
+        const { data: order, error: fetchErr } = await supabase
+          .from("orders")
+          .select("*")
+          .eq("id", id)
+          .maybeSingle();
+
+        if (fetchErr) throw fetchErr;
+        if (!order) {
+          return res.status(404).json({ error: "Không tìm thấy đơn hàng" });
+        }
+
+        const { syncEnrollmentToExternalSystems } = await import("../utils/sync-helpers.js");
+        const actionType = order.status === "Đã duyệt" ? "create" : "revoke";
+        const syncResults = await syncEnrollmentToExternalSystems(order, actionType);
+
+        // Update database with sync status
+        const { data: updatedOrder, error: updateErr } = await supabase
+          .from("orders")
+          .update({
+            sync_lms_status: syncResults.lms,
+            sync_portal_status: syncResults.portal,
+            sync_error: syncResults.error
+          })
+          .eq("id", id)
+          .select()
+          .single();
+
+        if (updateErr) throw updateErr;
+        return res.status(200).json({ success: true, data: { ...updatedOrder, syncResults } });
+      }
+
+      // Standard update
       const updateData = {
         updated_at: new Date().toISOString()
       };
@@ -89,27 +122,32 @@ export default async function handler(req, res) {
 
       // Sync to external systems if status has changed
       let syncResults = null;
+      let updatedData = { ...data };
       if (status !== undefined) {
         try {
           const { syncEnrollmentToExternalSystems } = await import("../utils/sync-helpers.js");
           const actionType = status === "Đã duyệt" ? "create" : "revoke";
           syncResults = await syncEnrollmentToExternalSystems(data, actionType);
 
-          // Update database with sync status
-          await supabase
+          // Update database with sync status and get the updated record
+          const { data: finalData } = await supabase
             .from("orders")
             .update({
               sync_lms_status: syncResults.lms,
               sync_portal_status: syncResults.portal,
               sync_error: syncResults.error
             })
-            .eq("id", id);
+            .eq("id", id)
+            .select()
+            .single();
+          
+          if (finalData) updatedData = finalData;
         } catch (syncErr) {
           console.error("Order sync trigger error:", syncErr);
         }
       }
 
-      return res.status(200).json({ success: true, data: { ...data, syncResults } });
+      return res.status(200).json({ success: true, data: { ...updatedData, syncResults } });
     }
 
     return res.status(405).json({ error: "Method not allowed" });
