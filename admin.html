@@ -448,12 +448,20 @@
                 <!-- Trạng thái đồng bộ -->
                 <div class="mb-4 flex flex-wrap gap-2 text-[9px] uppercase font-black tracking-wider">
                   <span class="px-2 py-0.5 rounded ${
-                    course.sync_lms_status === 'SUCCESS' ? 'bg-green-50 text-green-700 border border-green-200/50' : 'bg-rose-50 text-rose-700 border border-rose-200/50'
+                    String(course.sync_lms_status || 'PENDING').startsWith('SUCCESS') 
+                      ? 'bg-green-50 text-green-700 border border-green-200/50' 
+                      : (String(course.sync_lms_status || 'PENDING').startsWith('FAILED') 
+                        ? 'bg-rose-50 text-rose-700 border border-rose-200/50' 
+                        : 'bg-slate-50 text-slate-600 border border-slate-200/50')
                   }">
                     LMS: ${course.sync_lms_status || 'PENDING'}
                   </span>
                   <span class="px-2 py-0.5 rounded ${
-                    course.sync_portal_status === 'SUCCESS' ? 'bg-green-50 text-green-700 border border-green-200/50' : 'bg-rose-50 text-rose-700 border border-rose-200/50'
+                    String(course.sync_portal_status || 'PENDING').startsWith('SUCCESS') 
+                      ? 'bg-green-50 text-green-700 border border-green-200/50' 
+                      : (String(course.sync_portal_status || 'PENDING').startsWith('FAILED') 
+                        ? 'bg-rose-50 text-rose-700 border border-rose-200/50' 
+                        : 'bg-slate-50 text-slate-600 border border-slate-200/50')
                   }">
                     Portal: ${course.sync_portal_status || 'PENDING'}
                   </span>
@@ -476,7 +484,7 @@
               </div>
 
               <!-- Button actions -->
-              <div class="grid grid-cols-4 gap-2 border-t border-slate-50 pt-4">
+              <div class="grid grid-cols-3 gap-2 border-t border-slate-50 pt-4">
                 <button 
                   onclick="toggleCourseActive('${id}', ${active})"
                   class="text-[10px] font-bold py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition text-center"
@@ -489,14 +497,6 @@
                   class="text-[10px] font-bold py-2 rounded-lg bg-slate-900 text-white hover:bg-pink-600 transition text-center"
                 >
                   Sửa
-                </button>
-
-                <button 
-                  onclick="syncCourseManual('${slug}')"
-                  class="text-[10px] font-bold py-2 rounded-lg border border-pink-200 text-pink-600 hover:bg-pink-50 transition text-center"
-                  title="Đồng bộ lại khóa học này"
-                >
-                  Sync
                 </button>
                 
                 <button 
