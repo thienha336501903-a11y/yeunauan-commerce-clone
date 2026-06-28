@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Pinterest Food Studio — Đăng ký khóa học</title>
+<script src="/brand-config.js"></script>
 <link rel="preconnect" href="https://cdn.tailwindcss.com">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -23,8 +24,8 @@
 .arrow-blink {
   animation: arrowBlink 1.2s infinite;
 }
-:root{--bg:#faf7f2;--card:#fff;--cream:#fff3e5;--ink:#241712;--muted:#7a675c;--red:#b65c4b;--sage:#6f7d5a;--sand:#e9dfd2}
-*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;font-family:"Manrope",system-ui,sans-serif;color:var(--ink);background:radial-gradient(circle at 10% 8%,rgba(182,92,75,.12),transparent 25%),radial-gradient(circle at 92% 0%,rgba(111,125,90,.14),transparent 24%),linear-gradient(180deg,#faf7f2 0%,#f3ece2 100%);overflow-x:hidden}body:before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.22;background-image:radial-gradient(rgba(36,23,18,.14) .7px,transparent .8px);background-size:18px 18px;z-index:0}.page{position:relative;z-index:1}.serif{font-family:"DM Serif Display",Georgia,serif}.pin{background:#fff;border:1px solid rgba(36,23,18,.08);box-shadow:0 18px 44px rgba(36,23,18,.08);transition:transform .2s ease,box-shadow .2s ease}.pin:hover{transform:translateY(-2px);box-shadow:0 24px 58px rgba(36,23,18,.12)}.pin-soft{background:linear-gradient(180deg,#fff,#fff8f0)}.poster-img{width:100%;aspect-ratio:9/11;object-fit:contain;background:#fff3e5}.mini-kicker{font-size:11px;letter-spacing:.19em;text-transform:uppercase;font-weight:900}.primary-btn{background:#b65c4b;color:white;box-shadow:0 14px 30px rgba(182,92,75,.22)}.primary-btn:hover{filter:brightness(1.06);transform:translateY(-1px)}.dark-btn{background:#241712;color:#fff7ef}.dark-btn:hover{filter:brightness(1.08);transform:translateY(-1px)}.input-pin{background:#fff;border:1.5px solid rgba(36,23,18,.14);color:#241712}.input-pin:focus{outline:none;border-color:#b65c4b;box-shadow:0 0 0 4px rgba(182,92,75,.12)}.progress-bar{transition:width .35s ease;background:linear-gradient(90deg,#241712,#b65c4b,#f1ba72)}.masonry{column-count:3;column-gap:18px}.masonry>*{break-inside:avoid;margin-bottom:18px}@media(max-width:1024px){.masonry{column-count:2}}@media(max-width:640px){.masonry{column-count:1}}
+:root{--bg:#faf7f2;--card:#fff;--cream:#fff3e5;--ink:#241712;--muted:#7a675c;--red:#b65c4b;--red-rgba:182,92,75;--sage:#6f7d5a;--sand:#e9dfd2}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;font-family:"Manrope",system-ui,sans-serif;color:var(--ink);background:radial-gradient(circle at 10% 8%,rgba(var(--red-rgba),.12),transparent 25%),radial-gradient(circle at 92% 0%,rgba(111,125,90,.14),transparent 24%),linear-gradient(180deg,#faf7f2 0%,#f3ece2 100%);overflow-x:hidden}body:before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.22;background-image:radial-gradient(rgba(36,23,18,.14) .7px,transparent .8px);background-size:18px 18px;z-index:0}.page{position:relative;z-index:1}.serif{font-family:"DM Serif Display",Georgia,serif}.pin{background:#fff;border:1px solid rgba(36,23,18,.08);box-shadow:0 18px 44px rgba(36,23,18,.08);transition:transform .2s ease,box-shadow .2s ease}.pin:hover{transform:translateY(-2px);box-shadow:0 24px 58px rgba(36,23,18,.12)}.pin-soft{background:linear-gradient(180deg,#fff,#fff8f0)}.poster-img{width:100%;aspect-ratio:9/11;object-fit:contain;background:#fff3e5}.mini-kicker{font-size:11px;letter-spacing:.19em;text-transform:uppercase;font-weight:900}.primary-btn{background:var(--red);color:white;box-shadow:0 14px 30px rgba(var(--red-rgba),.22)}.primary-btn:hover{filter:brightness(1.06);transform:translateY(-1px)}.dark-btn{background:#241712;color:#fff7ef}.dark-btn:hover{filter:brightness(1.08);transform:translateY(-1px)}.input-pin{background:#fff;border:1.5px solid rgba(36,23,18,.14);color:#241712}.input-pin:focus{outline:none;border-color:var(--red);box-shadow:0 0 0 4px rgba(var(--red-rgba),.12)}.progress-bar{transition:width .35s ease;background:linear-gradient(90deg,#241712,var(--red),#f1ba72)}.masonry{column-count:3;column-gap:18px}.masonry>*{break-inside:avoid;margin-bottom:18px}@media(max-width:1024px){.masonry{column-count:2}}@media(max-width:640px){.masonry{column-count:1}}
 
 /* MOBILE PAYMENT UX */
 #paymentGuide,#qrSection,#register{scroll-margin-top:18px}
@@ -99,7 +100,7 @@
     gap:10px;
   }
   .mobile-qr-btn:before{
-    content:"▦";
+    content:"\25a6";
     font-size:22px;
     line-height:1;
   }
@@ -109,13 +110,13 @@
     text-align:center;
     border-radius:999px;
     padding:16px 14px;
-    background:#b65c4b;
+    background:var(--red);
     color:white;
     font-weight:900;
     text-transform:uppercase;
     letter-spacing:.11em;
     text-decoration:none;
-    box-shadow:0 18px 35px rgba(182,92,75,.30);
+    box-shadow:0 18px 35px rgba(var(--red-rgba),.30);
     animation:arrowBlink 2s infinite;
   }
   .mobile-sticky-payment{
@@ -143,14 +144,14 @@
     text-align:center;
     border-radius:18px;
     padding:14px 12px;
-    background:#b65c4b;
+    background:var(--red);
     color:#fff;
     font-weight:900;
     text-transform:uppercase;
     letter-spacing:.06em;
     text-decoration:none;
     font-size:13px;
-    box-shadow:0 12px 28px rgba(182,92,75,.35);
+    box-shadow:0 12px 28px rgba(var(--red-rgba),.35);
     animation:arrowBlink 2s infinite;
   }
 }
@@ -159,8 +160,8 @@
 </head>
 <body id="pageBody">
 <div class="page">
-<header class="px-4 sm:px-6 lg:px-10 pt-5"><div class="max-w-7xl mx-auto flex items-center justify-between gap-4"><div class="inline-flex items-center gap-2 rounded-full bg-white/82 border border-black/10 px-4 py-2 shadow-sm"><span class="w-2.5 h-2.5 rounded-full bg-[#b65c4b]"></span><span class="mini-kicker text-[#7a675c]">Pinterest Food Studio</span></div><a href="#payment" class="hidden sm:inline-flex rounded-full bg-[#241712] text-white px-5 py-2.5 text-xs font-black uppercase tracking-[.14em] hover:brightness-110 transition">Thanh toán</a></div></header>
-<section class="px-4 sm:px-6 lg:px-10 py-5 sm:py-8"><div class="max-w-7xl mx-auto grid lg:grid-cols-[.92fr_1.08fr] gap-5 lg:gap-7 items-start"><div class="pin rounded-[34px] overflow-hidden bg-white"><div class="p-3 sm:p-4 bg-[#fff3e5]"><img id="courseImage" src="" alt="Ảnh khóa học" loading="eager" decoding="async" fetchpriority="high" class="poster-img rounded-[26px]"></div><div class="p-5 sm:p-6"><p class="mini-kicker text-[#b65c4b] mb-2">Recipe Pin</p><p class="serif text-3xl sm:text-4xl leading-none text-[#241712]">Ảnh poster khóa học</p></div></div><div class="masonry">
+<header class="px-4 sm:px-6 lg:px-10 pt-5"><div class="max-w-7xl mx-auto flex items-center justify-between gap-4"><div class="inline-flex items-center gap-2 rounded-full bg-white/82 border border-black/10 px-4 py-2 shadow-sm"><span class="w-2.5 h-2.5 rounded-full bg-[var(--red)]"></span><span class="mini-kicker text-[#7a675c] brand-logo-bind">Pinterest Food Studio</span></div><a href="#payment" class="hidden sm:inline-flex rounded-full bg-[#241712] text-white px-5 py-2.5 text-xs font-black uppercase tracking-[.14em] hover:brightness-110 transition">Thanh toán</a></div></header>
+<section class="px-4 sm:px-6 lg:px-10 py-5 sm:py-8"><div class="max-w-7xl mx-auto grid lg:grid-cols-[.92fr_1.08fr] gap-5 lg:gap-7 items-start"><div class="pin rounded-[34px] overflow-hidden bg-white"><div class="p-3 sm:p-4 bg-[#fff3e5]"><img id="courseImage" src="" alt="Ảnh khóa học" loading="eager" decoding="async" fetchpriority="high" class="poster-img rounded-[26px]"></div><div class="p-5 sm:p-6"><p class="mini-kicker text-[var(--red)] mb-2">Recipe Pin</p><p class="serif text-3xl sm:text-4xl leading-none text-[#241712]">Ảnh poster khóa học</p></div></div><div class="masonry">
 
 <!-- HỌC PHÍ -->
 <div class="pin rounded-[32px] p-5 sm:p-6 bg-[#241712] text-white">
@@ -174,20 +175,20 @@
 
 <!-- KHÓA HỌC -->
 <div class="pin pin-soft rounded-[32px] p-5 sm:p-7">
-  <p class="mini-kicker text-[#b65c4b] mb-3">
+  <p class="mini-kicker text-[var(--red)] mb-3">
     Khóa học online
   </p>
-
+  
   <h1 id="courseName"
       class="text-4xl sm:text-5xl lg:text-6xl font-black leading-tight tracking-tight text-[#241712] uppercase">
       Đang tải khóa học...
   </h1>
-
+  
   <p class="mt-4 text-[#7a675c] text-base sm:text-lg leading-relaxed font-bold">
     Đăng ký nhanh bằng Gmail, chuyển khoản và gửi bill xác nhận.
     Admin kiểm tra thanh toán và cấp quyền học trong vòng 24 giờ.
   </p>
-
+  
   <a href="#paymentGuide"
      class="primary-btn mt-6 inline-flex w-full justify-center rounded-full px-6 py-4 text-sm sm:text-base font-black uppercase tracking-[.14em] transition">
      Bấm để thanh toán khóa học
@@ -195,7 +196,7 @@
 </div>
 
 </div></div></div></section>
-<section id="payment" class="px-4 sm:px-6 lg:px-10 py-5 sm:py-8"><div class="max-w-7xl mx-auto"><div class="mb-5 sm:mb-7 flex items-end justify-between gap-4"><div><p class="mini-kicker text-[#b65c4b] mb-2">Payment Board</p><h2 class="serif text-5xl sm:text-6xl lg:text-7xl leading-none">Thanh toán</h2></div><a href="#register" class="hidden sm:inline-flex primary-btn rounded-full px-5 py-3 text-xs font-black uppercase tracking-[.14em] transition">Up bill</a></div>
+<section id="payment" class="px-4 sm:px-6 lg:px-10 py-5 sm:py-8"><div class="max-w-7xl mx-auto"><div class="mb-5 sm:mb-7 flex items-end justify-between gap-4"><div><p class="mini-kicker text-[var(--red)] mb-2">Payment Board</p><h2 class="serif text-5xl sm:text-6xl lg:text-7xl leading-none">Thanh toán</h2></div><a href="#register" class="hidden sm:inline-flex primary-btn rounded-full px-5 py-3 text-xs font-black uppercase tracking-[.14em] transition">Up bill</a></div>
 <div id="paymentGuide" class="mobile-payment-guide mobile-only">
   <h3>3 bước thanh toán</h3>
   <div class="mobile-payment-steps">
@@ -207,22 +208,25 @@
 <div class="grid lg:grid-cols-[1.05fr_.95fr] gap-5 lg:gap-7 items-start"><div class="pin rounded-[34px] overflow-hidden"><div class="p-5 sm:p-6 bg-[#fff3e5] border-b border-black/10"><p class="mini-kicker text-[#6f7d5a] mb-1">Payment Details</p><h3 class="text-2xl sm:text-3xl font-black">Thông tin chuyển khoản</h3></div><div class="divide-y divide-black/10 bg-white"><div class="p-5"><p class="mini-kicker text-[#7a675c] mb-1">Ngân hàng</p><p class="font-black text-xl" id="bankName">Đang tải...</p></div><div class="p-5 flex items-center justify-between gap-3"><div class="min-w-0"><p class="mini-kicker text-[#7a675c] mb-1">Số tài khoản</p><p class="font-black text-2xl break-all" id="bankAccount">Đang tải...</p></div><button onclick="copyValue('bankAccount')" class="shrink-0 dark-btn rounded-full px-4 py-2 text-xs font-black uppercase tracking-wider transition">Copy</button></div><div class="p-5"><p class="mini-kicker text-[#7a675c] mb-1">Chủ tài khoản</p><p class="font-black text-xl" id="bankOwner">Đang tải...</p></div><div class="p-5 bg-[#fff8f0]">
 <div class="flex items-center justify-between gap-3">
 <div class="min-w-0">
-<p class="mini-kicker text-[#b65c4b] mb-1">Số tiền</p>
-<p class="serif font-black text-5xl text-[#b65c4b]" id="pricePayment">Đang tải...</p>
+<p class="mini-kicker text-[var(--red)] mb-1">Số tiền</p>
+<p class="serif font-black text-5xl text-[var(--red)]" id="pricePayment">Đang tải...</p>
 <div class="mobile-mini-actions mobile-only">
   <a href="#qrSection" class="mobile-qr-btn">Xem mã QR chuyển khoản nhanh tại đây</a>
 </div>
 </div>
 <button onclick="copyValue('price')" class="shrink-0 dark-btn rounded-full px-4 py-2 text-xs font-black uppercase tracking-wider transition">Copy</button>
 </div>
-</div><div class="p-5 bg-[#241712] text-white flex items-center justify-between gap-3"><div class="min-w-0"><p class="mini-kicker text-[#f1ba72] mb-1">Nội dung chuyển khoản</p><p class="font-black text-xl break-words" id="transferNote">Đang tải...</p></div><button onclick="copyValue('transferNote')" class="shrink-0 bg-[#f1ba72] text-[#241712] rounded-full px-4 py-2 text-xs font-black uppercase tracking-wider hover:brightness-105 transition">Copy</button></div><a href="#register" class="desktop-only block bg-[#b65c4b] text-white px-5 py-4 text-center font-black uppercase tracking-[.15em] hover:brightness-105 transition shadow-[0_18px_35px_rgba(182,92,75,.30)]">
+</div><div class="p-5 bg-[#241712] text-white flex items-center justify-between gap-3"><div class="min-w-0"><p class="mini-kicker text-[#f1ba72] mb-1">Nội dung chuyển khoản</p><p class="font-black text-xl break-words" id="transferNote">Đang tải...</p></div><button onclick="copyValue('transferNote')" class="shrink-0 bg-[#f1ba72] text-[#241712] rounded-full px-4 py-2 text-xs font-black uppercase tracking-wider hover:brightness-105 transition">Copy</button></div><a href="#register" class="desktop-only block bg-[var(--red)] text-white px-5 py-4 text-center font-black uppercase tracking-[.15em] hover:brightness-105 transition shadow-[0_18px_35px_rgba(var(--red-rgba),0.30)]">
   <span class="arrow-blink">👇</span>
   GỬI BILL CK THÀNH CÔNG
   <span class="arrow-blink">👇</span>
 </a></div></div><div id="qrSection" class="pin rounded-[34px] overflow-hidden bg-[#241712] text-white"><div class="p-5 sm:p-6 border-b border-white/10 text-center"><p class="mini-kicker text-[#f1ba72] mb-2">Mã QR Chuyển khoản</p><h3 class="serif text-5xl sm:text-6xl leading-none">Scan<br>to Pay</h3></div><div class="p-5 sm:p-6 text-center"><div id="qrBox" class="hidden"><div class="bg-white rounded-[30px] p-3 inline-block w-full max-w-[300px] mx-auto shadow-[0_18px_38px_rgba(0,0,0,.25)]"><img id="qrImage" src="" alt="QR chuyển khoản" loading="lazy" decoding="async" class="mx-auto w-full rounded-[22px] bg-white p-2"></div><p class="text-xs text-white/58 mt-3 font-bold">Quét mã bằng app ngân hàng để tự động điền thông tin.</p></div><div id="qrEmpty" class="text-center text-white/62 py-8 font-bold">Chưa có QR. Hãy thêm <b>qrImageUrl</b> trong tab Config.</div><div id="downloadQrBox" class="hidden mt-5"><button onclick="downloadQR()" class="primary-btn w-full py-3 px-6 rounded-full text-sm font-black uppercase tracking-[.14em] transition">Tải QR về máy</button></div>
 <a href="#register" class="mobile-bill-after-qr mobile-only">Tôi đã chuyển khoản - Gửi bill</a>
 </div></div></div></div></div></section>
-<section id="register" class="px-4 sm:px-6 lg:px-10 py-5 sm:py-8 pb-12 sm:pb-16"><div class="max-w-7xl mx-auto grid lg:grid-cols-[.78fr_1.22fr] gap-5 lg:gap-7 items-stretch"><div class="pin rounded-[34px] p-5 sm:p-7 bg-[#b65c4b] text-white"><p class="mini-kicker text-white/70 mb-3">Upload Receipt</p><h2 class="serif text-5xl sm:text-6xl lg:text-7xl leading-none">Gửi bill<br>xác nhận</h2><p class="mt-5 text-white/78 text-base sm:text-lg font-bold leading-relaxed">Sau khi thanh toán, nhập Gmail nhận khóa học và upload ảnh bill. Admin sẽ kiểm tra và cấp quyền học trong vòng 24 giờ.</p></div><div class="pin rounded-[34px] p-5 sm:p-7 bg-white"><form id="regForm" class="space-y-6"><div><label class="block font-black mb-2 text-[#241712] uppercase tracking-wider text-sm">Gmail nhận khóa học</label><input type="email" id="gmail" required class="input-pin w-full rounded-[24px] p-4 text-lg font-bold" placeholder="Nhập Gmail của bạn"></div><div><label class="block font-black mb-2 text-[#241712] uppercase tracking-wider text-sm">Ảnh bill chuyển khoản</label><label class="block border-2 border-dashed border-black/18 rounded-[30px] p-6 sm:p-8 text-center cursor-pointer hover:bg-[#faf7f2] transition"><input type="file" id="bill" required accept="image/jpeg,image/png,image/webp" class="hidden"><div id="uploadText"><p class="serif text-6xl mb-1 text-[#b65c4b]">+</p><p class="font-black text-lg text-[#241712]">Chọn ảnh bill để xác nhận</p><p class="text-sm text-black/55 mt-1 font-bold">Chỉ nhận JPG, PNG, WEBP. Tối đa 5MB.</p></div><img id="billPreview" src="" alt="Xem trước bill" class="hidden mt-5 rounded-[24px] border border-black/10 max-h-[520px] w-full object-contain mx-auto shadow-lg bg-white"></label></div><div id="progressBox" class="hidden"><div class="flex justify-between text-sm mb-2 font-black text-[#241712]"><span id="progressText">Đang xử lý...</span><span id="progressPercent">0%</span></div><div class="w-full h-3 bg-[#e9dfd2] rounded-full overflow-hidden"><div id="progressBar" class="progress-bar h-full rounded-full" style="width:0%"></div></div></div><button id="btnSubmit" type="submit" class="dark-btn w-full py-4 rounded-full font-black text-lg transition disabled:opacity-60 disabled:cursor-not-allowed uppercase tracking-[.15em]">Gửi đăng ký</button><p class="text-sm text-black/55 text-center leading-relaxed font-bold">Gmail của bạn sẽ được cấp quyền truy cập thư mục khóa học sau khi xác nhận thanh toán.</p></form></div></div></section>
+<section id="register" class="px-4 sm:px-6 lg:px-10 py-5 sm:py-8 pb-12 sm:pb-16"><div class="max-w-7xl mx-auto grid lg:grid-cols-[.78fr_1.22fr] gap-5 lg:gap-7 items-stretch"><div class="pin rounded-[34px] p-5 sm:p-7 bg-[var(--red)] text-white"><p class="mini-kicker text-white/70 mb-3">Upload Receipt</p><h2 class="serif text-5xl sm:text-6xl lg:text-7xl leading-none">Gửi bill<br>xác nhận</h2><p class="mt-5 text-white/78 text-base sm:text-lg font-bold leading-relaxed">Sau khi thanh toán, nhập Gmail nhận khóa học và upload ảnh bill. Admin sẽ kiểm tra và cấp quyền học trong vòng 24 giờ.</p></div><div class="pin rounded-[34px] p-5 sm:p-7 bg-white"><form id="regForm" class="space-y-6"><div><label class="block font-black mb-2 text-[#241712] uppercase tracking-wider text-sm">Gmail nhận khóa học</label><input type="email" id="gmail" required class="input-pin w-full rounded-[24px] p-4 text-lg font-bold" placeholder="Nhập Gmail của bạn"></div><div><label class="block font-black mb-2 text-[#241712] uppercase tracking-wider text-sm">Ảnh bill chuyển khoản</label><label class="block border-2 border-dashed border-black/18 rounded-[30px] p-6 sm:p-8 text-center cursor-pointer hover:bg-[#faf7f2] transition"><input type="file" id="bill" required accept="image/jpeg,image/png,image/webp" class="hidden"><div id="uploadText"><p class="serif text-6xl mb-1 text-[var(--red)]">+</p><p class="font-black text-lg text-[#241712]">Chọn ảnh bill để xác nhận</p><p class="text-sm text-black/55 mt-1 font-bold">Chỉ nhận JPG, PNG, WEBP. Tối đa 5MB.</p></div><img id="billPreview" src="" alt="Xem trước bill" class="hidden mt-5 rounded-[24px] border border-black/10 max-h-[520px] w-full object-contain mx-auto shadow-lg bg-white"></label></div><div id="progressBox" class="hidden"><div class="flex justify-between text-sm mb-2 font-black text-[#241712]"><span id="progressText">Đang xử lý...</span><span id="progressPercent">0%</span></div><div class="w-full h-3 bg-[#e9dfd2] rounded-full overflow-hidden"><div id="progressBar" class="progress-bar h-full rounded-full" style="width:0%"></div></div></div><button id="btnSubmit" type="submit" class="dark-btn w-full py-4 rounded-full font-black text-lg transition disabled:opacity-60 disabled:cursor-not-allowed uppercase tracking-[.15em]">Gửi đăng ký</button><p class="text-sm text-black/55 text-center leading-relaxed font-bold">Gmail của bạn sẽ được cấp quyền truy cập thư mục khóa học sau khi xác nhận thanh toán.</p></form></div></div></section>
+<footer class="py-8 text-center text-xs text-[#7a675c] font-medium border-t border-black/10 max-w-7xl mx-auto brand-footer-bind">
+  <!-- Footer text will be populated dynamically -->
+</footer>
 </div>
 <div id="mobilePaymentSticky" class="mobile-sticky-payment mobile-only">
   <a id="mobileStickyAction" href="#register">Tôi đã chuyển khoản - Gửi bill</a>
