@@ -29,6 +29,18 @@
 </head>
 <body class="bg-slate-50 text-slate-800 min-h-screen pb-16">
 
+  <!-- GLOBAL LOADER OVERLAY -->
+  <div id="globalLoader" class="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
+    <div class="bg-white/95 border border-slate-100 p-6 rounded-3xl shadow-2xl flex flex-col items-center gap-4 max-w-[280px] w-full mx-4 transform scale-95 transition-transform duration-300" id="loaderCard">
+      <div class="relative w-16 h-16">
+        <div class="absolute inset-0 rounded-full border-4 border-slate-100"></div>
+        <div class="absolute inset-0 rounded-full border-4 border-green-500 border-t-transparent animate-spin"></div>
+        <div id="loaderPercent" class="absolute inset-0 flex items-center justify-center text-xs font-black text-slate-800">0%</div>
+      </div>
+      <div id="loaderText" class="text-xs font-extrabold text-slate-600 text-center tracking-tight leading-normal">Đang xử lý...</div>
+    </div>
+  </div>
+
   <!-- LOGIN MODAL (FULL SCREEN OVERLAY) -->
   <div id="loginOverlay" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xl transition-all duration-500 hidden">
     <div class="bg-white rounded-3xl p-8 max-w-md w-full mx-4 shadow-2xl border border-slate-100 transform scale-95 transition-transform duration-300" id="loginCard">
@@ -737,6 +749,7 @@
 
       const method = id ? "PUT" : "POST";
 
+      showLoader(id ? "Đang cập nhật khóa học..." : "Đang tạo khóa học mới...");
       try {
         const response = await fetch("/api/courses", {
           method,
@@ -758,6 +771,8 @@
         }
       } catch (err) {
         alert("Lỗi kết nối máy chủ");
+      } finally {
+        hideLoader();
       }
     });
 
@@ -783,6 +798,7 @@
         qrImageUrl: course.qrImageUrl
       };
 
+      showLoader("Đang cập nhật trạng thái hoạt động...");
       try {
         const response = await fetch("/api/courses", {
           method: "PUT",
@@ -802,6 +818,8 @@
         }
       } catch (err) {
         alert("Lỗi kết nối");
+      } finally {
+        hideLoader();
       }
     }
 
@@ -810,6 +828,7 @@
       const ok = confirm(`Bạn có chắc chắn muốn xóa khóa học "${name}"?\nThao tác này sẽ xóa vĩnh viễn khóa học khỏi hệ thống.`);
       if (!ok) return;
 
+      showLoader("Đang xóa khóa học...");
       try {
         const response = await fetch("/api/courses", {
           method: "DELETE",
@@ -829,6 +848,8 @@
         }
       } catch (err) {
         alert("Lỗi kết nối");
+      } finally {
+        hideLoader();
       }
     }
 
@@ -837,7 +858,7 @@
       const course = allCourses.find(c => c.slug === slug);
       if (!course) return;
       
-      showToast("Đang đồng bộ khóa học...");
+      showLoader("Đang đồng bộ khóa học...");
       
       const payload = {
         id: course.id,
@@ -875,7 +896,64 @@
         }
       } catch (err) {
         alert("Lỗi kết nối");
+      } finally {
+        hideLoader();
       }
+    }
+
+    // 10. PROGRESSIVE LOADER OVERLAY HELPERS
+    let loaderInterval = null;
+    function showLoader(text = "Đang xử lý...") {
+      const loader = document.getElementById("globalLoader");
+      const loaderCard = document.getElementById("loaderCard");
+      const loaderText = document.getElementById("loaderText");
+      const loaderPercent = document.getElementById("loaderPercent");
+      if (!loader) return;
+      
+      loaderText.innerText = text;
+      loaderPercent.innerText = "0%";
+      loader.classList.remove("hidden");
+      setTimeout(() => {
+        loader.classList.remove("opacity-0");
+        if (loaderCard) loaderCard.classList.remove("scale-95");
+      }, 10);
+      
+      let percent = 0;
+      if (loaderInterval) clearInterval(loaderInterval);
+      
+      loaderInterval = setInterval(() => {
+        if (percent < 40) {
+          percent += Math.floor(Math.random() * 8) + 4;
+        } else if (percent < 75) {
+          percent += Math.floor(Math.random() * 5) + 2;
+        } else if (percent < 95) {
+          percent += 1;
+        }
+        if (percent > 95) percent = 95;
+        loaderPercent.innerText = `${percent}%`;
+      }, 350);
+    }
+    
+    function hideLoader() {
+      const loader = document.getElementById("globalLoader");
+      const loaderCard = document.getElementById("loaderCard");
+      const loaderPercent = document.getElementById("loaderPercent");
+      if (!loader) return;
+      
+      if (loaderPercent) loaderPercent.innerText = "100%";
+      
+      if (loaderInterval) {
+        clearInterval(loaderInterval);
+        loaderInterval = null;
+      }
+      
+      setTimeout(() => {
+        loader.classList.add("opacity-0");
+        if (loaderCard) loaderCard.classList.add("scale-95");
+        setTimeout(() => {
+          loader.classList.add("hidden");
+        }, 300);
+      }, 200);
     }
 
     // START CONTROLLER
