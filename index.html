@@ -239,11 +239,24 @@ document.getElementById('bill').addEventListener('change',function(){const file=
 document.getElementById('regForm').addEventListener('submit',async(e)=>{e.preventDefault();const btn=document.getElementById('btnSubmit');btn.disabled=true;btn.innerText='ĐANG XỬ LÝ...';setProgress(15,'Đang kiểm tra dữ liệu...');const gmail=document.getElementById('gmail').value.trim();const file=document.getElementById('bill').files[0];if(!file){alert('Vui lòng chọn ảnh bill chuyển khoản');btn.disabled=false;btn.innerText='GỬI ĐĂNG KÝ';return}const allowedTypes=['image/jpeg','image/png','image/webp'];if(!allowedTypes.includes(file.type)){alert('Chỉ nhận file JPG, PNG hoặc WEBP.');btn.disabled=false;btn.innerText='GỬI ĐĂNG KÝ';return}if(file.size>5*1024*1024){alert('Ảnh bill quá lớn. Vui lòng chọn ảnh dưới 5MB.');btn.disabled=false;btn.innerText='GỬI ĐĂNG KÝ';return}setProgress(35,'Đang đọc ảnh bill...');const reader=new FileReader();reader.readAsDataURL(file);reader.onloadend=async()=>{const base64Data=reader.result.split(',')[1];try{setProgress(60,'Đang upload bill...');const response=await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({gmail,billName:file.name,billType:file.type,billData:base64Data,course:new URLSearchParams(window.location.search).get('course')||'donut',courseName:window.currentCourseName||''})});            setProgress(90,'Đang ghi nhận đăng ký...');
             const data=await response.json();
             if(response.ok){
-              setProgress(100,'Hoàn tất');
+              setProgress(100,'Đã nhận thông tin đăng ký. Vui lòng đăng nhập Gmail để theo dõi khóa học của bạn.');
               showToast('Đăng ký thành công');
-              alert('Đã nhận thông tin đăng ký.\nVui lòng đăng nhập Gmail để theo dõi khóa học của bạn.');
-              window.location.href = "https://yeunauan.live/my-courses";
-            }else{alert(data.error||'Lỗi hệ thống')}}catch(err){alert('Không thể kết nối server')}btn.disabled=false;btn.innerText='GỬI ĐĂNG KÝ'}});
+              btn.innerText = 'ĐÃ ĐĂNG KÝ THÀNH CÔNG!';
+              btn.disabled = true;
+              setTimeout(() => {
+                window.location.href = "https://yeunauan.live/my-courses";
+              }, 2000);
+            }else{
+              alert(data.error||'Lỗi hệ thống');
+              btn.disabled=false;
+              btn.innerText='GỬI ĐĂNG KÝ';
+            }
+          }catch(err){
+            alert('Không thể kết nối server');
+            btn.disabled=false;
+            btn.innerText='GỬI ĐĂNG KÝ';
+          }
+        }
 
 function setupMobilePaymentSticky(){
   const sticky=document.getElementById('mobilePaymentSticky');
