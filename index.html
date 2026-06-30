@@ -291,18 +291,8 @@ document.getElementById('regForm').addEventListener('submit',async(e)=>{
       const data=await response.json();
       if(response.ok){
         console.log('[Checkout] register success', data);
-        setProgress(100,'Đã nhận thông tin đăng ký. Vui lòng đăng nhập Gmail để theo dõi khóa học của bạn.');
-        showToast('Đăng ký thành công');
-        btn.innerText = 'ĐÃ ĐĂNG KÝ THÀNH CÔNG!';
-        btn.disabled = true;
         console.log('[Checkout] redirecting to my-courses');
-        setTimeout(() => {
-          try {
-            window.location.href = 'https://yeunauan.live/my-courses';
-          } catch(err) {
-            console.error('[Checkout] redirect failed', err);
-          }
-        }, 1200);
+        window.location.href = 'https://yeunauan.live/my-courses';
       }else{
         console.error('[Checkout] register api failed', data);
         alert(data.error||'Lỗi hệ thống');
