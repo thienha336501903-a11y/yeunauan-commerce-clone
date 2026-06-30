@@ -164,5 +164,29 @@ export async function syncEnrollmentToExternalSystems(orderData, actionType) {
     }
   }
   
+  // Trigger Email số 1 if enrollment is successfully created (approved)
+  if (actionType === "create" && results.lms === "SUCCESS" && results.portal.startsWith("SUCCESS")) {
+    try {
+      await sendApprovalEmail(email, orderData.course_title || courseSlug);
+    } catch (mailErr) {
+      console.error("[Email Hook Error] Failed to send approval email:", mailErr);
+    }
+  }
+  
   return results;
+}
+
+export async function sendApprovalEmail(email, courseName) {
+  console.log(`[Email Hook - TODO] Gửi email số 1 duyệt khóa học đến ${email} cho khóa ${courseName}`);
+  
+  // TODO: Cấu hình SMTP / Resend / Gmail API tại đây để gửi email thực tế
+  // Ví dụ sử dụng Resend:
+  // const resend = new Resend(process.env.RESEND_API_KEY);
+  // await resend.emails.send({
+  //   from: 'Culinary Academy <academy@yeunauan.live>',
+  //   to: email,
+  //   subject: 'Khóa học của bạn đã được xét duyệt',
+  //   html: `<p>Khóa học <strong>${courseName}</strong> đã được Admin xét duyệt.</p>
+  //          <p>Vui lòng truy cập: <a href="https://yeunauan.live/my-courses">https://yeunauan.live/my-courses</a> để xem trạng thái khóa học.</p>`
+  // });
 }
