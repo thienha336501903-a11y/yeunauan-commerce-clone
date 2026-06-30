@@ -1,3 +1,5 @@
+import { supabase } from "./supabase.js";
+
 export async function syncCourseToExternalSystems(courseData) {
   const secret = process.env.INTERNAL_SYNC_SECRET;
   const sys1Url = process.env.SYSTEM1_URL;
@@ -9,6 +11,21 @@ export async function syncCourseToExternalSystems(courseData) {
     results.error = "Missing INTERNAL_SYNC_SECRET";
     return results;
   }
+
+  // Fetch is_published from Supabase B to verify publish status
+  let isPublished = false;
+  try {
+    const { data: courseRow } = await supabase
+      .from("courses")
+      .select("is_published")
+      .eq("slug", courseData.slug)
+      .maybeSingle();
+    if (courseRow) {
+      isPublished = !!courseRow.is_published;
+    }
+  } catch (err) {
+    console.error("Error fetching is_published during syncCourse:", err);
+  }
   
   const payload = {
     action: "syncCourse",
@@ -18,6 +35,7 @@ export async function syncCourseToExternalSystems(courseData) {
     price: courseData.price || "",
     imageUrl: courseData.imageUrl || courseData.image_url || "",
     active: courseData.active !== undefined ? courseData.active : true,
+    isPublished: isPublished,
     teacher: courseData.teacher_name || ""
   };
   
@@ -59,7 +77,8 @@ export async function syncCourseToExternalSystems(courseData) {
           courseSlug: payload.slug,
           title: payload.title,
           imageUrl: payload.imageUrl,
-          active: payload.active
+          active: payload.active,
+          isPublished: payload.isPublished
         })
       });
       if (res.ok) {
