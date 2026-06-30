@@ -236,28 +236,87 @@ function setProgress(percent,text){document.getElementById('progressBox').classL
 async function loadConfig(){try{const params=new URLSearchParams(window.location.search);const course=params.get('course')||'donut';const res=await fetch(`/api/config?course=${encodeURIComponent(course)}`,{cache:'no-store'});const data=await res.json();window.currentCourseName=data.courseName||'';document.getElementById('courseName').innerText=window.currentCourseName;document.getElementById('courseImage').src=data.imageUrl||'';document.getElementById('bankName').innerText=data.bankName||'';document.getElementById('bankAccount').innerText=data.bankAccount||'';document.getElementById('bankOwner').innerText=data.bankOwner||'';document.getElementById('price').innerText=data.price||'';document.getElementById('pricePayment').innerText=data.price||'';document.getElementById('transferNote').innerText=data.transferNote||'';if(data.qrImageUrl&&data.qrImageUrl.trim()!==''){document.getElementById('qrImage').src=data.qrImageUrl;document.getElementById('qrBox').classList.remove('hidden');document.getElementById('downloadQrBox').classList.remove('hidden');document.getElementById('qrEmpty').classList.add('hidden')}else{document.getElementById('qrBox').classList.add('hidden');document.getElementById('downloadQrBox').classList.add('hidden');document.getElementById('qrEmpty').classList.remove('hidden')}}catch(err){console.log('Không tải được cấu hình:',err)}}
 loadConfig();
 document.getElementById('bill').addEventListener('change',function(){const file=this.files[0];const preview=document.getElementById('billPreview');const uploadText=document.getElementById('uploadText');if(!file){preview.classList.add('hidden');preview.src='';uploadText.classList.remove('hidden');return}const allowedTypes=['image/jpeg','image/png','image/webp'];if(!allowedTypes.includes(file.type)){alert('Chỉ nhận file JPG, PNG hoặc WEBP.');this.value='';preview.classList.add('hidden');preview.src='';uploadText.classList.remove('hidden');return}if(file.size>5*1024*1024){alert('Ảnh bill quá lớn. Vui lòng chọn ảnh dưới 5MB.');this.value='';preview.classList.add('hidden');preview.src='';uploadText.classList.remove('hidden');return}preview.src=URL.createObjectURL(file);preview.classList.remove('hidden');uploadText.classList.add('hidden')});
-document.getElementById('regForm').addEventListener('submit',async(e)=>{e.preventDefault();const btn=document.getElementById('btnSubmit');btn.disabled=true;btn.innerText='ĐANG XỬ LÝ...';setProgress(15,'Đang kiểm tra dữ liệu...');const gmail=document.getElementById('gmail').value.trim();const file=document.getElementById('bill').files[0];if(!file){alert('Vui lòng chọn ảnh bill chuyển khoản');btn.disabled=false;btn.innerText='GỬI ĐĂNG KÝ';return}const allowedTypes=['image/jpeg','image/png','image/webp'];if(!allowedTypes.includes(file.type)){alert('Chỉ nhận file JPG, PNG hoặc WEBP.');btn.disabled=false;btn.innerText='GỬI ĐĂNG KÝ';return}if(file.size>5*1024*1024){alert('Ảnh bill quá lớn. Vui lòng chọn ảnh dưới 5MB.');btn.disabled=false;btn.innerText='GỬI ĐĂNG KÝ';return}setProgress(35,'Đang đọc ảnh bill...');const reader=new FileReader();reader.readAsDataURL(file);reader.onloadend=async()=>{const base64Data=reader.result.split(',')[1];try{setProgress(60,'Đang upload bill...');const response=await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({gmail,billName:file.name,billType:file.type,billData:base64Data,course:new URLSearchParams(window.location.search).get('course')||'donut',courseName:window.currentCourseName||''})});            setProgress(90,'Đang ghi nhận đăng ký...');
-            const data=await response.json();
-            if(response.ok){
-              setProgress(100,'Đã nhận thông tin đăng ký. Vui lòng đăng nhập Gmail để theo dõi khóa học của bạn.');
-              showToast('Đăng ký thành công');
-              btn.innerText = 'ĐÃ ĐĂNG KÝ THÀNH CÔNG!';
-              btn.disabled = true;
-              setTimeout(() => {
-                window.location.href = "https://yeunauan.live/my-courses";
-              }, 2000);
-            }else{
-              alert(data.error||'Lỗi hệ thống');
-              btn.disabled=false;
-              btn.innerText='GỬI ĐĂNG KÝ';
-            }
-          }catch(err){
-            alert('Không thể kết nối server');
-            btn.disabled=false;
-            btn.innerText='GỬI ĐĂNG KÝ';
-          }
-        };
+document.getElementById('regForm').addEventListener('submit',async(e)=>{
+  e.preventDefault();
+  const btn=document.getElementById('btnSubmit');
+  btn.disabled=true;
+  btn.innerText='ĐANG XỬ LÝ...';
+  console.log('[Checkout] submit started');
+  setProgress(15,'Đang kiểm tra dữ liệu...');
+  const gmail=document.getElementById('gmail').value.trim();
+  const file=document.getElementById('bill').files[0];
+  if(!file){
+    alert('Vui lòng chọn ảnh bill chuyển khoản');
+    btn.disabled=false;
+    btn.innerText='GỬI ĐĂNG KÝ';
+    console.log('[Checkout] submit failed: missing file');
+    return;
+  }
+  const allowedTypes=['image/jpeg','image/png','image/webp'];
+  if(!allowedTypes.includes(file.type)){
+    alert('Chỉ nhận file JPG, PNG hoặc WEBP.');
+    btn.disabled=false;
+    btn.innerText='GỬI ĐĂNG KÝ';
+    console.log('[Checkout] submit failed: invalid file type');
+    return;
+  }
+  if(file.size>5*1024*1024){
+    alert('Ảnh bill quá lớn. Vui lòng chọn ảnh dưới 5MB.');
+    btn.disabled=false;
+    btn.innerText='GỬI ĐĂNG KÝ';
+    console.log('[Checkout] submit failed: file too large');
+    return;
+  }
+  setProgress(35,'Đang đọc ảnh bill...');
+  const reader=new FileReader();
+  reader.readAsDataURL(file);
+  reader.onloadend=async()=>{
+    const base64Data=reader.result.split(',')[1];
+    console.log('[Checkout] upload bill success');
+    try{
+      setProgress(60,'Đang upload bill...');
+      const response=await fetch('/api/register',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          gmail,
+          billName:file.name,
+          billType:file.type,
+          billData:base64Data,
+          course:new URLSearchParams(window.location.search).get('course')||'donut',
+          courseName:window.currentCourseName||''
+        })
       });
+      setProgress(90,'Đang ghi nhận đăng ký...');
+      const data=await response.json();
+      if(response.ok){
+        console.log('[Checkout] register success', data);
+        setProgress(100,'Đã nhận thông tin đăng ký. Vui lòng đăng nhập Gmail để theo dõi khóa học của bạn.');
+        showToast('Đăng ký thành công');
+        btn.innerText = 'ĐÃ ĐĂNG KÝ THÀNH CÔNG!';
+        btn.disabled = true;
+        console.log('[Checkout] redirecting to my-courses');
+        setTimeout(() => {
+          try {
+            window.location.href = 'https://yeunauan.live/my-courses';
+          } catch(err) {
+            console.error('[Checkout] redirect failed', err);
+          }
+        }, 1200);
+      }else{
+        console.error('[Checkout] register api failed', data);
+        alert(data.error||'Lỗi hệ thống');
+        btn.disabled=false;
+        btn.innerText='GỬI ĐĂNG KÝ';
+      }
+    }catch(err){
+      console.error('[Checkout] network error', err);
+      alert('Không thể kết nối server');
+      btn.disabled=false;
+      btn.innerText='GỬI ĐĂNG KÝ';
+    }
+  };
+});
 
 function setupMobilePaymentSticky(){
   const sticky=document.getElementById('mobilePaymentSticky');
