@@ -64,6 +64,28 @@ export default async function handler(req, res) {
       throw insertError;
     }
 
+    // Sync pending order to Student Portal (Supabase A)
+    const system1Url = process.env.SYSTEM1_URL;
+    const syncSecret = process.env.INTERNAL_SYNC_SECRET;
+    if (system1Url && syncSecret) {
+      try {
+        await fetch(`${system1Url.trim().replace(/\/$/, '')}/api/sync`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Sync-Secret": syncSecret
+          },
+          body: JSON.stringify({
+            action: "syncPendingOrder",
+            email: gmail,
+            courseSlug: courseSlug
+          })
+        });
+      } catch (syncErr) {
+        console.error("Error syncing pending order to Portal:", syncErr);
+      }
+    }
+
     return res.status(200).json({
       success: true,
       file: billLink,

@@ -242,7 +242,7 @@ document.getElementById('regForm').addEventListener('submit',async(e)=>{e.preven
               setProgress(100,'Hoàn tất');
               showToast('Đăng ký thành công');
               alert('Đã nhận thông tin đăng ký.\nVui lòng đăng nhập Gmail để theo dõi khóa học của bạn.');
-              window.location.href = `https://yeunauan.live/my-courses?email=${encodeURIComponent(gmail)}`;
+              window.location.href = "https://yeunauan.live/my-courses";
             }else{alert(data.error||'Lỗi hệ thống')}}catch(err){alert('Không thể kết nối server')}btn.disabled=false;btn.innerText='GỬI ĐĂNG KÝ'}});
 
 function setupMobilePaymentSticky(){
