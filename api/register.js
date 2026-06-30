@@ -25,7 +25,16 @@ export default async function handler(req, res) {
     }
 
     const courseSlug = course || "donut";
-    const finalCourseName = courseName || courseSlug;
+    
+    // Fetch course details from Supabase B
+    const { data: courseRec } = await supabase
+      .from("courses")
+      .select("image_url, title")
+      .eq("slug", courseSlug)
+      .maybeSingle();
+
+    const finalCourseName = courseRec?.title || courseName || courseSlug;
+    const thumbnail = courseRec?.image_url || "";
 
     // Cấu hình Cloudinary
     cloudinary.config({
@@ -78,7 +87,9 @@ export default async function handler(req, res) {
           body: JSON.stringify({
             action: "syncPendingOrder",
             email: gmail,
-            courseSlug: courseSlug
+            courseSlug: courseSlug,
+            courseName: finalCourseName,
+            thumbnail: thumbnail
           })
         });
       } catch (syncErr) {
