@@ -75,9 +75,9 @@ export default async function handler(req, res) {
       {
         folder: folder === "payment-proofs" ? "payment-proofs" : "course-images",
         resource_type: "image",
-        public_id: fileName
-          ? String(fileName).replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 80)
-          : undefined,
+        use_filename: false,
+        unique_filename: true,
+        context: fileName ? { original_filename: String(fileName).slice(0, 120) } : undefined,
         overwrite: false
       }
     );
