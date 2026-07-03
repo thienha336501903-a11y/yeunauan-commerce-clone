@@ -202,7 +202,12 @@
 
         <div>
           <label class="block text-xs uppercase font-extrabold text-slate-500 tracking-wider mb-2">Ảnh Poster Khóa Học (URL)</label>
-          <input type="url" id="courseImageUrlInput" placeholder="Ví dụ: https://images.unsplash.com/photo-..." class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-pink-500 transition text-sm">
+          <div class="flex flex-col sm:flex-row gap-2">
+            <input type="url" id="courseImageUrlInput" placeholder="Ví dụ: https://images.unsplash.com/photo-..." class="flex-1 w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-pink-500 transition text-sm">
+            <button type="button" onclick="triggerCourseImageUpload()" class="px-4 py-3 bg-pink-50 hover:bg-pink-100 text-pink-700 font-black rounded-xl transition text-sm shrink-0">Tải ảnh</button>
+            <input type="file" id="courseImageFileInput" accept="image/jpeg,image/png,image/webp,image/gif" class="hidden" onchange="handleCourseImageUpload(this)">
+          </div>
+          <p id="courseImageUploadStatus" class="text-[11px] text-slate-400 mt-1 min-h-[16px]"></p>
         </div>
 
         <div>
@@ -241,7 +246,12 @@
 
           <div>
             <label class="block text-xs uppercase font-extrabold text-slate-500 tracking-wider mb-2">URL ảnh mã QR ngân hàng (Tùy chọn)</label>
-            <input type="url" id="qrImageUrlInput" placeholder="Ví dụ: https://img.vietqr.io/image/..." class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-pink-500 transition text-sm">
+            <div class="flex flex-col sm:flex-row gap-2">
+              <input type="url" id="qrImageUrlInput" placeholder="Ví dụ: https://img.vietqr.io/image/..." class="flex-1 w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-pink-500 transition text-sm">
+              <button type="button" onclick="triggerQrImageUpload()" class="px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-black rounded-xl transition text-sm shrink-0">Tải QR</button>
+              <input type="file" id="qrImageFileInput" accept="image/jpeg,image/png,image/webp,image/gif" class="hidden" onchange="handleQrImageUpload(this)">
+            </div>
+            <p id="qrImageUploadStatus" class="text-[11px] text-slate-400 mt-1 min-h-[16px]"></p>
             <p class="text-[11px] text-slate-400 mt-1">Dùng công cụ tạo QR nhanh VietQR để tự điền số tiền và nội dung, ví dụ: <i>https://img.vietqr.io/image/MB-0999999999-compact.png?amount=199000&addInfo=DONUT</i></p>
           </div>
         </div>
@@ -415,7 +425,8 @@
         const slug = course.slug || "";
         const name = course.courseName || slug;
         const price = course.price || "";
-        const image = course.imageUrl || "https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&q=80&w=800";
+        const rawImage = course.imageUrl || "";
+        const image = normalizeImageUrl(rawImage) || COURSE_IMAGE_PLACEHOLDER;
         const link = `${origin}/?course=${encodeURIComponent(slug)}`;
         const active = course.active;
         const sortOrder = course.sort_order || 0;
@@ -423,7 +434,7 @@
         return `
           <div class="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden hover:shadow-md transition-all duration-300 flex flex-col">
             <div class="relative h-48 bg-slate-100 overflow-hidden">
-              <img src="${image}" class="w-full h-full object-cover">
+              <img src="${escapeAttr(image)}" data-original-src="${escapeAttr(rawImage || image)}" alt="${escapeAttr(name)}" class="w-full h-full object-cover bg-slate-100" onerror="handleCourseImageError(this, '${escapeAttr(slug)}')">
               <div class="absolute top-4 left-4 flex gap-2">
                 <span class="px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider ${
                   active 
@@ -578,75 +589,181 @@
       return number.toLocaleString("en-US") + "đ";
     }
 
+
+    const COURSE_IMAGE_PLACEHOLDER = "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(`
+      <svg xmlns="http://www.w3.org/2000/svg" width="900" height="520" viewBox="0 0 900 520">
+        <defs>
+          <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#fff7ed"/>
+            <stop offset="1" stop-color="#fce7f3"/>
+          </linearGradient>
+        </defs>
+        <rect width="900" height="520" fill="url(#bg)"/>
+        <circle cx="710" cy="90" r="115" fill="#f9a8d4" opacity="0.25"/>
+        <circle cx="140" cy="440" r="130" fill="#fb923c" opacity="0.18"/>
+        <rect x="310" y="170" width="280" height="180" rx="34" fill="#ffffff" opacity="0.82"/>
+        <path d="M365 308l52-64 45 46 36-38 70 56" fill="none" stroke="#be185d" stroke-width="18" stroke-linecap="round" stroke-linejoin="round" opacity="0.72"/>
+        <circle cx="515" cy="218" r="22" fill="#be185d" opacity="0.65"/>
+        <text x="450" y="405" text-anchor="middle" font-family="Arial, sans-serif" font-size="32" font-weight="800" fill="#831843">Ảnh khóa học</text>
+      </svg>
+    `);
+
+    function escapeAttr(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    function getGoogleDriveFileId(input) {
+      const url = String(input || "").trim();
+      let match = url.match(/drive\.google\.com\/file\/d\/([^/?#]+)/);
+      if (match) return match[1];
+      match = url.match(/[?&]id=([^&#]+)/);
+      if (match) return match[1];
+      match = url.match(/drive\.google\.com\/open\?id=([^&#]+)/);
+      return match ? match[1] : "";
+    }
+
+    function normalizeImageUrl(url) {
+      const value = String(url || "").trim();
+      if (!value) return "";
+      const driveId = getGoogleDriveFileId(value);
+      if (driveId) return `https://drive.google.com/uc?export=view&id=${encodeURIComponent(driveId)}`;
+      return value;
+    }
+
+    function handleCourseImageError(img, slug) {
+      const original = img.getAttribute("data-original-src") || "";
+      console.warn("[course-image] failed to load", { slug, url: original });
+      img.onerror = null;
+      img.src = COURSE_IMAGE_PLACEHOLDER;
+      img.classList.add("object-contain", "p-5");
+    }
+
+    function uploadImageFileToInput(inputElement, file, statusElement, folder = "course-images") {
+      return new Promise((resolve) => {
+        const originalValue = inputElement.value;
+        const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+        if (!file) return resolve(false);
+        if (!allowedTypes.includes(file.type)) {
+          showToast("Chỉ nhận ảnh JPG, PNG, WEBP hoặc GIF.");
+          return resolve(false);
+        }
+        if (file.size > 8 * 1024 * 1024) {
+          showToast("Ảnh quá lớn. Vui lòng chọn ảnh tối đa 8 MB.");
+          return resolve(false);
+        }
+
+        inputElement.disabled = true;
+        inputElement.value = "Đang tải ảnh...";
+        if (statusElement) statusElement.innerText = `Đang tải ${file.name}...`;
+
+        const reader = new FileReader();
+        reader.onerror = () => {
+          inputElement.disabled = false;
+          inputElement.value = originalValue;
+          if (statusElement) statusElement.innerText = "Không đọc được file ảnh.";
+          showToast("Không đọc được file ảnh.");
+          resolve(false);
+        };
+        reader.onloadend = async () => {
+          try {
+            const base64Data = String(reader.result || "").split(",")[1] || "";
+            const response = await fetch("/api/upload", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Admin-Password": currentAdminPassword
+              },
+              body: JSON.stringify({
+                fileData: base64Data,
+                fileType: file.type,
+                fileName: file.name,
+                folder
+              })
+            });
+
+            const text = await response.text();
+            let data = {};
+            try { data = text ? JSON.parse(text) : {}; } catch { data = { error: text }; }
+
+            if (response.ok && data.success && data.url) {
+              inputElement.value = data.url;
+              if (statusElement) statusElement.innerText = "Upload thành công.";
+              showToast("Đã tải ảnh lên thành công!");
+              resolve(true);
+            } else {
+              const message = data.error || `Upload thất bại (HTTP ${response.status})`;
+              inputElement.value = originalValue;
+              if (statusElement) statusElement.innerText = message;
+              showToast("Tải ảnh thất bại: " + message);
+              console.error("[admin-upload-image] server rejected upload", { status: response.status, message });
+              resolve(false);
+            }
+          } catch (err) {
+            const message = err.message || "Không thể kết nối API upload.";
+            inputElement.value = originalValue;
+            if (statusElement) statusElement.innerText = message;
+            showToast("Lỗi upload ảnh: " + message);
+            console.error("[admin-upload-image] request failed", err);
+            resolve(false);
+          } finally {
+            inputElement.disabled = false;
+          }
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function triggerCourseImageUpload() {
+      document.getElementById("courseImageFileInput")?.click();
+    }
+
+    function triggerQrImageUpload() {
+      document.getElementById("qrImageFileInput")?.click();
+    }
+
+    async function handleCourseImageUpload(input) {
+      const target = document.getElementById("courseImageUrlInput");
+      const status = document.getElementById("courseImageUploadStatus");
+      await uploadImageFileToInput(target, input.files?.[0], status, "course-images");
+      input.value = "";
+    }
+
+    async function handleQrImageUpload(input) {
+      const target = document.getElementById("qrImageUrlInput");
+      const status = document.getElementById("qrImageUploadStatus");
+      await uploadImageFileToInput(target, input.files?.[0], status, "course-images");
+      input.value = "";
+    }
     function setupImagePaste(inputElement) {
       if (!inputElement) return;
 
       inputElement.addEventListener("paste", async (e) => {
-        const items = (e.clipboardData || window.clipboardData).items;
+        const items = (e.clipboardData || window.clipboardData)?.items || [];
         let imageItem = null;
-        
         for (const item of items) {
           if (item.type.indexOf("image") !== -1) {
             imageItem = item;
             break;
           }
         }
+        if (!imageItem) return;
 
-        if (imageItem) {
-          e.preventDefault();
+        e.preventDefault();
+        const file = imageItem.getAsFile();
+        if (!file) return;
 
-          const file = imageItem.getAsFile();
-          if (!file) return;
-
-          const originalValue = inputElement.value;
-          
-          inputElement.disabled = true;
-          inputElement.value = "Đang tải ảnh...";
-          inputElement.classList.add("bg-slate-100", "text-slate-400");
-
-          try {
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onloadend = async () => {
-              const base64Data = reader.result.split(',')[1];
-              const payload = {
-                fileData: base64Data,
-                fileType: file.type
-              };
-
-              try {
-                const response = await fetch("/api/upload", {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    "X-Admin-Password": currentAdminPassword
-                  },
-                  body: JSON.stringify(payload)
-                });
-
-                const data = await response.json();
-
-                if (response.ok && data.success && data.url) {
-                  inputElement.value = data.url;
-                  showToast("Đã tải ảnh lên thành công!");
-                } else {
-                  showToast("Tải ảnh thất bại: " + (data.error || "Lỗi không xác định"));
-                  inputElement.value = originalValue;
-                }
-              } catch (err) {
-                showToast("Lỗi kết nối máy chủ khi tải ảnh");
-                inputElement.value = originalValue;
-              } finally {
-                inputElement.disabled = false;
-                inputElement.classList.remove("bg-slate-100", "text-slate-400");
-              }
-            };
-          } catch (err) {
-            showToast("Lỗi đọc ảnh từ clipboard");
-            inputElement.value = originalValue;
-            inputElement.disabled = false;
-            inputElement.classList.remove("bg-slate-100", "text-slate-400");
-          }
+        inputElement.classList.add("bg-slate-100", "text-slate-400");
+        const statusElement = inputElement.id === "qrImageUrlInput"
+          ? document.getElementById("qrImageUploadStatus")
+          : document.getElementById("courseImageUploadStatus");
+        try {
+          await uploadImageFileToInput(inputElement, file, statusElement, "course-images");
+        } finally {
+          inputElement.classList.remove("bg-slate-100", "text-slate-400");
         }
       });
     }
@@ -655,8 +772,12 @@
     function openCourseModal(course = null) {
       const modal = document.getElementById("courseModal");
       const form = document.getElementById("courseForm");
+      const imageStatus = document.getElementById("courseImageUploadStatus");
+      const qrStatus = document.getElementById("qrImageUploadStatus");
       
       modal.classList.remove("hidden");
+      if (imageStatus) imageStatus.innerText = "";
+      if (qrStatus) qrStatus.innerText = "";
       
       if (course) {
         // Edit Mode
