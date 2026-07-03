@@ -642,7 +642,80 @@
       img.classList.add("object-contain", "p-5");
     }
 
-    function uploadImageFileToInput(inputElement, file, statusElement, folder = "course-images") {
+    const ADMIN_UPLOAD_MAX_REQUEST_BYTES = 2.8 * 1024 * 1024;
+    const ADMIN_UPLOAD_MAX_DIMENSION = 1800;
+
+    function readFileAsDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("Không đọc được file ảnh."));
+        reader.onloadend = () => resolve(String(reader.result || ""));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function loadImageForCompression(dataUrl) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error("Không thể xử lý ảnh để nén."));
+        img.src = dataUrl;
+      });
+    }
+
+    async function prepareImageForUpload(file, statusElement) {
+      const originalDataUrl = await readFileAsDataUrl(file);
+      const originalBase64 = originalDataUrl.split(",")[1] || "";
+      const originalBytes = Math.ceil(originalBase64.length * 0.75);
+
+      if (file.type === "image/gif") {
+        if (originalBytes > ADMIN_UPLOAD_MAX_REQUEST_BYTES) {
+          throw new Error("Ảnh GIF quá lớn để upload qua Vercel. Vui lòng dùng JPG/PNG/WEBP hoặc chọn file nhỏ hơn 2.8 MB.");
+        }
+        return {
+          fileData: originalBase64,
+          fileType: file.type,
+          fileName: file.name
+        };
+      }
+
+      const img = await loadImageForCompression(originalDataUrl);
+      const scale = Math.min(1, ADMIN_UPLOAD_MAX_DIMENSION / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height));
+      const width = Math.max(1, Math.round((img.naturalWidth || img.width) * scale));
+      const height = Math.max(1, Math.round((img.naturalHeight || img.height) * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(img, 0, 0, width, height);
+
+      let quality = 0.86;
+      let dataUrl = canvas.toDataURL("image/jpeg", quality);
+      let base64Data = dataUrl.split(",")[1] || "";
+      while (Math.ceil(base64Data.length * 0.75) > ADMIN_UPLOAD_MAX_REQUEST_BYTES && quality > 0.48) {
+        quality -= 0.08;
+        dataUrl = canvas.toDataURL("image/jpeg", quality);
+        base64Data = dataUrl.split(",")[1] || "";
+      }
+
+      if (Math.ceil(base64Data.length * 0.75) > ADMIN_UPLOAD_MAX_REQUEST_BYTES) {
+        throw new Error("Ảnh vẫn quá lớn sau khi nén. Vui lòng chọn ảnh nhỏ hơn hoặc crop lại trước khi tải.");
+      }
+
+      if (statusElement && originalBytes > Math.ceil(base64Data.length * 0.75)) {
+        statusElement.innerText = `Đã nén ảnh còn ${(Math.ceil(base64Data.length * 0.75) / 1024 / 1024).toFixed(1)} MB, đang upload...`;
+      }
+
+      return {
+        fileData: base64Data,
+        fileType: "image/jpeg",
+        fileName: file.name.replace(/\.[^.]+$/, "") + ".jpg"
+      };
+    }
+
+    async function uploadImageFileToInput(inputElement, file, statusElement, folder = "course-images") {
       return new Promise((resolve) => {
         const originalValue = inputElement.value;
         const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
@@ -651,26 +724,14 @@
           showToast("Chỉ nhận ảnh JPG, PNG, WEBP hoặc GIF.");
           return resolve(false);
         }
-        if (file.size > 8 * 1024 * 1024) {
-          showToast("Ảnh quá lớn. Vui lòng chọn ảnh tối đa 8 MB.");
-          return resolve(false);
-        }
 
         inputElement.disabled = true;
         inputElement.value = "Đang tải ảnh...";
         if (statusElement) statusElement.innerText = `Đang tải ${file.name}...`;
 
-        const reader = new FileReader();
-        reader.onerror = () => {
-          inputElement.disabled = false;
-          inputElement.value = originalValue;
-          if (statusElement) statusElement.innerText = "Không đọc được file ảnh.";
-          showToast("Không đọc được file ảnh.");
-          resolve(false);
-        };
-        reader.onloadend = async () => {
+        (async () => {
           try {
-            const base64Data = String(reader.result || "").split(",")[1] || "";
+            const preparedFile = await prepareImageForUpload(file, statusElement);
             const response = await fetch("/api/upload", {
               method: "POST",
               headers: {
@@ -678,9 +739,9 @@
                 "X-Admin-Password": currentAdminPassword
               },
               body: JSON.stringify({
-                fileData: base64Data,
-                fileType: file.type,
-                fileName: file.name,
+                fileData: preparedFile.fileData,
+                fileType: preparedFile.fileType,
+                fileName: preparedFile.fileName,
                 folder
               })
             });
@@ -712,8 +773,7 @@
           } finally {
             inputElement.disabled = false;
           }
-        };
-        reader.readAsDataURL(file);
+        })();
       });
     }
 
