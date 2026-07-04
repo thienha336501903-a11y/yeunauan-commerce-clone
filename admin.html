@@ -429,6 +429,7 @@
         const image = normalizeImageUrl(rawImage) || COURSE_IMAGE_PLACEHOLDER;
         const link = `${origin}/?course=${encodeURIComponent(slug)}`;
         const active = course.active;
+        const isPublished = course.is_published === true;
         const sortOrder = course.sort_order || 0;
 
         return `
@@ -493,6 +494,26 @@
                       Lỗi: ${course.sync_error}
                     </div>
                   ` : ''}
+                </div>
+
+                <!-- Trạng thái nội dung -->
+                <div class="mb-4 rounded-2xl border ${isPublished ? 'border-green-200 bg-green-50' : 'border-orange-200 bg-orange-50'} p-3">
+                  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div>
+                      <p class="text-[10px] uppercase font-black tracking-wider ${isPublished ? 'text-green-700' : 'text-orange-700'}">
+                        Trạng thái nội dung
+                      </p>
+                      <p class="text-sm font-black ${isPublished ? 'text-green-700' : 'text-orange-700'}">
+                        ${isPublished ? '🟢 Sẵn sàng' : '🟠 Chờ lên bài'}
+                      </p>
+                    </div>
+                    <button
+                      onclick="toggleCoursePublished('${id}', ${isPublished})"
+                      class="text-[11px] font-black px-3 py-2 rounded-xl transition ${isPublished ? 'bg-white text-orange-700 border border-orange-200 hover:bg-orange-100' : 'bg-white text-green-700 border border-green-200 hover:bg-green-100'}"
+                    >
+                      ${isPublished ? 'Chuyển chờ lên bài' : 'Chuyển sẵn sàng'}
+                    </button>
+                  </div>
                 </div>
 
                 <div class="bg-slate-50 rounded-2xl p-3 text-xs break-all text-slate-500 mb-5 font-mono flex justify-between items-center border border-slate-100">
@@ -972,6 +993,7 @@
         description: course.description,
         imageUrl: course.imageUrl,
         active: !currentStatus,
+        is_published: course.is_published === true,
         bankName: course.bankName,
         bankAccount: course.bankAccount,
         bankOwner: course.bankOwner,
@@ -999,6 +1021,65 @@
         }
       } catch (err) {
         alert("Lỗi kết nối");
+      } finally {
+        hideLoader();
+      }
+    }
+
+    // 8.1. TOGGLE CONTENT PUBLISH STATUS
+    async function toggleCoursePublished(id, currentPublished) {
+      const course = allCourses.find(c => c.id === id);
+      if (!course) return;
+
+      const nextPublished = !currentPublished;
+      const courseName = course.courseName || course.slug;
+      const message = nextPublished
+        ? `Bạn có chắc muốn chuyển khóa "${courseName}" sang trạng thái Sẵn sàng không?\nHọc viên có quyền học sẽ thấy nút Vào học ngay nếu bài học đã đồng bộ sang Portal.`
+        : `Bạn có chắc muốn chuyển khóa "${courseName}" sang trạng thái Chờ lên bài không?\nHọc viên sẽ chưa vào học được cho đến khi khóa được chuyển lại Sẵn sàng.`;
+
+      if (!confirm(message)) {
+        return;
+      }
+
+      const payload = {
+        id: course.id,
+        slug: course.slug,
+        courseName: course.courseName,
+        price: course.price,
+        sort_order: course.sort_order,
+        teacher_name: course.teacher_name,
+        description: course.description,
+        imageUrl: course.imageUrl,
+        active: course.active,
+        is_published: nextPublished,
+        bankName: course.bankName,
+        bankAccount: course.bankAccount,
+        bankOwner: course.bankOwner,
+        transferNote: course.transferNote,
+        qrImageUrl: course.qrImageUrl
+      };
+
+      showLoader(nextPublished ? "Đang chuyển khóa sang Sẵn sàng..." : "Đang chuyển khóa sang Chờ lên bài...");
+      try {
+        const response = await fetch("/api/courses", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Admin-Password": currentAdminPassword
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await response.json().catch(() => ({}));
+
+        if (response.ok) {
+          showToast(nextPublished ? "Đã chuyển khóa sang Sẵn sàng" : "Đã chuyển khóa sang Chờ lên bài");
+          loadCourses();
+        } else {
+          alert(data.error || "Không thể cập nhật trạng thái nội dung");
+        }
+      } catch (err) {
+        alert("Lỗi kết nối khi cập nhật trạng thái nội dung");
       } finally {
         hideLoader();
       }
@@ -1051,6 +1132,7 @@
         description: course.description,
         imageUrl: course.imageUrl,
         active: course.active,
+        is_published: course.is_published === true,
         bankName: course.bankName,
         bankAccount: course.bankAccount,
         bankOwner: course.bankOwner,

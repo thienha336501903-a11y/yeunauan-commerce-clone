@@ -40,6 +40,7 @@ export default async function handler(req, res) {
         sort_order: c.sort_order,
         description: c.description || "",
         teacher_name: c.teacher_name || "",
+        is_published: c.is_published === true,
         created_at: c.created_at,
         sync_lms_status: c.sync_lms_status || "PENDING",
         sync_portal_status: c.sync_portal_status || "PENDING",
@@ -61,6 +62,7 @@ export default async function handler(req, res) {
         sort_order,
         description,
         teacher_name,
+        is_published,
         bankName,
         bankAccount,
         bankOwner,
@@ -83,6 +85,7 @@ export default async function handler(req, res) {
           sort_order: sort_order !== undefined ? parseInt(sort_order, 10) : 0,
           description: description || "",
           teacher_name: teacher_name || "",
+          is_published: is_published === true,
           raw_data: {
             bankName: bankName || "",
             bankAccount: bankAccount || "",
@@ -137,6 +140,7 @@ export default async function handler(req, res) {
         sort_order,
         description,
         teacher_name,
+        is_published,
         bankName,
         bankAccount,
         bankOwner,
@@ -148,25 +152,31 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "Thiếu ID khóa học để cập nhật" });
       }
 
+      const updatePayload = {
+        slug,
+        title: title || courseName,
+        price,
+        image_url: imageUrl,
+        active: active !== undefined ? active : true,
+        sort_order: sort_order !== undefined ? parseInt(sort_order, 10) : 0,
+        description: description || "",
+        teacher_name: teacher_name || "",
+        raw_data: {
+          bankName: bankName || "",
+          bankAccount: bankAccount || "",
+          bankOwner: bankOwner || "",
+          transferNote: transferNote || "",
+          qrImageUrl: qrImageUrl || ""
+        }
+      };
+
+      if (is_published !== undefined) {
+        updatePayload.is_published = is_published === true;
+      }
+
       const { data, error } = await supabase
         .from("courses")
-        .update({
-          slug,
-          title: title || courseName,
-          price,
-          image_url: imageUrl,
-          active: active !== undefined ? active : true,
-          sort_order: sort_order !== undefined ? parseInt(sort_order, 10) : 0,
-          description: description || "",
-          teacher_name: teacher_name || "",
-          raw_data: {
-            bankName: bankName || "",
-            bankAccount: bankAccount || "",
-            bankOwner: bankOwner || "",
-            transferNote: transferNote || "",
-            qrImageUrl: qrImageUrl || ""
-          }
-        })
+        .update(updatePayload)
         .eq("id", id)
         .select()
         .single();
