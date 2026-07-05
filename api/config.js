@@ -18,13 +18,23 @@ export default async function handler(req, res) {
     }
 
     const rawData = course.raw_data || {};
+    const courseImage =
+      course.image_url ||
+      rawData.imageUrl ||
+      rawData.posterUrl ||
+      rawData.posterImageUrl ||
+      rawData.thumbnail ||
+      rawData.heroUrl ||
+      rawData.heroImageUrl ||
+      rawData.coverUrl ||
+      "";
 
     // Định dạng cấu hình tương thích ngược hoàn toàn với Google Sheets
     const config = {
       course: course.slug,
       courseName: course.title,
       price: course.price || "",
-      imageUrl: course.image_url || "",
+      imageUrl: courseImage,
       bankName: rawData.bankName || "",
       bankAccount: rawData.bankAccount || "",
       bankOwner: rawData.bankOwner || "",

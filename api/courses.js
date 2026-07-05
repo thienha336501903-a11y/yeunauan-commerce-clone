@@ -35,7 +35,7 @@ export default async function handler(req, res) {
         slug: c.slug,
         courseName: c.title,
         price: c.price || "",
-        imageUrl: c.image_url || "",
+        imageUrl: c.image_url || c.raw_data?.imageUrl || c.raw_data?.posterUrl || c.raw_data?.posterImageUrl || c.raw_data?.thumbnail || c.raw_data?.heroUrl || c.raw_data?.heroImageUrl || c.raw_data?.coverUrl || "",
         active: c.active,
         sort_order: c.sort_order,
         description: c.description || "",
@@ -152,16 +152,28 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "Thiếu ID khóa học để cập nhật" });
       }
 
+      const { data: existingCourse, error: existingErr } = await supabase
+        .from("courses")
+        .select("image_url, raw_data")
+        .eq("id", id)
+        .maybeSingle();
+
+      if (existingErr) throw existingErr;
+
+      const existingRawData = existingCourse?.raw_data || {};
+      const nextImageUrl = String(imageUrl || "").trim();
+
       const updatePayload = {
         slug,
         title: title || courseName,
         price,
-        image_url: imageUrl,
+        image_url: nextImageUrl || existingCourse?.image_url || "",
         active: active !== undefined ? active : true,
         sort_order: sort_order !== undefined ? parseInt(sort_order, 10) : 0,
         description: description || "",
         teacher_name: teacher_name || "",
         raw_data: {
+          ...existingRawData,
           bankName: bankName || "",
           bankAccount: bankAccount || "",
           bankOwner: bankOwner || "",
