@@ -686,6 +686,9 @@
                         <div class="mt-1">
                           <button onclick="syncEnrollmentManual('${order.id}')" class="bg-slate-100 hover:bg-pink-50 text-pink-600 hover:text-pink-700 text-[10px] px-2 py-0.5 rounded border border-slate-200 transition font-bold" title="Click để đồng bộ lại học viên này">Re-sync</button>
                         </div>
+                        <div class="mt-1.5 text-[9px] text-slate-400 font-bold leading-normal max-w-[200px]">
+                          ℹ️ Đơn đã duyệt. Muốn đổi Gmail cần dùng chức năng cấp lại riêng bên LMS Admin.
+                        </div>
                       </div>
                       ${order.sync_error ? `<div class="text-[9px] text-rose-500 mt-1 max-w-[200px] break-words" title="${order.sync_error}">Lỗi: ${order.sync_error}</div>` : ''}
                     ` : ''}
@@ -1042,16 +1045,42 @@
     }
 
     // 10. UPDATE ORDER STATUS (PUT API)
+    function escapeHtml(str) {
+      if (!str) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
     async function updateOrderStatus(id, newStatus) {
+      if (newStatus === "Đã duyệt") {
+        const order = allOrders.find(o => o.id === id);
+        if (order) {
+          showApproveConfirmModal(order);
+          return;
+        }
+      }
+      await executeStatusUpdate(id, newStatus);
+    }
+
+    async function executeStatusUpdate(id, newStatus, optionalGmail) {
       showLoader(newStatus === "Đã duyệt" ? "Đang phê duyệt đơn hàng & đồng bộ..." : "Đang cập nhật trạng thái đơn...");
       try {
+        const payload = { id, status: newStatus };
+        if (optionalGmail) {
+          payload.gmail = optionalGmail;
+        }
+
         const response = await fetch("/api/orders", {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
             "X-Admin-Password": currentAdminPassword
           },
-          body: JSON.stringify({ id, status: newStatus })
+          body: JSON.stringify(payload)
         });
 
         if (response.ok) {
@@ -1060,12 +1089,188 @@
         } else {
           const data = await response.json();
           alert(data.error || "Lỗi cập nhật trạng thái");
+          renderOrders();
+          renderPendingGrouped();
         }
       } catch (err) {
         alert("Lỗi kết nối máy chủ");
+        renderOrders();
+        renderPendingGrouped();
       } finally {
         hideLoader();
       }
+    }
+
+    function showApproveConfirmModal(order) {
+      const overlay = document.createElement("div");
+      overlay.id = "approveConfirmModal";
+      overlay.className = "fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4";
+      
+      const dialog = document.createElement("div");
+      dialog.className = "bg-white rounded-3xl max-w-lg w-full overflow-hidden shadow-2xl border border-slate-100 flex flex-col max-h-[90vh]";
+      
+      const header = document.createElement("div");
+      header.className = "px-6 py-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center";
+      header.innerHTML = `
+        <h3 class="text-sm font-black text-slate-900 tracking-tight font-outfit flex items-center gap-2">
+          <span class="text-green-600">⚡</span> Xác Nhận Duyệt Đơn & Cấp Quyền Học
+        </h3>
+        <button type="button" class="text-slate-400 hover:text-slate-600 font-bold text-lg close-btn">✕</button>
+      `;
+      
+      const body = document.createElement("div");
+      body.className = "p-6 overflow-y-auto space-y-4 text-xs text-slate-600 leading-relaxed";
+      
+      const billHtml = order.billLink 
+        ? `
+          <div class="bg-slate-50 p-2.5 rounded-2xl border border-slate-100 flex items-center gap-3">
+            <a href="${order.billLink}" target="_blank" class="w-16 h-16 rounded-xl overflow-hidden bg-white hover:ring-2 hover:ring-pink-500 transition shadow shrink-0 border">
+              <img src="${order.billLink}" class="w-full h-full object-cover">
+            </a>
+            <div>
+              <p class="font-extrabold text-slate-700">Hóa đơn chuyển khoản</p>
+              <p class="text-[10px] text-slate-400">Nhấp vào hình để phóng to hoặc mở tab mới</p>
+            </div>
+          </div>
+        ` 
+        : `
+          <div class="text-slate-400 bg-slate-50 p-3 rounded-2xl border border-slate-100 text-center italic">
+            Không có hình ảnh hóa đơn đính kèm.
+          </div>
+        `;
+        
+      body.innerHTML = `
+        <div class="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl text-amber-800 font-bold flex gap-2 items-start shadow-sm">
+          <span class="text-base leading-none">⚠️</span>
+          <div>
+            Vui lòng kiểm tra Gmail thật kỹ. Hệ thống sẽ cấp quyền học và quyền Google Drive cho Gmail này.
+          </div>
+        </div>
+        
+        <div class="space-y-2">
+          <label class="block text-xs uppercase font-extrabold text-slate-400 tracking-wider">Địa chỉ Gmail học viên (Có thể chỉnh sửa)</label>
+          <input 
+            type="email" 
+            id="modalConfirmGmail" 
+            value="${escapeHtml(order.gmail || '')}" 
+            placeholder="example@gmail.com" 
+            class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:border-pink-500 focus:ring-4 focus:ring-pink-100 transition text-sm font-bold text-slate-900 select-all"
+          >
+          <div id="modalConfirmGmailWarning" class="hidden text-[11px] font-bold text-red-500 mt-1"></div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+          <div>
+            <span class="block text-[10px] uppercase font-bold text-slate-400">Khách Hàng</span>
+            <span class="font-extrabold text-slate-800 text-sm">${escapeHtml(order.customer_name || 'N/A')}</span>
+          </div>
+          <div>
+            <span class="block text-[10px] uppercase font-bold text-slate-400">Số Điện Thoại</span>
+            <span class="font-bold text-slate-800 font-mono text-sm">${escapeHtml(order.customer_phone || 'N/A')}</span>
+          </div>
+          <div>
+            <span class="block text-[10px] uppercase font-bold text-slate-400">Khóa Học</span>
+            <span class="font-extrabold text-slate-850 text-sm">${escapeHtml(order.courseName || order.course || 'N/A')}</span>
+          </div>
+          <div>
+            <span class="block text-[10px] uppercase font-bold text-slate-400">Số Tiền</span>
+            <span class="font-black text-pink-600 text-sm">${formatVND(getCoursePriceNumber(order.course))}</span>
+          </div>
+          <div class="col-span-2 pt-2 border-t border-slate-200/50">
+            <span class="block text-[10px] uppercase font-bold text-slate-400">Trạng Thái Đơn Hàng</span>
+            <span class="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-800 mt-1">${escapeHtml(order.status || 'Chờ duyệt')}</span>
+          </div>
+        </div>
+
+        ${billHtml}
+      `;
+      
+      const footer = document.createElement("div");
+      footer.className = "px-6 py-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-2.5";
+      
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "px-5 py-3 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-2xl transition shadow-sm text-sm";
+      cancelBtn.innerText = "Hủy, kiểm tra lại";
+      
+      const proceedBtn = document.createElement("button");
+      proceedBtn.type = "button";
+      proceedBtn.className = "px-5 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-2xl transition shadow-md shadow-green-600/10 text-sm";
+      proceedBtn.innerText = "Xác nhận duyệt và cấp quyền";
+      
+      footer.appendChild(cancelBtn);
+      footer.appendChild(proceedBtn);
+      
+      dialog.appendChild(header);
+      dialog.appendChild(body);
+      dialog.appendChild(footer);
+      overlay.appendChild(dialog);
+      
+      document.body.appendChild(overlay);
+      
+      function close() {
+        if (document.body.contains(overlay)) {
+          document.body.removeChild(overlay);
+        }
+        renderOrders();
+        renderPendingGrouped();
+      }
+      
+      header.querySelector(".close-btn").onclick = close;
+      cancelBtn.onclick = close;
+      
+      proceedBtn.onclick = async () => {
+        const gmailInput = document.getElementById("modalConfirmGmail");
+        const warningDiv = document.getElementById("modalConfirmGmailWarning");
+        let gmailVal = gmailInput.value.trim();
+        
+        warningDiv.classList.add("hidden");
+        warningDiv.innerHTML = "";
+        
+        if (!gmailVal) {
+          warningDiv.innerText = "Gmail không được để trống.";
+          warningDiv.classList.remove("hidden");
+          return;
+        }
+        
+        // Trim & Lowercase
+        gmailVal = gmailVal.toLowerCase();
+        gmailInput.value = gmailVal;
+        
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(gmailVal)) {
+          warningDiv.innerText = "Gmail không hợp lệ, vui lòng sửa lại trước khi duyệt.";
+          warningDiv.classList.remove("hidden");
+          return;
+        }
+        
+        if (/\s/.test(gmailVal)) {
+          warningDiv.innerText = "Gmail không được chứa khoảng trắng ở giữa.";
+          warningDiv.classList.remove("hidden");
+          return;
+        }
+        
+        if (/[^\x00-\x7F]/.test(gmailVal)) {
+          warningDiv.innerText = "Gmail không được chứa ký tự tiếng Việt hoặc ký tự đặc biệt.";
+          warningDiv.classList.remove("hidden");
+          return;
+        }
+        
+        if (!gmailVal.endsWith("@gmail.com")) {
+          const warnText = "Hệ thống học qua Google Drive nên dùng Gmail. Email này không phải @gmail.com. Bạn có chắc muốn tiếp tục không?";
+          if (!confirm(warnText)) {
+            return;
+          }
+          if (!confirm(`XÁC NHẬN LẦN 2:\nEmail "${gmailVal}" không phải Gmail. Học viên có thể không truy cập được Google Drive. Bạn vẫn muốn duyệt?`)) {
+            return;
+          }
+        }
+        
+        if (document.body.contains(overlay)) {
+          document.body.removeChild(overlay);
+        }
+        await executeStatusUpdate(order.id, "Đã duyệt", gmailVal);
+      };
     }
 
     // 10.1. SYNC ENROLLMENT MANUALLY

@@ -62,7 +62,7 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "PUT") {
-      const { id, status, note, customer_name, customer_phone, action } = req.body;
+      const { id, status, note, customer_name, customer_phone, gmail, action } = req.body;
 
       if (!id) {
         return res.status(400).json({ error: "Thiếu ID đơn hàng để cập nhật" });
@@ -110,6 +110,13 @@ export default async function handler(req, res) {
       if (note !== undefined) updateData.note = note;
       if (customer_name !== undefined) updateData.customer_name = customer_name;
       if (customer_phone !== undefined) updateData.customer_phone = customer_phone;
+      if (gmail !== undefined) {
+        const validatedGmail = validateGmail(gmail);
+        if (!validatedGmail) {
+          return res.status(400).json({ error: "Địa chỉ email không hợp lệ (không được để trống, chứa khoảng trắng, chứa ký tự đặc biệt hoặc ký tự tiếng Việt có dấu)" });
+        }
+        updateData.customer_email = validatedGmail;
+      }
 
       const { data, error } = await supabase
         .from("orders")
@@ -155,4 +162,19 @@ export default async function handler(req, res) {
     console.error("ORDERS_API_ERROR:", error);
     return res.status(500).json({ error: error.message });
   }
+}
+
+function validateGmail(email) {
+  if (!email || typeof email !== "string") return null;
+  const trimmed = email.trim().toLowerCase();
+  if (!trimmed) return null;
+  
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(trimmed)) return null;
+  
+  if (/\s/.test(trimmed)) return null;
+  
+  if (/[^\x00-\x7F]/.test(trimmed)) return null;
+  
+  return trimmed;
 }
