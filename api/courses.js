@@ -1,5 +1,15 @@
 import { supabase } from "../utils/supabase.js";
 
+function normalizeExpectedStartDate(value) {
+  const text = String(value || "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : null;
+}
+
+function isValidExpectedStartDateInput(value) {
+  const text = String(value || "").trim();
+  return text === "" || /^\d{4}-\d{2}-\d{2}$/.test(text);
+}
+
 export default async function handler(req, res) {
   // CORS headers
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -36,6 +46,7 @@ export default async function handler(req, res) {
         courseName: c.title,
         price: c.price || "",
         imageUrl: c.image_url || c.raw_data?.imageUrl || c.raw_data?.posterUrl || c.raw_data?.posterImageUrl || c.raw_data?.thumbnail || c.raw_data?.heroUrl || c.raw_data?.heroImageUrl || c.raw_data?.coverUrl || "",
+        expected_start_date: c.expected_start_date || "",
         active: c.active,
         sort_order: c.sort_order,
         description: c.description || "",
@@ -45,7 +56,8 @@ export default async function handler(req, res) {
         sync_lms_status: c.sync_lms_status || "PENDING",
         sync_portal_status: c.sync_portal_status || "PENDING",
         sync_error: c.sync_error || "",
-        ...(c.raw_data || {})
+        ...(c.raw_data || {}),
+        expected_start_date: c.expected_start_date || ""
       }));
 
       return res.status(200).json(formattedCourses);
@@ -67,11 +79,16 @@ export default async function handler(req, res) {
         bankAccount,
         bankOwner,
         transferNote,
-        qrImageUrl
+        qrImageUrl,
+        expected_start_date
       } = req.body;
 
       if (!slug || (!courseName && !title)) {
         return res.status(400).json({ error: "Thiếu thông tin bắt buộc (slug, title)" });
+      }
+
+      if (!isValidExpectedStartDateInput(expected_start_date)) {
+        return res.status(400).json({ error: "Lịch khai giảng dự kiến phải có định dạng YYYY-MM-DD" });
       }
 
       const { data, error } = await supabase
@@ -81,6 +98,7 @@ export default async function handler(req, res) {
           title: title || courseName,
           price,
           image_url: imageUrl,
+          expected_start_date: normalizeExpectedStartDate(expected_start_date),
           active: active !== undefined ? active : true,
           sort_order: sort_order !== undefined ? parseInt(sort_order, 10) : 0,
           description: description || "",
@@ -108,6 +126,7 @@ export default async function handler(req, res) {
           courseName: title || courseName,
           price,
           imageUrl,
+          expected_start_date,
           active,
           teacher_name
         });
@@ -145,7 +164,8 @@ export default async function handler(req, res) {
         bankAccount,
         bankOwner,
         transferNote,
-        qrImageUrl
+        qrImageUrl,
+        expected_start_date
       } = req.body;
 
       if (!id) {
@@ -154,7 +174,7 @@ export default async function handler(req, res) {
 
       const { data: existingCourse, error: existingErr } = await supabase
         .from("courses")
-        .select("image_url, raw_data")
+        .select("image_url, expected_start_date, raw_data")
         .eq("id", id)
         .maybeSingle();
 
@@ -162,6 +182,11 @@ export default async function handler(req, res) {
 
       const existingRawData = existingCourse?.raw_data || {};
       const nextImageUrl = String(imageUrl || "").trim();
+      const hasExpectedStartDate = Object.prototype.hasOwnProperty.call(req.body, "expected_start_date");
+
+      if (hasExpectedStartDate && !isValidExpectedStartDateInput(expected_start_date)) {
+        return res.status(400).json({ error: "Lịch khai giảng dự kiến phải có định dạng YYYY-MM-DD" });
+      }
 
       const updatePayload = {
         slug,
@@ -181,6 +206,10 @@ export default async function handler(req, res) {
           qrImageUrl: qrImageUrl || ""
         }
       };
+
+      if (hasExpectedStartDate) {
+        updatePayload.expected_start_date = normalizeExpectedStartDate(expected_start_date);
+      }
 
       if (is_published !== undefined) {
         updatePayload.is_published = is_published === true;
@@ -204,6 +233,7 @@ export default async function handler(req, res) {
           courseName: title || courseName,
           price,
           imageUrl,
+          expected_start_date,
           active,
           teacher_name
         });

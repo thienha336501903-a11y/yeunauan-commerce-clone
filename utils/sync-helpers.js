@@ -38,6 +38,10 @@ export async function syncCourseToExternalSystems(courseData) {
     isPublished: isPublished,
     teacher: courseData.teacher_name || ""
   };
+  const hasExpectedStartDate = Object.prototype.hasOwnProperty.call(courseData, "expected_start_date");
+  if (hasExpectedStartDate) {
+    payload.expected_start_date = courseData.expected_start_date;
+  }
   
   // Call System 3 (LMS)
   if (sys3Url) {
@@ -78,7 +82,8 @@ export async function syncCourseToExternalSystems(courseData) {
           title: payload.title,
           imageUrl: payload.imageUrl,
           active: payload.active,
-          isPublished: payload.isPublished
+          isPublished: payload.isPublished,
+          ...(hasExpectedStartDate ? { expected_start_date: payload.expected_start_date } : {})
         })
       });
       if (res.ok) {
