@@ -1,4 +1,18 @@
 import { supabase } from "./supabase.js";
+import {
+  enqueueCourseSyncEvent,
+  enqueueEnrollmentSyncEvent,
+  isV2OutboxShadowMode
+} from "./v2-outbox.js";
+
+async function writeV2OutboxShadow(label, operation) {
+  if (!isV2OutboxShadowMode()) return;
+  try {
+    await operation();
+  } catch (error) {
+    console.warn(`[v2-outbox] ${label} shadow write skipped:`, error.message);
+  }
+}
 
 export async function syncCourseToExternalSystems(courseData) {
   const secret = process.env.INTERNAL_SYNC_SECRET;
@@ -42,6 +56,15 @@ export async function syncCourseToExternalSystems(courseData) {
   if (hasExpectedStartDate) {
     payload.expected_start_date = courseData.expected_start_date;
   }
+
+  await writeV2OutboxShadow("course sync", () => enqueueCourseSyncEvent({
+    ...courseData,
+    slug: payload.slug,
+    title: payload.title,
+    image_url: payload.imageUrl,
+    expected_start_date: hasExpectedStartDate ? payload.expected_start_date : courseData.expected_start_date,
+    active: payload.active
+  }));
   
   // Call System 3 (LMS)
   if (sys3Url) {
@@ -131,6 +154,13 @@ export async function syncEnrollmentToExternalSystems(orderData, actionType) {
   }
   
   const action = actionType === "create" ? "syncEnrollment" : "revokeEnrollment";
+
+  await writeV2OutboxShadow("enrollment sync", () => enqueueEnrollmentSyncEvent({
+    ...orderData,
+    email,
+    course_slug: courseSlug,
+    updated_at: orderData.updated_at || orderData.created_at
+  }, actionType === "create" ? "upserted" : "revoked"));
   
   // Call System 3 (LMS)
   if (sys3Url) {
