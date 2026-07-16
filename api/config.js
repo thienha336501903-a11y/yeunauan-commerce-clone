@@ -1,6 +1,12 @@
 import { supabase } from "../utils/supabase.js";
+import { warmRuntimeConfig } from "../utils/v2-runtime-controller.js";
 
 export default async function handler(req, res) {
+  // Warm the V1/V2 runtime master-switch cache once per request so the
+  // synchronous restrict-only gate (isV2ActiveCached) is populated for the
+  // rest of the invocation. Never throws; cold-cache fail-open preserves V1.
+  await warmRuntimeConfig();
+
   try {
     const courseSlug = req.query.course || "donut";
 

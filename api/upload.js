@@ -1,4 +1,5 @@
 import { v2 as cloudinary } from "cloudinary";
+import { warmRuntimeConfig } from "../utils/v2-runtime-controller.js";
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
@@ -20,6 +21,11 @@ export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
+
+  // Warm the V1/V2 runtime master-switch cache once per request so the
+  // synchronous restrict-only gate (isV2ActiveCached) is populated for the
+  // rest of the invocation. Never throws; cold-cache fail-open preserves V1.
+  await warmRuntimeConfig();
 
   const adminPassword = req.headers["x-admin-password"];
   const systemPassword = process.env.ADMIN_PASSWORD;

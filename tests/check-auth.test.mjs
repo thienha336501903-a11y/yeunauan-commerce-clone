@@ -13,6 +13,14 @@ import { dirname, join } from "node:path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
 
+// api/check-auth.js warms the V1/V2 runtime controller, which imports the
+// supabase client. Provide a placeholder URL+key so module load does not
+// throw when the test below deletes real secrets. No DB call is made by
+// check-auth.js itself; these just satisfy createClient's URL validator.
+process.env.SUPABASE_URL = process.env.SUPABASE_URL || "https://check-auth-test.supabase.co";
+process.env.SUPABASE_SERVICE_ROLE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY || "check-auth-test-service-role-key";
+
 function buildReqRes({ method = "GET", query = {}, body = {} } = {}) {
   const req = {
     method,

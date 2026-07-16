@@ -1,5 +1,6 @@
 import { v2 as cloudinary } from "cloudinary";
 import { supabase } from "../utils/supabase.js";
+import { warmRuntimeConfig } from "../utils/v2-runtime-controller.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -7,6 +8,11 @@ export default async function handler(req, res) {
       error: "Method not allowed"
     });
   }
+
+  // Warm the V1/V2 runtime master-switch cache once per request so the
+  // synchronous restrict-only gate (isV2ActiveCached) is populated for the
+  // rest of the invocation. Never throws; cold-cache fail-open preserves V1.
+  await warmRuntimeConfig();
 
   try {
     const {
