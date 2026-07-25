@@ -10,6 +10,8 @@ const salesSite = process.env.SALES_SITE === "yeunauan" ? "yeunauan" : "yeubep";
 const adminPassword = process.env.ADMIN_PASSWORD || "local-admin";
 const hosts = { yeunauan: "shop.yeunauan.live", yeubep: "yeubep.shop" };
 const courses = [
+  { id: "canonical-1", slug: "thitxiennuongchaungoc", courseName: "Thịt xiên nướng Châu Ngọc", title: "Thịt xiên nướng Châu Ngọc", price: "299.000đ", sales_site: "yeunauan", active: true, sort_order: 0, learning_lesson_count: 4 },
+  { id: "alias-1", slug: "thitxiennuongchaungoc-yeubep", courseName: "Thịt xiên nướng Châu Ngọc", title: "Thịt xiên nướng Châu Ngọc", price: "299.000đ", sales_site: "yeubep", active: true, sort_order: 2, learning_course_slug: "thitxiennuongchaungoc", learning_lesson_count: 4 },
   { id: "legacy-1", slug: "legacy-demo", courseName: "Legacy Yeunauan", title: "Legacy Yeunauan", price: "199.000đ", sales_site: "yeunauan", active: true, sort_order: 1 },
   { id: "yeubep-1", slug: "yeubep-demo", courseName: "Yeubep Preview", title: "Yeubep Preview", price: "299.000đ", sales_site: "yeubep", active: true, sort_order: 1 }
 ];
@@ -67,6 +69,8 @@ const server = http.createServer(async (req, res) => {
     if (duplicate) return json(res, 200, { success: true, duplicate: true, orderId: duplicate.id });
     const order = {
       id: randomUUID(), course: course.slug, courseName: course.title, gmail: input.gmail,
+      course_slug: course.slug, course_title: course.title, customer_email: input.gmail,
+      learning_course_slug: course.learning_course_slug || course.slug,
       status: "Chờ duyệt", sales_site: salesSite, sales_host: hosts[salesSite],
       price_snapshot: course.price, idempotency_key: key, created_at: new Date().toISOString()
     };
@@ -77,7 +81,10 @@ const server = http.createServer(async (req, res) => {
     if (!adminOk(req)) return json(res, 401, { error: "Unauthorized" });
     const input = await body(req);
     const selected = orders.filter((item) => item.course === input.course && item.sales_site === input.sales_site && item.status === "Chờ duyệt");
-    selected.forEach((item) => { item.status = "Đã duyệt"; });
+    selected.forEach((item) => {
+      item.status = "Đã duyệt";
+      item.dry_run_sync = { action: "syncEnrollment", email: item.gmail.trim().toLowerCase(), courseSlug: item.learning_course_slug || item.course };
+    });
     return json(res, 200, { success: true, count: selected.length, gmails: selected.map((item) => item.gmail), dryRun: true });
   }
 

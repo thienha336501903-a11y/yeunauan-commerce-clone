@@ -6,6 +6,28 @@ import {
   requireSalesSite
 } from "../utils/sales-site.js";
 import { fixtureCourses, fixtureSaveCourse, isPreviewFixture } from "../utils/preview-fixture.js";
+import {
+  getEffectiveLearningSlug,
+  normalizeLearningSlug,
+  resolveLearningCourse,
+  resolveLearningCourseFromSupabase
+} from "../utils/learning-course.js";
+
+function storedLearningSlug(salesSlug, value) {
+  const target = normalizeLearningSlug(value);
+  return !target || target === normalizeLearningSlug(salesSlug) ? null : target;
+}
+
+async function validateLearningTarget(course) {
+  if (!course.learning_course_slug) return { learningSlug: course.slug, lessonCount: null, mapped: false };
+  if (isPreviewFixture()) {
+    return resolveLearningCourse(course, {
+      findCourseBySlug: async (slug) => fixtureCourses().find((item) => item.slug === slug) || null,
+      countLessons: async (slug) => fixtureCourses().find((item) => item.slug === slug)?.learning_lesson_count || 0
+    });
+  }
+  return resolveLearningCourseFromSupabase(course, supabase);
+}
 
 function normalizeExpectedStartDate(value) {
   const text = String(value || "").trim();
@@ -60,6 +82,11 @@ export default async function handler(req, res) {
       if (error) throw error;
 
       // Định dạng tương thích ngược
+      const lessonCounts = new Map();
+      await Promise.all([...new Set(courses.map(getEffectiveLearningSlug))].map(async (slug) => {
+        const { count } = await supabase.from("lessons").select("id", { count: "exact", head: true }).eq("course_slug", slug).neq("status", "hidden");
+        lessonCounts.set(slug, count || 0);
+      }));
       const formattedCourses = courses.map((c) => ({
         ...(c.raw_data || {}),
         id: c.id,
@@ -79,6 +106,9 @@ export default async function handler(req, res) {
         sync_error: c.sync_error || "",
         sales_site: effectiveSalesSite(c),
         sales_url: buildCourseSalesUrl(c),
+        learning_course_slug: c.learning_course_slug || "",
+        effective_learning_course_slug: getEffectiveLearningSlug(c),
+        learning_lesson_count: lessonCounts.get(getEffectiveLearningSlug(c)) || 0,
         expected_start_date: c.expected_start_date || ""
       }));
 
@@ -103,15 +133,18 @@ export default async function handler(req, res) {
         transferNote,
         qrImageUrl,
         expected_start_date,
-        sales_site
+        sales_site,
+        learning_course_slug
       } = req.body;
 
       if (!slug || (!courseName && !title)) {
         return res.status(400).json({ error: "Thiếu thông tin bắt buộc (slug, title)" });
       }
       const salesSite = requireSalesSite(sales_site);
+      const storedLearning = storedLearningSlug(slug, learning_course_slug);
+      const learning = await validateLearningTarget({ slug, active: active !== false, learning_course_slug: storedLearning });
       if (isPreviewFixture()) {
-        const row = fixtureSaveCourse({ ...req.body, sales_site: salesSite });
+        const row = fixtureSaveCourse({ ...req.body, sales_site: salesSite, learning_course_slug: storedLearning, learning_lesson_count: learning.lessonCount });
         return res.status(201).json({ success: true, data: row, fixture: true });
       }
 
@@ -133,6 +166,7 @@ export default async function handler(req, res) {
           teacher_name: teacher_name || "",
           is_published: is_published === true,
           sales_site: salesSite,
+          learning_course_slug: storedLearning,
           raw_data: {
             bankName: bankName || "",
             bankAccount: bankAccount || "",
@@ -158,6 +192,7 @@ export default async function handler(req, res) {
           expected_start_date,
           active,
           teacher_name
+          ,learning_course_slug: storedLearning
         });
         
         // Update database with sync status
@@ -195,22 +230,12 @@ export default async function handler(req, res) {
         transferNote,
         qrImageUrl,
         expected_start_date,
-        sales_site
+        sales_site,
+        learning_course_slug
       } = req.body;
 
       if (!id) {
         return res.status(400).json({ error: "Thiếu ID khóa học để cập nhật" });
-      }
-
-      const { data: existingCourse, error: existingErr } = await supabase
-        .from("courses")
-        .select("image_url, expected_start_date, raw_data, sales_site")
-        .eq("id", id)
-        .maybeSingle();
-
-      if (existingErr) throw existingErr;
-      if (!existingCourse) {
-        return res.status(404).json({ error: "Không tìm thấy khóa học" });
       }
       if (isPreviewFixture()) {
         const current = fixtureCourses().find((course) => course.id === id);
@@ -218,8 +243,23 @@ export default async function handler(req, res) {
         const salesSite = requireSalesSite(
           Object.prototype.hasOwnProperty.call(req.body, "sales_site") ? sales_site : effectiveSalesSite(current)
         );
-        const row = fixtureSaveCourse({ ...req.body, sales_site: salesSite });
+        const nextSlug = slug || current.slug;
+        const storedLearning = storedLearningSlug(nextSlug,
+          Object.prototype.hasOwnProperty.call(req.body, "learning_course_slug") ? learning_course_slug : current.learning_course_slug);
+        const learning = await validateLearningTarget({ ...current, slug: nextSlug, learning_course_slug: storedLearning });
+        const row = fixtureSaveCourse({ ...req.body, sales_site: salesSite, learning_course_slug: storedLearning, learning_lesson_count: learning.lessonCount });
         return res.status(200).json({ success: true, data: row, fixture: true });
+      }
+
+      const { data: existingCourse, error: existingErr } = await supabase
+        .from("courses")
+        .select("id,slug,active,image_url,expected_start_date,raw_data,sales_site,learning_course_slug")
+        .eq("id", id)
+        .maybeSingle();
+
+      if (existingErr) throw existingErr;
+      if (!existingCourse) {
+        return res.status(404).json({ error: "Không tìm thấy khóa học" });
       }
       const salesSite = requireSalesSite(
         Object.prototype.hasOwnProperty.call(req.body, "sales_site")
@@ -228,6 +268,10 @@ export default async function handler(req, res) {
       );
 
       const existingRawData = existingCourse?.raw_data || {};
+      const nextSlug = slug || existingCourse.slug;
+      const storedLearning = storedLearningSlug(nextSlug,
+        Object.prototype.hasOwnProperty.call(req.body, "learning_course_slug") ? learning_course_slug : existingCourse.learning_course_slug);
+      await validateLearningTarget({ ...existingCourse, slug: nextSlug, learning_course_slug: storedLearning });
       const nextImageUrl = String(imageUrl || "").trim();
       const hasExpectedStartDate = Object.prototype.hasOwnProperty.call(req.body, "expected_start_date");
 
@@ -245,6 +289,7 @@ export default async function handler(req, res) {
         description: description || "",
         teacher_name: teacher_name || "",
         sales_site: salesSite,
+        learning_course_slug: storedLearning,
         raw_data: {
           ...existingRawData,
           bankName: bankName || "",
@@ -284,6 +329,7 @@ export default async function handler(req, res) {
           expected_start_date,
           active,
           teacher_name
+          ,learning_course_slug: storedLearning
         });
         
         // Update database with sync status

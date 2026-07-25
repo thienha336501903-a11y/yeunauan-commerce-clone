@@ -7,6 +7,7 @@ import {
   getSalesSiteConfig
 } from "../utils/sales-site.js";
 import { fixtureRegister, isPreviewFixture } from "../utils/preview-fixture.js";
+import { resolveLearningCourseFromSupabase, snapshotOrderLearningSlug } from "../utils/learning-course.js";
 
 function normalizeIdempotencyKey(req) {
   const value = req.headers["idempotency-key"] || req.body?.idempotencyKey;
@@ -61,7 +62,7 @@ export default async function handler(req, res) {
 
     const { data: existingOrder, error: existingError } = await supabase
       .from("orders")
-      .select("id, proof_image_url, course_slug, course_title")
+      .select("id, proof_image_url, course_slug, course_title, learning_course_slug")
       .eq("sales_site", salesSite)
       .eq("idempotency_key", idempotencyKey)
       .maybeSingle();
@@ -79,7 +80,7 @@ export default async function handler(req, res) {
 
     let courseQuery = supabase
       .from("courses")
-      .select("id, slug, image_url, title, price, sales_site")
+      .select("id, slug, image_url, title, price, sales_site, learning_course_slug")
       .eq("slug", courseSlug)
       .eq("active", true);
     courseQuery = applyCourseTenantFilter(courseQuery, salesSite);
@@ -88,6 +89,11 @@ export default async function handler(req, res) {
     if (!courseRec) {
       return res.status(404).json({ error: "Không tìm thấy khóa học thuộc website này" });
     }
+    const learning = await resolveLearningCourseFromSupabase(courseRec, supabase);
+    const learningCourseSlug = snapshotOrderLearningSlug({
+      ...courseRec,
+      learning_course_slug: learning.learningSlug
+    });
 
     const finalCourseName = courseRec.title;
     const thumbnail = courseRec.image_url || "";
@@ -116,6 +122,7 @@ export default async function handler(req, res) {
       .insert({
         course_slug: courseSlug,
         course_title: finalCourseName,
+        learning_course_slug: learningCourseSlug,
         customer_email: gmail,
         proof_image_url: billLink,
         status: "Chờ duyệt",
@@ -135,7 +142,7 @@ export default async function handler(req, res) {
       if (insertError.code === "23505") {
         const { data: concurrentOrder } = await supabase
           .from("orders")
-          .select("id, proof_image_url, course_slug, course_title")
+          .select("id, proof_image_url, course_slug, course_title, learning_course_slug")
           .eq("sales_site", salesSite)
           .eq("idempotency_key", idempotencyKey)
           .maybeSingle();
@@ -167,7 +174,7 @@ export default async function handler(req, res) {
           body: JSON.stringify({
             action: "syncPendingOrder",
             email: gmail,
-            courseSlug: courseSlug,
+            courseSlug: learningCourseSlug,
             courseName: finalCourseName,
             thumbnail: thumbnail
           })

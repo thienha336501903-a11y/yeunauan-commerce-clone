@@ -176,6 +176,14 @@
           </div>
           <p class="mt-2 text-xs text-amber-700">Đổi website sẽ thay đổi URL bán hàng; các đơn cũ không bị di chuyển.</p>
         </fieldset>
+
+        <div>
+          <label class="block text-xs uppercase font-extrabold text-slate-500 tracking-wider mb-2">Khóa học học tập / LMS đích</label>
+          <select id="learningCourseSlugInput" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-pink-500 transition text-sm">
+            <option value="">Dùng chính khóa học này</option>
+          </select>
+          <p id="learningCourseHint" class="mt-2 text-xs text-slate-500">Đơn hàng mới sẽ chụp LMS đích; đơn cũ không thay đổi.</p>
+        </div>
         
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
@@ -882,6 +890,16 @@
       modal.classList.remove("hidden");
       if (imageStatus) imageStatus.innerText = "";
       if (qrStatus) qrStatus.innerText = "";
+      const learningSelect = document.getElementById("learningCourseSlugInput");
+      learningSelect.innerHTML = '<option value="">Dùng chính khóa học này</option>';
+      (allCourses || [])
+        .filter((item) => (!item.learning_course_slug || item.learning_course_slug === item.slug) && Number(item.learning_lesson_count || 0) > 0)
+        .forEach((item) => {
+          const option = document.createElement("option");
+          option.value = item.slug;
+          option.textContent = `${item.slug} — ${item.learning_lesson_count} bài học`;
+          learningSelect.appendChild(option);
+        });
       
       if (course) {
         // Edit Mode
@@ -898,6 +916,7 @@
         document.getElementById("courseActiveInput").checked = course.active;
         document.getElementById("courseImageUrlInput").value = course.imageUrl || "";
         document.getElementById("courseDescriptionInput").value = course.description || "";
+        learningSelect.value = course.learning_course_slug || "";
         
         // Bank details from raw_data
         document.getElementById("bankNameInput").value = course.bankName || "";
@@ -915,6 +934,7 @@
         document.getElementById("courseActiveInput").checked = true;
         document.getElementById("courseSortOrderInput").value = 0;
         document.getElementById("courseExpectedStartDateInput").value = "";
+        learningSelect.value = "";
 
         // Auto-fill bank details from the most recently created course
         if (allCourses && allCourses.length > 0) {
@@ -955,8 +975,13 @@
       const imageUrl = document.getElementById("courseImageUrlInput").value.trim();
       const description = document.getElementById("courseDescriptionInput").value.trim();
       const sales_site = document.querySelector('input[name="salesSite"]:checked')?.value;
+      const learning_course_slug = document.getElementById("learningCourseSlugInput").value.trim();
       const originalSalesSite = document.getElementById("courseOriginalSalesSite").value || "yeunauan";
       if (id && sales_site !== originalSalesSite && !confirm("Website bán hàng thay đổi sẽ làm URL bán khóa học thay đổi. Đơn hàng cũ vẫn giữ nguyên nguồn. Tiếp tục?")) {
+        return;
+      }
+      const currentCourse = (allCourses || []).find((item) => item.id === id);
+      if (id && learning_course_slug !== (currentCourse?.learning_course_slug || "") && !confirm("Thay đổi khóa học LMS đích chỉ áp dụng cho đơn hàng mới. Các đơn hàng cũ giữ LMS đích đã chụp. Tiếp tục?")) {
         return;
       }
       
@@ -984,6 +1009,7 @@
         transferNote,
         qrImageUrl
         ,sales_site
+        ,learning_course_slug
       };
 
       const method = id ? "PUT" : "POST";
@@ -1001,7 +1027,7 @@
 
         const data = await response.json();
 
-        if (response.ok && data?.data?.sales_site === sales_site && data?.data?.id) {
+        if (response.ok && data?.data?.sales_site === sales_site && (data?.data?.learning_course_slug || "") === learning_course_slug && data?.data?.id) {
           showToast(id ? "Đã cập nhật khóa học" : "Đã tạo khóa học mới thành công");
           closeCourseModal();
           loadCourses();

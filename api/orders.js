@@ -2,6 +2,7 @@ import { supabase } from "../utils/supabase.js";
 import { warmRuntimeConfig } from "../utils/v2-runtime-controller.js";
 import { effectiveSalesSite } from "../utils/sales-site.js";
 import { fixtureOrders, fixtureUpdateOrder, isPreviewFixture } from "../utils/preview-fixture.js";
+import { getEffectiveLearningSlug, hasAnotherGrantingOrder } from "../utils/learning-course.js";
 
 export default async function handler(req, res) {
   // CORS headers
@@ -74,7 +75,8 @@ export default async function handler(req, res) {
           sync_portal_status: o.sync_portal_status || "PENDING",
           sync_error: o.sync_error || "",
           sales_site: effectiveSalesSite(o),
-          sales_host: o.sales_host || (effectiveSalesSite(o) === "yeubep" ? "yeubep.shop" : "shop.yeunauan.live")
+          sales_host: o.sales_host || (effectiveSalesSite(o) === "yeubep" ? "yeubep.shop" : "shop.yeunauan.live"),
+          learning_course_slug: getEffectiveLearningSlug(o)
         };
       });
 
@@ -109,7 +111,10 @@ export default async function handler(req, res) {
 
         const { syncEnrollmentToExternalSystems } = await import("../utils/sync-helpers.js");
         const actionType = order.status === "Đã duyệt" ? "create" : "revoke";
-        const syncResults = await syncEnrollmentToExternalSystems(order, actionType);
+        const sharedGrant = actionType === "revoke" && await hasAnotherGrantingOrder(supabase, order);
+        const syncResults = sharedGrant
+          ? { lms: "SHARED_ENTITLEMENT_RETAINED", portal: "SHARED_ENTITLEMENT_RETAINED", error: null }
+          : await syncEnrollmentToExternalSystems(order, actionType);
 
         // Update database with sync status
         const { data: updatedOrder, error: updateErr } = await supabase
@@ -144,6 +149,14 @@ export default async function handler(req, res) {
         updateData.customer_email = validatedGmail;
       }
 
+      const { data: previousOrder, error: previousError } = await supabase
+        .from("orders")
+        .select("*")
+        .eq("id", id)
+        .maybeSingle();
+      if (previousError) throw previousError;
+      if (!previousOrder) return res.status(404).json({ error: "Không tìm thấy đơn hàng" });
+
       const { data, error } = await supabase
         .from("orders")
         .update(updateData)
@@ -160,7 +173,13 @@ export default async function handler(req, res) {
         try {
           const { syncEnrollmentToExternalSystems } = await import("../utils/sync-helpers.js");
           const actionType = status === "Đã duyệt" ? "create" : "revoke";
-          syncResults = await syncEnrollmentToExternalSystems(data, actionType);
+          const sharedGrant = actionType === "revoke" && await hasAnotherGrantingOrder(supabase, {
+            ...previousOrder,
+            status: data.status
+          });
+          syncResults = sharedGrant
+            ? { lms: "SHARED_ENTITLEMENT_RETAINED", portal: "SHARED_ENTITLEMENT_RETAINED", error: null }
+            : await syncEnrollmentToExternalSystems(data, actionType);
 
           // Update database with sync status and get the updated record
           const { data: finalData } = await supabase

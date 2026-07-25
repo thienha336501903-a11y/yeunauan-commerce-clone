@@ -1,9 +1,40 @@
 import { randomUUID } from "node:crypto";
 import { getDeploymentSalesSite, getSalesSiteConfig } from "./sales-site.js";
+import {
+  getEffectiveLearningSlug,
+  isGrantingOrderStatus,
+  normalizeCustomerEmail
+} from "./learning-course.js";
 
 const fixtureEnabled = process.env.COMMERCE_DATA_MODE === "fixture";
 const state = globalThis.__YEUBEP_PREVIEW_FIXTURE__ || {
   courses: [
+    {
+      id: "fixture-learning-canonical",
+      slug: "thitxiennuongchaungoc",
+      title: "Thịt xiên nướng Châu Ngọc",
+      active: true,
+      sort_order: 0,
+      sales_site: null,
+      learning_lesson_count: 4,
+      raw_data: {}
+    },
+    {
+      id: "fixture-yeubep-alias",
+      slug: "thitxiennuongchaungoc-yeubep",
+      title: "Thịt xiên nướng Châu Ngọc",
+      courseName: "Thịt xiên nướng Châu Ngọc",
+      price: "299.000đ",
+      image_url: "https://placehold.co/900x1100?text=Thit+Xien+Nuong",
+      imageUrl: "https://placehold.co/900x1100?text=Thit+Xien+Nuong",
+      description: "Fixture sales alias Preview.",
+      active: true,
+      sort_order: 2,
+      sales_site: "yeubep",
+      learning_course_slug: "thitxiennuongchaungoc",
+      learning_lesson_count: 4,
+      raw_data: { bankName: "PREVIEW ONLY", bankAccount: "0000000000", bankOwner: "TEST", transferNote: "PREVIEW", qrImageUrl: "" }
+    },
     {
       id: "fixture-yeubep-demo",
       slug: "yeubep-demo",
@@ -73,6 +104,20 @@ export function fixtureUpdateOrder(id, input) {
   const order = state.orders.find((item) => item.id === id);
   if (!order) return null;
   Object.assign(order, input, { updated_at: new Date().toISOString() });
+  if (Object.prototype.hasOwnProperty.call(input, "status")) {
+    const action = isGrantingOrderStatus(input.status) ? "syncEnrollment" : "revokeEnrollment";
+    const hasAnotherGrant = action === "revokeEnrollment" && state.orders.some((candidate) =>
+      candidate.id !== order.id &&
+      normalizeCustomerEmail(candidate.customer_email) === normalizeCustomerEmail(order.customer_email) &&
+      getEffectiveLearningSlug(candidate) === getEffectiveLearningSlug(order) &&
+      isGrantingOrderStatus(candidate.status)
+    );
+    order.dry_run_sync = {
+      action: hasAnotherGrant ? "retainSharedEntitlement" : action,
+      email: normalizeCustomerEmail(order.customer_email),
+      courseSlug: getEffectiveLearningSlug(order)
+    };
+  }
   return order;
 }
 
@@ -83,6 +128,13 @@ export function fixtureApproveAll(courseSlug, salesSite) {
     order.status === "Chờ duyệt"
   );
   selected.forEach((order) => { order.status = "Đã duyệt"; });
+  selected.forEach((order) => {
+    order.dry_run_sync = {
+      action: "syncEnrollment",
+      email: normalizeCustomerEmail(order.customer_email),
+      courseSlug: getEffectiveLearningSlug(order)
+    };
+  });
   return selected;
 }
 
@@ -96,6 +148,7 @@ export function fixtureRegister(input, key) {
     id: randomUUID(),
     course_slug: course.slug,
     course_title: course.title,
+    learning_course_slug: getEffectiveLearningSlug(course),
     customer_email: input.gmail,
     status: "Chờ duyệt",
     sales_site: site,

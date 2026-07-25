@@ -50,7 +50,7 @@ export default async function handler(req, res) {
       .eq("status", "Chờ duyệt");
     updateQuery = applyOrderTenantFilter(updateQuery, salesSite);
     const { data: updatedOrders, error } = await updateQuery
-      .select("id, customer_email, course_slug, sales_site");
+      .select("id, customer_email, course_slug, learning_course_slug, sales_site");
 
     if (error) throw error;
 

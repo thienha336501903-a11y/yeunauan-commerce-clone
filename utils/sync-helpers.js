@@ -4,6 +4,7 @@ import {
   enqueueEnrollmentSyncEvent,
   isV2OutboxShadowMode
 } from "./v2-outbox.js";
+import { getEffectiveLearningSlug } from "./learning-course.js";
 
 async function writeV2OutboxShadow(label, operation) {
   if (!isV2OutboxShadowMode()) return;
@@ -20,6 +21,16 @@ export async function syncCourseToExternalSystems(courseData) {
   const sys3Url = process.env.SYSTEM3_URL;
   
   const results = { lms: "SKIPPED", portal: "SKIPPED", error: null };
+  const learningSlug = getEffectiveLearningSlug(courseData);
+  if (learningSlug && learningSlug !== courseData.slug) {
+    return {
+      lms: "MAPPED_NOT_REQUIRED",
+      portal: "MAPPED_NOT_REQUIRED",
+      error: null,
+      learningCourseSlug: learningSlug,
+      mapped: true
+    };
+  }
   
   if (!secret) {
     results.error = "Missing INTERNAL_SYNC_SECRET";
@@ -146,7 +157,7 @@ export async function syncEnrollmentToExternalSystems(orderData, actionType) {
   }
   
   const email = orderData.customer_email || orderData.gmail;
-  const courseSlug = orderData.course_slug || orderData.course;
+  const courseSlug = getEffectiveLearningSlug(orderData);
   
   if (!email || !courseSlug) {
     results.error = "Missing email or course slug";
