@@ -50,7 +50,7 @@ async function loadHandler() {
 }
 
 // ── P0: the env-leak branch MUST be gone ────────────────────────────────────
-test("security: GET ?leak=extract_env_vars_now returns 405 and does NOT dump env", async () => {
+test("security: client-controlled debug inputs always return 405 without secrets", async () => {
   // Even with secrets present in process.env, the response must not contain them.
   const snap = {
     ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
@@ -67,37 +67,30 @@ test("security: GET ?leak=extract_env_vars_now returns 405 and does NOT dump env
     process.env.CLOUDINARY_API_SECRET = "super-secret-cloudinary-should-not-leak";
 
     const handler = await loadHandler();
-    const { req, res } = buildReqRes({
-      method: "GET",
-      query: { leak: "extract_env_vars_now" }
-    });
-    await handler(req, res);
+    const attempts = [
+      { query: { leak: "extract_env_vars_now" } },
+      { query: { debug: "true" }, headers: { "x-debug": "true" } },
+      { query: { mode: "debug" }, headers: { cookie: "debug=true" } },
+      { query: { secret: "show" }, headers: { authorization: "Bearer debug" } }
+    ];
 
-    // The leak branch used to return 200 with the full env dump. It must now
-    // be a 405 (Method not allowed). Anything other than 405 is a regression.
-    assert.equal(res.statusCode, 405, `expected 405, got ${res.statusCode}`);
+    for (const attempt of attempts) {
+      const { req, res } = buildReqRes({ method: "GET", query: attempt.query });
+      req.headers = attempt.headers || {};
+      await handler(req, res);
+      assert.equal(res.statusCode, 405);
+      assert.deepEqual(res.body, { authenticated: false });
 
-    // Defense-in-depth: even if status somehow drifts, the body must never
-    // contain any of the secrets we just planted.
-    const text = JSON.stringify(res.body || {});
-    for (const secret of [
-      "super-secret-admin-pw-should-not-leak",
-      "super-secret-service-role-should-not-leak",
-      "super-secret-sync-should-not-leak",
-      "super-secret-google-should-not-leak",
-      "super-secret-cloudinary-should-not-leak"
-    ]) {
-      assert.equal(text.includes(secret), false, `response leaked ${secret}`);
-    }
-    // And the old env-key names must not appear either.
-    for (const key of [
-      "ADMIN_PASSWORD",
-      "SUPABASE_SERVICE_ROLE_KEY",
-      "INTERNAL_SYNC_SECRET",
-      "GOOGLE_CLIENT_SECRET",
-      "CLOUDINARY_API_SECRET"
-    ]) {
-      assert.equal(text.includes(key), false, `response still echoes env key ${key}`);
+      const text = JSON.stringify(res.body);
+      for (const secret of [
+        "super-secret-admin-pw-should-not-leak",
+        "super-secret-service-role-should-not-leak",
+        "super-secret-sync-should-not-leak",
+        "super-secret-google-should-not-leak",
+        "super-secret-cloudinary-should-not-leak"
+      ]) {
+        assert.equal(text.includes(secret), false, `response leaked ${secret}`);
+      }
     }
   } finally {
     for (const [k, v] of Object.entries(snap)) {
@@ -138,7 +131,7 @@ test("POST correct password → 200 success", async () => {
     });
     await handler(req, res);
     assert.equal(res.statusCode, 200);
-    assert.equal(res.body?.success, true);
+    assert.deepEqual(res.body, { authenticated: true });
   } finally {
     if (prev === undefined) delete process.env.ADMIN_PASSWORD;
     else process.env.ADMIN_PASSWORD = prev;
@@ -156,7 +149,7 @@ test("POST wrong password → 401", async () => {
     });
     await handler(req, res);
     assert.equal(res.statusCode, 401);
-    assert.equal(res.body?.success, false);
+    assert.deepEqual(res.body, { authenticated: false });
   } finally {
     if (prev === undefined) delete process.env.ADMIN_PASSWORD;
     else process.env.ADMIN_PASSWORD = prev;
@@ -174,7 +167,7 @@ test("POST with ADMIN_PASSWORD unset → 500 fail-closed", async () => {
     });
     await handler(req, res);
     assert.equal(res.statusCode, 500);
-    assert.equal(res.body?.success, false);
+    assert.deepEqual(res.body, { authenticated: false });
   } finally {
     if (prev === undefined) delete process.env.ADMIN_PASSWORD;
     else process.env.ADMIN_PASSWORD = prev;
@@ -193,6 +186,7 @@ test("GET without leak query → 405", async () => {
   const { req, res } = buildReqRes({ method: "GET", query: {} });
   await handler(req, res);
   assert.equal(res.statusCode, 405);
+  assert.deepEqual(res.body, { authenticated: false });
 });
 
 test("PUT → 405", async () => {
@@ -200,4 +194,5 @@ test("PUT → 405", async () => {
   const { req, res } = buildReqRes({ method: "PUT" });
   await handler(req, res);
   assert.equal(res.statusCode, 405);
+  assert.deepEqual(res.body, { authenticated: false });
 });

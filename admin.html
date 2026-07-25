@@ -334,7 +334,7 @@
           body: JSON.stringify({ password })
         });
         const result = await response.json();
-        return result.success;
+        return response.ok && result.authenticated === true;
       } catch (err) {
         return false;
       }

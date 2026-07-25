@@ -14,26 +14,20 @@ export default async function handler(req, res) {
   // rest of the invocation. Never throws; cold-cache fail-open preserves V1.
   await warmRuntimeConfig();
 
-  // SECURITY: the previous unauthenticated GET branch
-  // (`?leak=extract_env_vars_now`) that dumped process.env (ADMIN_PASSWORD,
-  // SUPABASE_SERVICE_ROLE_KEY, INTERNAL_SYNC_SECRET, GOOGLE_CLIENT_SECRET,
-  // CLOUDINARY_API_SECRET, ...) has been permanently removed. Any GET to this
-  // endpoint returns 405. The login probe remains POST-only.
-
   if (req.method === 'POST') {
     const { password } = req.body || {};
     const systemPassword = process.env.ADMIN_PASSWORD;
 
     if (!systemPassword) {
-      return res.status(500).json({ success: false, message: "Hệ thống chưa cấu hình mật khẩu quản trị (ADMIN_PASSWORD)." });
+      return res.status(500).json({ authenticated: false });
     }
 
     if (password === systemPassword) {
-      return res.status(200).json({ success: true, message: "Mật khẩu chính xác!" });
-    } else {
-      return res.status(401).json({ success: false, message: "Sai mật khẩu bảo mật!" });
+      return res.status(200).json({ authenticated: true });
     }
+
+    return res.status(401).json({ authenticated: false });
   }
 
-  return res.status(405).json({ message: "Method not allowed" });
+  return res.status(405).json({ authenticated: false });
 }
