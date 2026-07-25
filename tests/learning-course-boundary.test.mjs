@@ -60,6 +60,87 @@ test("sync boundary always uses effective learning slug and skips alias syncCour
   assert.doesNotMatch(source, /courseSlug\s*=\s*orderData\.course_slug\s*\|\|/);
 });
 
+test("shared dry-run guard blocks fetch, outbox and email side effects", async () => {
+  process.env.COMMERCE_DATA_MODE = "fixture";
+  process.env.EXTERNAL_SYNC_MODE = "dry-run";
+  process.env.INTERNAL_SYNC_SECRET = "test-only-secret";
+  process.env.SYSTEM1_URL = "https://portal.invalid";
+  process.env.SYSTEM3_URL = "https://lms.invalid";
+  process.env.V2_SHOP_OUTBOX_SHADOW = "1";
+  let fetchCalls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    throw new Error("fetch must not run during dry-run");
+  };
+  try {
+    const sync = await import(`../utils/sync-helpers.js?dryrun=${Date.now()}`);
+    const approved = await sync.syncEnrollmentToExternalSystems({
+      customer_email: "canary@example.com",
+      course_slug: alias.slug,
+      learning_course_slug: canonical.slug
+    }, "create");
+    assert.equal(approved.dryRun, true);
+    assert.equal(approved.action, "syncEnrollment");
+    assert.equal(approved.courseSlug, canonical.slug);
+    assert.deepEqual(approved.payload.lms, {
+      action: "syncEnrollment",
+      email: "canary@example.com",
+      courseSlug: canonical.slug
+    });
+    const revoked = await sync.syncEnrollmentToExternalSystems({
+      customer_email: "canary@example.com",
+      course_slug: alias.slug,
+      learning_course_slug: canonical.slug
+    }, "revoke");
+    assert.equal(revoked.action, "revokeEnrollment");
+    assert.equal(revoked.courseSlug, canonical.slug);
+    const mapped = await sync.syncCourseToExternalSystems(alias);
+    assert.equal(mapped.dryRun, true);
+    assert.equal(mapped.lms, "MAPPED_NOT_REQUIRED");
+    assert.equal(mapped.courseSlug, canonical.slug);
+    assert.equal(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.EXTERNAL_SYNC_MODE;
+    delete process.env.INTERNAL_SYNC_SECRET;
+    delete process.env.SYSTEM1_URL;
+    delete process.env.SYSTEM3_URL;
+    delete process.env.V2_SHOP_OUTBOX_SHADOW;
+  }
+});
+
+test("production adapter contract remains active when dry-run is unset", async () => {
+  process.env.COMMERCE_DATA_MODE = "fixture";
+  delete process.env.EXTERNAL_SYNC_MODE;
+  process.env.INTERNAL_SYNC_SECRET = "test-only-secret";
+  process.env.SYSTEM1_URL = "https://portal.invalid";
+  process.env.SYSTEM3_URL = "https://lms.invalid";
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), payload: JSON.parse(options.body) });
+    return { ok: true, json: async () => ({}) };
+  };
+  try {
+    const sync = await import(`../utils/sync-helpers.js?production=${Date.now()}`);
+    const result = await sync.syncEnrollmentToExternalSystems({
+      customer_email: "canary@example.com",
+      course_slug: alias.slug,
+      learning_course_slug: canonical.slug
+    }, "create");
+    assert.equal(result.dryRun, undefined);
+    assert.equal(calls.length, 2);
+    assert.equal(calls.every((call) => call.payload.courseSlug === canonical.slug), true);
+    assert.equal(calls.every((call) => call.payload.action === "syncEnrollment"), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.INTERNAL_SYNC_SECRET;
+    delete process.env.SYSTEM1_URL;
+    delete process.env.SYSTEM3_URL;
+  }
+});
+
 test("register snapshots server-resolved learning slug and ignores browser override", () => {
   const source = fs.readFileSync(new URL("../api/register.js", import.meta.url), "utf8");
   assert.match(source, /resolveLearningCourseFromSupabase\(courseRec, supabase\)/);

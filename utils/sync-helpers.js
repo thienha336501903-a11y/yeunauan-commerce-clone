@@ -6,6 +6,23 @@ import {
 } from "./v2-outbox.js";
 import { getEffectiveLearningSlug } from "./learning-course.js";
 
+function isExternalDryRun() {
+  return String(process.env.EXTERNAL_SYNC_MODE || "").trim().toLowerCase() === "dry-run";
+}
+
+function dryRunResult(action, courseSlug, payload, extra = {}) {
+  return {
+    lms: "DRY_RUN",
+    portal: "DRY_RUN",
+    error: null,
+    dryRun: true,
+    action,
+    courseSlug,
+    payload,
+    ...extra
+  };
+}
+
 async function writeV2OutboxShadow(label, operation) {
   if (!isV2OutboxShadowMode()) return;
   try {
@@ -16,21 +33,55 @@ async function writeV2OutboxShadow(label, operation) {
 }
 
 export async function syncCourseToExternalSystems(courseData) {
-  const secret = process.env.INTERNAL_SYNC_SECRET;
-  const sys1Url = process.env.SYSTEM1_URL;
-  const sys3Url = process.env.SYSTEM3_URL;
-  
-  const results = { lms: "SKIPPED", portal: "SKIPPED", error: null };
   const learningSlug = getEffectiveLearningSlug(courseData);
   if (learningSlug && learningSlug !== courseData.slug) {
-    return {
+    const mappedResult = {
       lms: "MAPPED_NOT_REQUIRED",
       portal: "MAPPED_NOT_REQUIRED",
       error: null,
       learningCourseSlug: learningSlug,
       mapped: true
     };
+    return isExternalDryRun()
+      ? { ...mappedResult, dryRun: true, action: "syncCourse", courseSlug: learningSlug, payload: null }
+      : mappedResult;
   }
+
+  const dryRunCoursePayload = {
+    action: "syncCourse",
+    slug: learningSlug,
+    title: courseData.courseName || courseData.title,
+    subtitle: courseData.subtitle || "",
+    price: courseData.price || "",
+    imageUrl: courseData.imageUrl || courseData.image_url || "",
+    active: courseData.active !== undefined ? courseData.active : true,
+    isPublished: !!courseData.is_published,
+    teacher: courseData.teacher_name || ""
+  };
+  if (Object.prototype.hasOwnProperty.call(courseData, "expected_start_date")) {
+    dryRunCoursePayload.expected_start_date = courseData.expected_start_date;
+  }
+  if (isExternalDryRun()) {
+    return dryRunResult("syncCourse", learningSlug, {
+      lms: dryRunCoursePayload,
+      portal: {
+        action: "syncCourse",
+        courseSlug: learningSlug,
+        title: dryRunCoursePayload.title,
+        imageUrl: dryRunCoursePayload.imageUrl,
+        active: dryRunCoursePayload.active,
+        isPublished: dryRunCoursePayload.isPublished,
+        ...(Object.prototype.hasOwnProperty.call(dryRunCoursePayload, "expected_start_date")
+          ? { expected_start_date: dryRunCoursePayload.expected_start_date }
+          : {})
+      }
+    });
+  }
+
+  const secret = process.env.INTERNAL_SYNC_SECRET;
+  const sys1Url = process.env.SYSTEM1_URL;
+  const sys3Url = process.env.SYSTEM3_URL;
+  const results = { lms: "SKIPPED", portal: "SKIPPED", error: null };
   
   if (!secret) {
     results.error = "Missing INTERNAL_SYNC_SECRET";
@@ -145,26 +196,32 @@ export async function syncCourseToExternalSystems(courseData) {
 }
 
 export async function syncEnrollmentToExternalSystems(orderData, actionType) {
+  const email = orderData.customer_email || orderData.gmail;
+  const courseSlug = getEffectiveLearningSlug(orderData);
+  const action = actionType === "create" ? "syncEnrollment" : "revokeEnrollment";
+
+  if (!email || !courseSlug) {
+    const results = { lms: "SKIPPED", portal: "SKIPPED", error: null };
+    results.error = "Missing email or course slug";
+    return results;
+  }
+
+  const payload = { action, email, courseSlug };
+  if (isExternalDryRun()) {
+    return dryRunResult(action, courseSlug, {
+      lms: payload,
+      portal: payload
+    });
+  }
+
   const secret = process.env.INTERNAL_SYNC_SECRET;
   const sys1Url = process.env.SYSTEM1_URL;
   const sys3Url = process.env.SYSTEM3_URL;
-  
   const results = { lms: "SKIPPED", portal: "SKIPPED", error: null };
-  
   if (!secret) {
     results.error = "Missing INTERNAL_SYNC_SECRET";
     return results;
   }
-  
-  const email = orderData.customer_email || orderData.gmail;
-  const courseSlug = getEffectiveLearningSlug(orderData);
-  
-  if (!email || !courseSlug) {
-    results.error = "Missing email or course slug";
-    return results;
-  }
-  
-  const action = actionType === "create" ? "syncEnrollment" : "revokeEnrollment";
 
   await writeV2OutboxShadow("enrollment sync", () => enqueueEnrollmentSyncEvent({
     ...orderData,
