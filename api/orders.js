@@ -1,5 +1,7 @@
 import { supabase } from "../utils/supabase.js";
 import { warmRuntimeConfig } from "../utils/v2-runtime-controller.js";
+import { effectiveSalesSite } from "../utils/sales-site.js";
+import { fixtureOrders, fixtureUpdateOrder, isPreviewFixture } from "../utils/preview-fixture.js";
 
 export default async function handler(req, res) {
   // CORS headers
@@ -26,6 +28,16 @@ export default async function handler(req, res) {
 
   try {
     if (req.method === "GET") {
+      if (isPreviewFixture()) {
+        return res.status(200).json(fixtureOrders().map((o) => ({
+          ...o,
+          course: o.course_slug,
+          courseName: o.course_title,
+          gmail: o.customer_email,
+          billLink: o.proof_image_url,
+          sales_site: effectiveSalesSite(o)
+        })));
+      }
       const { data: orders, error } = await supabase
         .from("orders")
         .select("*")
@@ -40,6 +52,7 @@ export default async function handler(req, res) {
         });
 
         return {
+          ...(o.raw_data || {}),
           id: o.id,
           created_at: o.created_at,
           "Thời gian": timeFormatted,
@@ -60,7 +73,8 @@ export default async function handler(req, res) {
           sync_lms_status: o.sync_lms_status || "PENDING",
           sync_portal_status: o.sync_portal_status || "PENDING",
           sync_error: o.sync_error || "",
-          ...(o.raw_data || {})
+          sales_site: effectiveSalesSite(o),
+          sales_host: o.sales_host || (effectiveSalesSite(o) === "yeubep" ? "yeubep.shop" : "shop.yeunauan.live")
         };
       });
 
@@ -72,6 +86,12 @@ export default async function handler(req, res) {
 
       if (!id) {
         return res.status(400).json({ error: "Thiếu ID đơn hàng để cập nhật" });
+      }
+      if (isPreviewFixture()) {
+        const updated = fixtureUpdateOrder(id, req.body);
+        return updated
+          ? res.status(200).json({ success: true, data: updated, fixture: true })
+          : res.status(404).json({ error: "Không tìm thấy đơn hàng" });
       }
 
       // Manual resync action

@@ -1,5 +1,11 @@
 import { supabase } from "../utils/supabase.js";
 import { warmRuntimeConfig } from "../utils/v2-runtime-controller.js";
+import {
+  buildCourseSalesUrl,
+  effectiveSalesSite,
+  requireSalesSite
+} from "../utils/sales-site.js";
+import { fixtureCourses, fixtureSaveCourse, isPreviewFixture } from "../utils/preview-fixture.js";
 
 function normalizeExpectedStartDate(value) {
   const text = String(value || "").trim();
@@ -36,6 +42,14 @@ export default async function handler(req, res) {
 
   try {
     if (req.method === "GET") {
+      if (isPreviewFixture()) {
+        return res.status(200).json(fixtureCourses().map((course) => ({
+          ...(course.raw_data || {}),
+          ...course,
+          sales_site: effectiveSalesSite(course),
+          sales_url: buildCourseSalesUrl(course)
+        })));
+      }
       // Lấy danh sách tất cả khóa học, sắp xếp theo sort_order trước, sau đó là created_at
       const { data: courses, error } = await supabase
         .from("courses")
@@ -47,6 +61,7 @@ export default async function handler(req, res) {
 
       // Định dạng tương thích ngược
       const formattedCourses = courses.map((c) => ({
+        ...(c.raw_data || {}),
         id: c.id,
         slug: c.slug,
         courseName: c.title,
@@ -62,7 +77,8 @@ export default async function handler(req, res) {
         sync_lms_status: c.sync_lms_status || "PENDING",
         sync_portal_status: c.sync_portal_status || "PENDING",
         sync_error: c.sync_error || "",
-        ...(c.raw_data || {}),
+        sales_site: effectiveSalesSite(c),
+        sales_url: buildCourseSalesUrl(c),
         expected_start_date: c.expected_start_date || ""
       }));
 
@@ -86,11 +102,17 @@ export default async function handler(req, res) {
         bankOwner,
         transferNote,
         qrImageUrl,
-        expected_start_date
+        expected_start_date,
+        sales_site
       } = req.body;
 
       if (!slug || (!courseName && !title)) {
         return res.status(400).json({ error: "Thiếu thông tin bắt buộc (slug, title)" });
+      }
+      const salesSite = requireSalesSite(sales_site);
+      if (isPreviewFixture()) {
+        const row = fixtureSaveCourse({ ...req.body, sales_site: salesSite });
+        return res.status(201).json({ success: true, data: row, fixture: true });
       }
 
       if (!isValidExpectedStartDateInput(expected_start_date)) {
@@ -110,6 +132,7 @@ export default async function handler(req, res) {
           description: description || "",
           teacher_name: teacher_name || "",
           is_published: is_published === true,
+          sales_site: salesSite,
           raw_data: {
             bankName: bankName || "",
             bankAccount: bankAccount || "",
@@ -171,7 +194,8 @@ export default async function handler(req, res) {
         bankOwner,
         transferNote,
         qrImageUrl,
-        expected_start_date
+        expected_start_date,
+        sales_site
       } = req.body;
 
       if (!id) {
@@ -180,11 +204,28 @@ export default async function handler(req, res) {
 
       const { data: existingCourse, error: existingErr } = await supabase
         .from("courses")
-        .select("image_url, expected_start_date, raw_data")
+        .select("image_url, expected_start_date, raw_data, sales_site")
         .eq("id", id)
         .maybeSingle();
 
       if (existingErr) throw existingErr;
+      if (!existingCourse) {
+        return res.status(404).json({ error: "Không tìm thấy khóa học" });
+      }
+      if (isPreviewFixture()) {
+        const current = fixtureCourses().find((course) => course.id === id);
+        if (!current) return res.status(404).json({ error: "Không tìm thấy khóa học" });
+        const salesSite = requireSalesSite(
+          Object.prototype.hasOwnProperty.call(req.body, "sales_site") ? sales_site : effectiveSalesSite(current)
+        );
+        const row = fixtureSaveCourse({ ...req.body, sales_site: salesSite });
+        return res.status(200).json({ success: true, data: row, fixture: true });
+      }
+      const salesSite = requireSalesSite(
+        Object.prototype.hasOwnProperty.call(req.body, "sales_site")
+          ? sales_site
+          : effectiveSalesSite(existingCourse)
+      );
 
       const existingRawData = existingCourse?.raw_data || {};
       const nextImageUrl = String(imageUrl || "").trim();
@@ -203,6 +244,7 @@ export default async function handler(req, res) {
         sort_order: sort_order !== undefined ? parseInt(sort_order, 10) : 0,
         description: description || "",
         teacher_name: teacher_name || "",
+        sales_site: salesSite,
         raw_data: {
           ...existingRawData,
           bankName: bankName || "",

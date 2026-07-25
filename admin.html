@@ -160,6 +160,22 @@
       <!-- Modal Body Form -->
       <form id="courseForm" class="p-6 space-y-6 flex-1">
         <input type="hidden" id="courseId">
+        <input type="hidden" id="courseOriginalSalesSite" value="yeunauan">
+
+        <fieldset>
+          <legend class="block text-xs uppercase font-extrabold text-slate-500 tracking-wider mb-2">Website bán hàng *</legend>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label class="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 cursor-pointer">
+              <input type="radio" name="salesSite" value="yeunauan" required checked class="accent-pink-600">
+              <span class="text-sm font-bold text-slate-700">yeunauan.live</span>
+            </label>
+            <label class="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 cursor-pointer">
+              <input type="radio" name="salesSite" value="yeubep" required class="accent-pink-600">
+              <span class="text-sm font-bold text-slate-700">yeubep.shop</span>
+            </label>
+          </div>
+          <p class="mt-2 text-xs text-amber-700">Đổi website sẽ thay đổi URL bán hàng; các đơn cũ không bị di chuyển.</p>
+        </fieldset>
         
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
@@ -412,7 +428,6 @@
     function renderCourses(courses) {
       const box = document.getElementById("courseList");
       const countText = document.getElementById("countText");
-      const origin = "https://shop.yeunauan.live";
 
       countText.innerText = `Tìm thấy ${courses.length}/${allCourses.length} khóa học`;
       countText.classList.remove("hidden");
@@ -434,7 +449,8 @@
         const price = course.price || "";
         const rawImage = course.imageUrl || "";
         const image = normalizeImageUrl(rawImage) || COURSE_IMAGE_PLACEHOLDER;
-        const link = `${origin}/?course=${encodeURIComponent(slug)}`;
+        const salesSite = course.sales_site === "yeubep" ? "yeubep" : "yeunauan";
+        const link = course.sales_url || `${salesSite === "yeubep" ? "https://yeubep.shop" : "https://shop.yeunauan.live"}/?course=${encodeURIComponent(slug)}`;
         const active = course.active;
         const isPublished = course.is_published === true;
         const sortOrder = course.sort_order || 0;
@@ -871,6 +887,8 @@
         // Edit Mode
         document.getElementById("modalTitle").innerText = "Chỉnh Sửa Khóa Học";
         document.getElementById("courseId").value = course.id || "";
+        document.getElementById("courseOriginalSalesSite").value = course.sales_site === "yeubep" ? "yeubep" : "yeunauan";
+        document.querySelector(`input[name="salesSite"][value="${course.sales_site === "yeubep" ? "yeubep" : "yeunauan"}"]`).checked = true;
         document.getElementById("courseTitleInput").value = course.courseName || "";
         document.getElementById("courseSlugInput").value = course.slug || "";
         document.getElementById("coursePriceInput").value = course.price || "";
@@ -892,6 +910,8 @@
         document.getElementById("modalTitle").innerText = "Thêm Khóa Học Mới";
         form.reset();
         document.getElementById("courseId").value = "";
+        document.getElementById("courseOriginalSalesSite").value = "yeunauan";
+        document.querySelector('input[name="salesSite"][value="yeunauan"]').checked = true;
         document.getElementById("courseActiveInput").checked = true;
         document.getElementById("courseSortOrderInput").value = 0;
         document.getElementById("courseExpectedStartDateInput").value = "";
@@ -934,6 +954,11 @@
       const active = document.getElementById("courseActiveInput").checked;
       const imageUrl = document.getElementById("courseImageUrlInput").value.trim();
       const description = document.getElementById("courseDescriptionInput").value.trim();
+      const sales_site = document.querySelector('input[name="salesSite"]:checked')?.value;
+      const originalSalesSite = document.getElementById("courseOriginalSalesSite").value || "yeunauan";
+      if (id && sales_site !== originalSalesSite && !confirm("Website bán hàng thay đổi sẽ làm URL bán khóa học thay đổi. Đơn hàng cũ vẫn giữ nguyên nguồn. Tiếp tục?")) {
+        return;
+      }
       
       // Bank configurations
       const bankName = document.getElementById("bankNameInput").value.trim();
@@ -958,6 +983,7 @@
         bankOwner,
         transferNote,
         qrImageUrl
+        ,sales_site
       };
 
       const method = id ? "PUT" : "POST";
@@ -975,12 +1001,12 @@
 
         const data = await response.json();
 
-        if (response.ok) {
+        if (response.ok && data?.data?.sales_site === sales_site && data?.data?.id) {
           showToast(id ? "Đã cập nhật khóa học" : "Đã tạo khóa học mới thành công");
           closeCourseModal();
           loadCourses();
         } else {
-          alert(data.error || "Gặp lỗi khi lưu khóa học");
+          alert(data.error || "Không xác minh được dữ liệu đã lưu. Hệ thống chưa báo thành công.");
         }
       } catch (err) {
         alert("Lỗi kết nối máy chủ");
@@ -1011,6 +1037,7 @@
         bankOwner: course.bankOwner,
         transferNote: course.transferNote,
         qrImageUrl: course.qrImageUrl
+        ,sales_site: course.sales_site || "yeunauan"
       };
 
       showLoader("Đang cập nhật trạng thái hoạt động...");
@@ -1070,6 +1097,7 @@
         bankOwner: course.bankOwner,
         transferNote: course.transferNote,
         qrImageUrl: course.qrImageUrl
+        ,sales_site: course.sales_site || "yeunauan"
       };
 
       showLoader(nextPublished ? "Đang chuyển khóa sang Sẵn sàng..." : "Đang chuyển khóa sang Chờ lên bài...");
@@ -1152,6 +1180,7 @@
         bankOwner: course.bankOwner,
         transferNote: course.transferNote,
         qrImageUrl: course.qrImageUrl
+        ,sales_site: course.sales_site || "yeunauan"
       };
 
       try {

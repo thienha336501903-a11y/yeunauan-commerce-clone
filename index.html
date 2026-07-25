@@ -280,7 +280,10 @@ document.getElementById('regForm').addEventListener('submit',async(e)=>{
       setProgress(60,'Đang upload bill...');
       const response=await fetch('/api/register',{
         method:'POST',
-        headers:{'Content-Type':'application/json'},
+        headers:{
+          'Content-Type':'application/json',
+          'Idempotency-Key':window.checkoutIdempotencyKey||(window.checkoutIdempotencyKey=(crypto.randomUUID?crypto.randomUUID():`${Date.now()}-${Math.random().toString(36).slice(2)}`))
+        },
         body:JSON.stringify({
           gmail,
           billName:file.name,
@@ -294,6 +297,7 @@ document.getElementById('regForm').addEventListener('submit',async(e)=>{
       const data=await response.json();
       if(response.ok){
         console.log('[Checkout] register success', data);
+        window.checkoutIdempotencyKey=null;
         console.log('[Checkout] redirecting to my-courses');
         window.location.href = 'https://yeunauan.live/my-courses';
       }else{

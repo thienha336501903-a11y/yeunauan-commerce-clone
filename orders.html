@@ -535,21 +535,21 @@
     function populateCourseFilter(courses) {
       const select = document.getElementById("courseFilter");
       select.innerHTML = '<option value="">Tất cả khóa học</option>' + 
-        courses.map(c => `<option value="${c.slug}">${c.courseName || c.slug}</option>`).join('');
+        courses.map(c => `<option value="${c.sales_site || 'yeunauan'}::${c.slug}">[${c.sales_site === 'yeubep' ? 'yeubep.shop' : 'yeunauan.live'}] ${c.courseName || c.slug}</option>`).join('');
     }
 
     // 7. GET FILTERED DATA
     function getFilteredOrders() {
       const keyword = document.getElementById("searchInput").value.toLowerCase().trim();
       const status = document.getElementById("statusFilter").value;
-      const courseSlug = document.getElementById("courseFilter").value;
+      const courseKey = document.getElementById("courseFilter").value;
 
       return allOrders.filter(order => {
         // Status filter
         if (status && order.status !== status) return false;
         
         // Course filter
-        if (courseSlug && order.course !== courseSlug) return false;
+        if (courseKey && `${order.sales_site || 'yeunauan'}::${order.course}` !== courseKey) return false;
         
         // Keyword filter (email, phone, name, course name)
         if (keyword) {
@@ -659,6 +659,7 @@
                   <td class="p-4">
                     <div class="font-extrabold text-slate-900">${courseName}</div>
                     <div class="text-xs text-slate-400 font-mono">slug: ${course}</div>
+                    <div class="text-[10px] mt-1 font-extrabold ${order.sales_site === 'yeubep' ? 'text-violet-600' : 'text-sky-600'}">${order.sales_site === 'yeubep' ? 'yeubep.shop' : 'yeunauan.live'}</div>
                   </td>
                   
                   <!-- Gmail & Info -->
@@ -771,24 +772,27 @@
 
       container.classList.remove("hidden");
 
-      // Group by course slug
+      // Group by tenant + course slug
       const groups = {};
       pendingOrders.forEach(order => {
         const slug = order.course || "unknown";
-        if (!groups[slug]) {
-          groups[slug] = {
+        const salesSite = order.sales_site || "yeunauan";
+        const groupKey = `${salesSite}::${slug}`;
+        if (!groups[groupKey]) {
+          groups[groupKey] = {
             slug: slug,
+            salesSite,
             courseName: order.courseName || slug,
             orders: [],
             newestCreatedAt: null
           };
         }
-        groups[slug].orders.push(order);
+        groups[groupKey].orders.push(order);
 
         // Track newest created_at
         const orderTime = order.created_at ? new Date(order.created_at).getTime() : 0;
-        if (!groups[slug].newestCreatedAt || orderTime > groups[slug].newestCreatedAt) {
-          groups[slug].newestCreatedAt = orderTime;
+        if (!groups[groupKey].newestCreatedAt || orderTime > groups[groupKey].newestCreatedAt) {
+          groups[groupKey].newestCreatedAt = orderTime;
         }
       });
 
@@ -811,6 +815,7 @@
             const courseSlug = group.slug;
             const courseName = group.courseName;
             const orders = group.orders;
+            const salesSite = group.salesSite;
 
             return `
               <div class="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm transition hover:shadow-md">
@@ -818,19 +823,19 @@
                 <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 mb-4 border-b border-slate-100">
                   <div>
                     <h4 class="text-lg font-black text-slate-900 font-outfit">${courseName}</h4>
-                    <p class="text-xs text-slate-400 font-mono mt-0.5">slug: ${courseSlug} • ${orders.length} học viên chờ duyệt</p>
+                    <p class="text-xs text-slate-400 font-mono mt-0.5">${salesSite === 'yeubep' ? 'yeubep.shop' : 'yeunauan.live'} • slug: ${courseSlug} • ${orders.length} học viên chờ duyệt</p>
                   </div>
                   
                   <div class="flex gap-2 w-full sm:w-auto">
                     <button 
-                      onclick="copyGroupGmails('${courseSlug}')"
+                      onclick="copyGroupGmails('${courseSlug}', '${salesSite}')"
                       class="flex-1 sm:flex-initial bg-slate-900 hover:bg-pink-600 text-white font-bold px-4 py-2.5 rounded-xl transition text-xs flex items-center justify-center gap-1.5 shadow-sm"
                     >
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
                       Copy Gmail (${orders.length})
                     </button>
                     <button 
-                      onclick="approveGroupAll('${courseSlug}')"
+                      onclick="approveGroupAll('${courseSlug}', '${salesSite}')"
                       class="flex-1 sm:flex-initial bg-green-600 hover:bg-green-700 text-white font-bold px-4 py-2.5 rounded-xl transition text-xs flex items-center justify-center gap-1.5 shadow-sm"
                     >
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
@@ -948,8 +953,8 @@
       `;
     }
 
-    async function copyGroupGmails(courseSlug) {
-      const orders = allOrders.filter(o => o.course === courseSlug && o.status === "Chờ duyệt");
+    async function copyGroupGmails(courseSlug, salesSite) {
+      const orders = allOrders.filter(o => o.course === courseSlug && (o.sales_site || "yeunauan") === salesSite && o.status === "Chờ duyệt");
       const gmails = orders.map(o => o.gmail).filter(Boolean);
 
       if (gmails.length === 0) {
@@ -961,8 +966,8 @@
       showToast(`Đã copy ${gmails.length} Gmail của lớp ${courseSlug}!`);
     }
 
-    async function approveGroupAll(courseSlug) {
-      const pendingCount = allOrders.filter(o => o.course === courseSlug && o.status === "Chờ duyệt").length;
+    async function approveGroupAll(courseSlug, salesSite) {
+      const pendingCount = allOrders.filter(o => o.course === courseSlug && (o.sales_site || "yeunauan") === salesSite && o.status === "Chờ duyệt").length;
 
       if (pendingCount === 0) {
         alert("Khóa học này không có học viên nào ở trạng thái chờ duyệt.");
@@ -980,7 +985,7 @@
             "Content-Type": "application/json",
             "X-Admin-Password": currentAdminPassword
           },
-          body: JSON.stringify({ course: courseSlug })
+          body: JSON.stringify({ course: courseSlug, sales_site: salesSite })
         });
 
         const data = await res.json();
@@ -1335,8 +1340,9 @@
     async function copyPendingGmails() {
       const selectedCourse = document.getElementById("courseFilter").value;
       if (!selectedCourse) return;
+      const [salesSite, courseSlug] = selectedCourse.split("::");
 
-      const orders = allOrders.filter(o => o.course === selectedCourse && o.status === "Chờ duyệt");
+      const orders = allOrders.filter(o => o.course === courseSlug && (o.sales_site || "yeunauan") === salesSite && o.status === "Chờ duyệt");
       const gmails = orders.map(o => o.gmail).filter(Boolean);
 
       if (gmails.length === 0) {
@@ -1351,8 +1357,9 @@
     async function approveAllPending() {
       const selectedCourse = document.getElementById("courseFilter").value;
       if (!selectedCourse) return;
+      const [salesSite, courseSlug] = selectedCourse.split("::");
 
-      const pendingCount = allOrders.filter(o => o.course === selectedCourse && o.status === "Chờ duyệt").length;
+      const pendingCount = allOrders.filter(o => o.course === courseSlug && (o.sales_site || "yeunauan") === salesSite && o.status === "Chờ duyệt").length;
 
       if (pendingCount === 0) {
         alert("Khóa học này không có học viên nào ở trạng thái chờ duyệt.");
@@ -1370,7 +1377,7 @@
             "Content-Type": "application/json",
             "X-Admin-Password": currentAdminPassword
           },
-          body: JSON.stringify({ course: selectedCourse })
+          body: JSON.stringify({ course: courseSlug, sales_site: salesSite })
         });
 
         const data = await res.json();

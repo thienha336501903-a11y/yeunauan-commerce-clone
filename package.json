@@ -3,10 +3,14 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "dev:stub": "node scripts/local-stub-server.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.8",
     "cloudinary": "^2.3.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.4"
   }
 }

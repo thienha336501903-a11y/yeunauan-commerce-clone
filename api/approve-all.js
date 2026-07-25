@@ -1,5 +1,7 @@
 import { supabase } from "../utils/supabase.js";
 import { warmRuntimeConfig } from "../utils/v2-runtime-controller.js";
+import { applyOrderTenantFilter, requireSalesSite } from "../utils/sales-site.js";
+import { fixtureApproveAll, isPreviewFixture } from "../utils/preview-fixture.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -20,23 +22,35 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { course } = req.body;
+    const { course, sales_site } = req.body;
 
-    if (!course) {
-      return res.status(400).json({ error: "Thiếu course slug" });
+    if (!course || !sales_site) {
+      return res.status(400).json({ error: "Thiếu course slug hoặc sales_site" });
+    }
+    const salesSite = requireSalesSite(sales_site);
+    if (isPreviewFixture()) {
+      const updatedOrders = fixtureApproveAll(course, salesSite);
+      return res.status(200).json({
+        success: true,
+        count: updatedOrders.length,
+        gmails: updatedOrders.map((order) => order.customer_email),
+        dryRun: true
+      });
     }
 
     // Cập nhật tất cả các đơn hàng của khóa học từ "Chờ duyệt" thành "Đã duyệt"
     // và lấy về danh sách thông tin đơn hàng của học viên vừa được duyệt
-    const { data: updatedOrders, error } = await supabase
+    let updateQuery = supabase
       .from("orders")
       .update({
         status: "Đã duyệt",
         updated_at: new Date().toISOString()
       })
       .eq("course_slug", course)
-      .eq("status", "Chờ duyệt")
-      .select("id, customer_email, course_slug");
+      .eq("status", "Chờ duyệt");
+    updateQuery = applyOrderTenantFilter(updateQuery, salesSite);
+    const { data: updatedOrders, error } = await updateQuery
+      .select("id, customer_email, course_slug, sales_site");
 
     if (error) throw error;
 
