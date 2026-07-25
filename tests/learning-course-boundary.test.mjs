@@ -100,6 +100,34 @@ test("fixture alias stores canonical snapshot and dry-run payload", async () => 
   });
 });
 
+test("fixture revoke retains shared entitlement until the final granting order", async () => {
+  process.env.COMMERCE_DATA_MODE = "fixture";
+  process.env.SALES_SITE = "yeubep";
+  const fixture = await import(`../utils/preview-fixture.js?shared=${Date.now()}`);
+  const aliasOrder = fixture.fixtureRegister({
+    course: alias.slug,
+    gmail: "Shared@Example.COM"
+  }, "fixture-shared-key-0001").order;
+  fixture.fixtureUpdateOrder(aliasOrder.id, { status: "Đã duyệt" });
+  const canonicalOrder = {
+    id: "fixture-canonical-order",
+    course_slug: canonical.slug,
+    learning_course_slug: canonical.slug,
+    customer_email: "shared@example.com",
+    status: "Đã duyệt",
+    sales_site: "yeunauan"
+  };
+  fixture.fixtureOrders().push(canonicalOrder);
+  const firstRevoke = fixture.fixtureUpdateOrder(aliasOrder.id, { status: "Đã hủy" });
+  assert.equal(firstRevoke.dry_run_sync.action, "retainSharedEntitlement");
+  const finalRevoke = fixture.fixtureUpdateOrder(canonicalOrder.id, { status: "Đã hủy" });
+  assert.deepEqual(finalRevoke.dry_run_sync, {
+    action: "revokeEnrollment",
+    email: "shared@example.com",
+    courseSlug: canonical.slug
+  });
+});
+
 test("learning migration is idempotent, preserves legacy NULL and rolls back", async () => {
   const db = new PGlite();
   await db.exec(`
