@@ -8,7 +8,7 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const port = Number(process.env.PORT || 4173);
 const salesSite = process.env.SALES_SITE === "yeunauan" ? "yeunauan" : "yeubep";
 const adminPassword = process.env.ADMIN_PASSWORD || "local-admin";
-const hosts = { yeunauan: "shop.yeunauan.live", yeubep: "yeubep.shop" };
+const hosts = { yeunauan: "yeubep.shop", yeubep: "shop.yeunauan.live" };
 const courses = [
   { id: "canonical-1", slug: "thitxiennuongchaungoc", courseName: "Thịt xiên nướng Châu Ngọc", title: "Thịt xiên nướng Châu Ngọc", price: "299.000đ", sales_site: "yeunauan", active: true, sort_order: 0, learning_lesson_count: 4 },
   { id: "alias-1", slug: "thitxiennuongchaungoc-yeubep", courseName: "Thịt xiên nướng Châu Ngọc", title: "Thịt xiên nướng Châu Ngọc", price: "299.000đ", sales_site: "yeubep", active: true, sort_order: 2, learning_course_slug: "thitxiennuongchaungoc", learning_lesson_count: 4 },

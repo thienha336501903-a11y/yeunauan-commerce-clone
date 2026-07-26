@@ -167,11 +167,11 @@
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label class="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 cursor-pointer">
               <input type="radio" name="salesSite" value="yeunauan" required checked class="accent-pink-600">
-              <span class="text-sm font-bold text-slate-700">yeunauan.live</span>
+              <span class="text-sm font-bold text-slate-700">yeubep.shop</span>
             </label>
             <label class="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 cursor-pointer">
               <input type="radio" name="salesSite" value="yeubep" required class="accent-pink-600">
-              <span class="text-sm font-bold text-slate-700">yeubep.shop</span>
+              <span class="text-sm font-bold text-slate-700">shop.yeunauan.live</span>
             </label>
           </div>
           <p class="mt-2 text-xs text-amber-700">Đổi website sẽ thay đổi URL bán hàng; các đơn cũ không bị di chuyển.</p>
@@ -458,7 +458,7 @@
         const rawImage = course.imageUrl || "";
         const image = normalizeImageUrl(rawImage) || COURSE_IMAGE_PLACEHOLDER;
         const salesSite = course.sales_site === "yeubep" ? "yeubep" : "yeunauan";
-        const link = course.sales_url || `${salesSite === "yeubep" ? "https://yeubep.shop" : "https://shop.yeunauan.live"}/?course=${encodeURIComponent(slug)}`;
+        const link = course.sales_url || `${salesSite === "yeubep" ? "https://shop.yeunauan.live" : "https://yeubep.shop"}/?course=${encodeURIComponent(slug)}`;
         const active = course.active;
         const isPublished = course.is_published === true;
         const sortOrder = course.sort_order || 0;

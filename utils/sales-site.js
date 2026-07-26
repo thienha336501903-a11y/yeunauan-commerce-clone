@@ -1,15 +1,15 @@
 export const SALES_SITES = Object.freeze({
   yeunauan: Object.freeze({
     code: "yeunauan",
-    label: "yeunauan.live",
-    baseUrl: "https://shop.yeunauan.live",
-    host: "shop.yeunauan.live"
-  }),
-  yeubep: Object.freeze({
-    code: "yeubep",
     label: "yeubep.shop",
     baseUrl: "https://yeubep.shop",
     host: "yeubep.shop"
+  }),
+  yeubep: Object.freeze({
+    code: "yeubep",
+    label: "shop.yeunauan.live",
+    baseUrl: "https://shop.yeunauan.live",
+    host: "shop.yeunauan.live"
   })
 });
 

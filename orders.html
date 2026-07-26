@@ -535,7 +535,7 @@
     function populateCourseFilter(courses) {
       const select = document.getElementById("courseFilter");
       select.innerHTML = '<option value="">Tất cả khóa học</option>' + 
-        courses.map(c => `<option value="${c.sales_site || 'yeunauan'}::${c.slug}">[${c.sales_site === 'yeubep' ? 'yeubep.shop' : 'yeunauan.live'}] ${c.courseName || c.slug}</option>`).join('');
+        courses.map(c => `<option value="${c.sales_site || 'yeunauan'}::${c.slug}">[${c.sales_site === 'yeubep' ? 'shop.yeunauan.live' : 'yeubep.shop'}] ${c.courseName || c.slug}</option>`).join('');
     }
 
     // 7. GET FILTERED DATA
@@ -659,7 +659,7 @@
                   <td class="p-4">
                     <div class="font-extrabold text-slate-900">${courseName}</div>
                     <div class="text-xs text-slate-400 font-mono">slug: ${course}</div>
-                    <div class="text-[10px] mt-1 font-extrabold ${order.sales_site === 'yeubep' ? 'text-violet-600' : 'text-sky-600'}">${order.sales_site === 'yeubep' ? 'yeubep.shop' : 'yeunauan.live'}</div>
+                    <div class="text-[10px] mt-1 font-extrabold ${order.sales_site === 'yeubep' ? 'text-violet-600' : 'text-sky-600'}">${order.sales_host || (order.sales_site === 'yeubep' ? 'shop.yeunauan.live' : 'yeubep.shop')}</div>
                   </td>
                   
                   <!-- Gmail & Info -->
@@ -823,7 +823,7 @@
                 <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 mb-4 border-b border-slate-100">
                   <div>
                     <h4 class="text-lg font-black text-slate-900 font-outfit">${courseName}</h4>
-                    <p class="text-xs text-slate-400 font-mono mt-0.5">${salesSite === 'yeubep' ? 'yeubep.shop' : 'yeunauan.live'} • slug: ${courseSlug} • ${orders.length} học viên chờ duyệt</p>
+                    <p class="text-xs text-slate-400 font-mono mt-0.5">${salesSite === 'yeubep' ? 'shop.yeunauan.live' : 'yeubep.shop'} • slug: ${courseSlug} • ${orders.length} học viên chờ duyệt</p>
                   </div>
                   
                   <div class="flex gap-2 w-full sm:w-auto">

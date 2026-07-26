@@ -7,6 +7,7 @@ import {
   applyCourseTenantFilter,
   buildCourseSalesUrl,
   effectiveSalesSite,
+  getPublicSiteUrl,
   getSalesSiteConfig,
   normalizeSalesSite,
   requireSalesSite
@@ -20,8 +21,35 @@ test("tenant allowlist and legacy default", () => {
   assert.equal(effectiveSalesSite({ sales_site: null }), "yeunauan");
   assert.equal(requireSalesSite("yeubep"), "yeubep");
   assert.throws(() => requireSalesSite("attacker"), /không hợp lệ/);
-  assert.equal(getSalesSiteConfig("yeubep").host, "yeubep.shop");
-  assert.equal(buildCourseSalesUrl({ slug: "demo", sales_site: null }), "https://shop.yeunauan.live/?course=demo");
+  assert.equal(getSalesSiteConfig("yeunauan").host, "yeubep.shop");
+  assert.equal(getSalesSiteConfig("yeubep").host, "shop.yeunauan.live");
+  assert.equal(buildCourseSalesUrl({ slug: "demo", sales_site: null }), "https://yeubep.shop/?course=demo");
+  assert.equal(buildCourseSalesUrl({ slug: "demo-yeubep", sales_site: "yeubep" }), "https://shop.yeunauan.live/?course=demo-yeubep");
+});
+
+test("PUBLIC_SITE_URL is used outside Vercel preview URL override", () => {
+  const original = {
+    SALES_SITE: process.env.SALES_SITE,
+    PUBLIC_SITE_URL: process.env.PUBLIC_SITE_URL,
+    VERCEL_ENV: process.env.VERCEL_ENV,
+    VERCEL_URL: process.env.VERCEL_URL
+  };
+  try {
+    process.env.SALES_SITE = "yeunauan";
+    process.env.PUBLIC_SITE_URL = "https://yeubep.shop";
+    process.env.VERCEL_ENV = "test";
+    delete process.env.VERCEL_URL;
+    assert.equal(getPublicSiteUrl(), "https://yeubep.shop");
+
+    process.env.SALES_SITE = "yeubep";
+    process.env.PUBLIC_SITE_URL = "https://shop.yeunauan.live/";
+    assert.equal(getPublicSiteUrl(), "https://shop.yeunauan.live");
+  } finally {
+    for (const [key, value] of Object.entries(original)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });
 
 test("server query applies legacy OR only to yeunauan and strict equality to yeubep", () => {
@@ -64,7 +92,7 @@ test("approve-all is tenant, slug and status scoped", async () => {
   const ui = await read("orders.html");
   assert.match(api, /\.eq\("course_slug", course\)[\s\S]*\.eq\("status", "Chờ duyệt"\)[\s\S]*applyOrderTenantFilter\(updateQuery, salesSite\)/);
   assert.match(ui, /JSON\.stringify\(\{ course: courseSlug, sales_site: salesSite \}\)/);
-  assert.match(ui, /order\.sales_site === 'yeubep' \? 'yeubep\.shop' : 'yeunauan\.live'/);
+  assert.match(ui, /order\.sales_host \|\| \(order\.sales_site === 'yeubep' \? 'shop\.yeunauan\.live' : 'yeubep\.shop'\)/);
 });
 
 test("migration is idempotent, constrained, indexed and preserves global slug uniqueness", async () => {

@@ -173,6 +173,8 @@ test("fixture alias stores canonical snapshot and dry-run payload", async () => 
   }, "fixture-learning-key-0001");
   assert.equal(result.order.course_slug, alias.slug);
   assert.equal(result.order.learning_course_slug, canonical.slug);
+  assert.equal(result.order.sales_site, "yeubep");
+  assert.equal(result.order.sales_host, "shop.yeunauan.live");
   const approved = fixture.fixtureUpdateOrder(result.order.id, { status: "Đã duyệt" });
   assert.deepEqual(approved.dry_run_sync, {
     action: "syncEnrollment",
