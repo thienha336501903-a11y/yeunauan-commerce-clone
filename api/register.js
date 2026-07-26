@@ -57,7 +57,10 @@ export default async function handler(req, res) {
         file: result.order.proof_image_url,
         course: result.order.course_slug,
         courseName: result.order.course_title,
-        learningCourseSlug: result.order.learning_course_slug
+        learningCourseSlug: result.order.learning_course_slug,
+        salesSite: result.order.sales_site,
+        salesHost: result.order.sales_host,
+        externalMutationsBlocked: true
       });
     }
 

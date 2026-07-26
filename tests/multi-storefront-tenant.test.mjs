@@ -73,6 +73,9 @@ test("public and order APIs derive tenant server-side", async () => {
   assert.match(register, /getDeploymentSalesSite\(\)/);
   assert.match(register, /price_snapshot: courseRec\.price/);
   assert.match(register, /sales_host: siteConfig\.host/);
+  assert.match(register, /salesSite: result\.order\.sales_site/);
+  assert.match(register, /salesHost: result\.order\.sales_host/);
+  assert.match(register, /externalMutationsBlocked: true/);
   assert.match(register, /idempotency_key: idempotencyKey/);
   assert.match(register, /\.eq\("active", true\)/);
   assert.doesNotMatch(register, /courseName \|\|/);
