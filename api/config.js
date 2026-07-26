@@ -24,7 +24,13 @@ export default async function handler(req, res) {
         bankAccount: rawData.bankAccount || "",
         bankOwner: rawData.bankOwner || "",
         transferNote: rawData.transferNote || "",
-        qrImageUrl: rawData.qrImageUrl || ""
+        qrImageUrl: rawData.qrImageUrl || "",
+        previewDeployment: {
+          salesSite: getDeploymentSalesSite(),
+          publicSiteUrl: String(process.env.PUBLIC_SITE_URL || "").trim().replace(/\/$/, ""),
+          dataMode: "fixture",
+          externalSyncMode: process.env.EXTERNAL_SYNC_MODE || ""
+        }
       });
     }
 

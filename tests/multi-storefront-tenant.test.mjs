@@ -69,6 +69,9 @@ test("public and order APIs derive tenant server-side", async () => {
   const register = await read("api/register.js");
   assert.match(config, /getDeploymentSalesSite\(\)/);
   assert.match(config, /applyCourseTenantFilter/);
+  assert.match(config, /previewDeployment/);
+  assert.match(config, /publicSiteUrl: String\(process\.env\.PUBLIC_SITE_URL/);
+  assert.match(config, /externalSyncMode: process\.env\.EXTERNAL_SYNC_MODE/);
   assert.doesNotMatch(config, /req\.(body|query|headers).*sales_site/);
   assert.match(register, /getDeploymentSalesSite\(\)/);
   assert.match(register, /price_snapshot: courseRec\.price/);
