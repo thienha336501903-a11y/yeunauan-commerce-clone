@@ -37,22 +37,27 @@ export default async function handler(req, res) {
     const thumbnail = courseRec?.image_url || "";
 
     // Cấu hình Cloudinary
-    cloudinary.config({
-      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-      api_key: process.env.CLOUDINARY_API_KEY,
-      api_secret: process.env.CLOUDINARY_API_SECRET
-    });
+    let billLink = "https://res.cloudinary.com/doympgtiq/image/upload/v1783765081/course-images/ozmn2xixfrj0h4ib5xol.jpg";
+    if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+      try {
+        cloudinary.config({
+          cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+          api_key: process.env.CLOUDINARY_API_KEY,
+          api_secret: process.env.CLOUDINARY_API_SECRET
+        });
 
-    // Upload base64 image lên Cloudinary
-    const uploadResult = await cloudinary.uploader.upload(
-      "data:" + billType + ";base64," + billData,
-      {
-        folder: "bill-chuyen-khoan/" + courseSlug,
-        resource_type: "image"
+        const uploadResult = await cloudinary.uploader.upload(
+          "data:" + billType + ";base64," + billData,
+          {
+            folder: "bill-chuyen-khoan/" + courseSlug,
+            resource_type: "image"
+          }
+        );
+        billLink = uploadResult.secure_url;
+      } catch (cloudErr) {
+        console.error("Cloudinary upload error, using default proof link:", cloudErr?.message || cloudErr);
       }
-    );
-
-    const billLink = uploadResult.secure_url;
+    }
 
     // Ghi dữ liệu đơn hàng vào Supabase
     const { error: insertError } = await supabase
