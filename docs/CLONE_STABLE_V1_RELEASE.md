@@ -6,7 +6,7 @@
 
 ## 1. Commerce System
 - **Repository**: `https://github.com/thienha336501903-a11y/yeunauan-commerce-clone`
-- **HEAD SHA**: `90c0f38fc21d059a87bc1afad137d40efb65248d`
+- **Accepted Baseline Commit (Tag `CLONE_STABLE_V1_ACCEPTED_20260808`)**: `4deaaec7454a796347703f7c6919203f05150850`
 - **Release Tags**: `CLONE_STABLE_V1`, `CLONE_STABLE_V1_ACCEPTED_20260808`
 - **Vercel Project**: `yeunauan-commerce-clone` (`prj_9LIdNafm4JYpYCNA6ujbIlQs2Bh9`)
 - **Production Deployment URL**: `https://yeunauan-commerce-clone.vercel.app`
@@ -14,7 +14,7 @@
 
 ## 2. LMS System
 - **Repository**: `https://github.com/thienha336501903-a11y/yeunauan-lms-clone`
-- **HEAD SHA**: `e1ab6d794ae169a60778cd612d192592358696ec`
+- **Accepted Baseline Commit (Tag `CLONE_STABLE_V1_ACCEPTED_20260808`)**: `4b880c4cd921caa4d03d93893a9194f338754648`
 - **Release Tags**: `CLONE_STABLE_V1`, `CLONE_STABLE_V1_ACCEPTED_20260808`
 - **Vercel Project**: `yeunauan-lms-clone`
 - **Production Deployment ID**: `dpl_4AhCjD5whZx5QunUWmy8BJhHCU3Q`
