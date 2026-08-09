@@ -1,11 +1,11 @@
 import crypto from "crypto";
 import { v2 as cloudinary } from "cloudinary";
 import { supabase } from "../utils/supabase.js";
-import { syncEnrollmentToExternalSystems } from "../utils/sync-helpers.js";
 
 const CLONE_REF = "yyiavtiwtekkocqpephr";
 const TEST_BILL_NAME = "__clone_factory_test_bill_20260809.png";
 const TEST_COURSE = "banhmi4k";
+const CLONE_LMS_SYNC_URL = "https://yeunauan-lms-clone.vercel.app/api/sync";
 
 function isAuthorized(req) {
   const supplied = String(req.headers["x-admin-password"] || "");
@@ -58,6 +58,26 @@ function publicIdFromCloudinaryUrl(url) {
   }
 }
 
+async function syncExactCloneLms(action, order) {
+  const secret = String(process.env.INTERNAL_SYNC_SECRET || "");
+  if (!secret) throw new Error("Missing INTERNAL_SYNC_SECRET");
+  const response = await fetch(CLONE_LMS_SYNC_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Sync-Secret": secret
+    },
+    body: JSON.stringify({
+      action,
+      email: order.customer_email,
+      courseSlug: order.course_slug
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(`Clone LMS sync failed: ${data.error || response.status}`);
+  return data;
+}
+
 async function statusPayload() {
   const orders = await findTestOrders();
   const enrollments = await enrollmentRows(orders);
@@ -103,7 +123,7 @@ async function approveTestOrder() {
     .single();
   if (updateError) throw updateError;
 
-  const syncResults = await syncEnrollmentToExternalSystems(approved, "create");
+  await syncExactCloneLms("syncEnrollment", approved);
   const createdEnrollments = await enrollmentRows([approved]);
   if (createdEnrollments.length !== 1) {
     throw new Error(`Expected exactly one created enrollment, found ${createdEnrollments.length}`);
@@ -112,9 +132,9 @@ async function approveTestOrder() {
   const { error: syncUpdateError } = await supabase
     .from("orders")
     .update({
-      sync_lms_status: syncResults.lms,
-      sync_portal_status: syncResults.portal,
-      sync_error: syncResults.error,
+      sync_lms_status: "SUCCESS",
+      sync_portal_status: "DISABLED",
+      sync_error: null,
       raw_data: {
         ...markedRawData,
         createdEnrollmentId: createdEnrollment.id,
@@ -155,7 +175,7 @@ async function cleanupTestData() {
     }
 
     if (enrollment) {
-      await syncEnrollmentToExternalSystems(order, "revoke");
+      await syncExactCloneLms("revokeEnrollment", order);
       const { data: remainingExact, error: exactLookupError } = await supabase
         .from("student_enrollments")
         .select("id")
