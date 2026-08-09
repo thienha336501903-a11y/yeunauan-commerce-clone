@@ -1,5 +1,28 @@
+import crypto from "crypto";
 import { v2 as cloudinary } from "cloudinary";
 import { supabase } from "../utils/supabase.js";
+
+const MAX_BILL_BYTES = 5 * 1024 * 1024;
+const ALLOWED_BILL_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const DEFAULT_COURSE_SLUG = "banhmi4k";
+
+function normalizeEmail(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !/[^\x00-\x7F]/.test(email);
+}
+
+function normalizeBase64(value) {
+  return String(value || "").replace(/\s+/g, "");
+}
+
+function isValidBase64(value) {
+  return value.length > 0 &&
+    value.length % 4 === 0 &&
+    /^[A-Za-z0-9+/]+={0,2}$/.test(value);
+}
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -14,38 +37,92 @@ export default async function handler(req, res) {
       billName,
       billType,
       billData,
-      course,
-      courseName
-    } = req.body;
+      course
+    } = req.body || {};
 
-    if (!gmail || !billName || !billType || !billData) {
+    const cleanEmail = normalizeEmail(gmail);
+    const cleanBillType = String(billType || "").trim().toLowerCase();
+    const cleanBillData = normalizeBase64(billData);
+    const courseSlug = String(course || DEFAULT_COURSE_SLUG).trim().toLowerCase();
+
+    if (!cleanEmail || !billName || !cleanBillType || !cleanBillData) {
       return res.status(400).json({
         error: "Thiếu dữ liệu"
       });
     }
 
-    const courseSlug = course || "donut";
-    
-    // Fetch course details from Supabase B
-    const { data: courseRec } = await supabase
+    if (!isValidEmail(cleanEmail)) {
+      return res.status(400).json({
+        error: "Địa chỉ email không hợp lệ"
+      });
+    }
+
+    if (!ALLOWED_BILL_TYPES.has(cleanBillType)) {
+      return res.status(400).json({
+        error: "Chỉ nhận file JPG, PNG hoặc WEBP"
+      });
+    }
+
+    if (!isValidBase64(cleanBillData)) {
+      return res.status(400).json({
+        error: "Dữ liệu ảnh bill không hợp lệ"
+      });
+    }
+
+    const billBytes = Buffer.byteLength(cleanBillData, "base64");
+    if (!billBytes) {
+      return res.status(400).json({
+        error: "Ảnh bill trống"
+      });
+    }
+    if (billBytes > MAX_BILL_BYTES) {
+      return res.status(413).json({
+        error: "Ảnh bill quá lớn. Vui lòng chọn ảnh dưới 5MB"
+      });
+    }
+
+    if (!/^[a-z0-9_-]+$/.test(courseSlug)) {
+      return res.status(400).json({
+        error: "Mã khóa học không hợp lệ"
+      });
+    }
+
+    const { data: courseRec, error: courseError } = await supabase
       .from("courses")
-      .select("image_url, title")
+      .select("image_url, title, active")
       .eq("slug", courseSlug)
       .maybeSingle();
 
-    const finalCourseName = courseRec?.title || courseName || courseSlug;
-    const thumbnail = courseRec?.image_url || "";
+    if (courseError) {
+      throw courseError;
+    }
+    if (!courseRec || courseRec.active === false) {
+      return res.status(404).json({
+        error: "Khóa học không tồn tại hoặc chưa mở đăng ký"
+      });
+    }
 
-    // Cấu hình Cloudinary
+    const missingCloudinaryEnv = [
+      "CLOUDINARY_CLOUD_NAME",
+      "CLOUDINARY_API_KEY",
+      "CLOUDINARY_API_SECRET"
+    ].filter((name) => !process.env[name]);
+
+    if (missingCloudinaryEnv.length) {
+      console.error("REGISTER_CONFIG_ERROR: Missing Cloudinary env:", missingCloudinaryEnv.join(", "));
+      return res.status(500).json({
+        error: "Hệ thống upload bill chưa được cấu hình đầy đủ"
+      });
+    }
+
     cloudinary.config({
       cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
       api_key: process.env.CLOUDINARY_API_KEY,
       api_secret: process.env.CLOUDINARY_API_SECRET
     });
 
-    // Upload base64 image lên Cloudinary
     const uploadResult = await cloudinary.uploader.upload(
-      "data:" + billType + ";base64," + billData,
+      "data:" + cleanBillType + ";base64," + cleanBillData,
       {
         folder: "bill-chuyen-khoan/" + courseSlug,
         resource_type: "image"
@@ -53,19 +130,21 @@ export default async function handler(req, res) {
     );
 
     const billLink = uploadResult.secure_url;
+    const finalCourseName = courseRec.title || courseSlug;
+    const thumbnail = courseRec.image_url || "";
 
-    // Ghi dữ liệu đơn hàng vào Supabase
     const { error: insertError } = await supabase
       .from("orders")
       .insert({
+        id: crypto.randomUUID(),
         course_slug: courseSlug,
         course_title: finalCourseName,
-        customer_email: gmail,
+        customer_email: cleanEmail,
         proof_image_url: billLink,
         status: "Chờ duyệt",
         raw_data: {
-          billName,
-          billType
+          billName: String(billName).slice(0, 120),
+          billType: cleanBillType
         }
       });
 
@@ -73,12 +152,11 @@ export default async function handler(req, res) {
       throw insertError;
     }
 
-    // Sync pending order to Student Portal (Supabase A)
     const system1Url = process.env.SYSTEM1_URL;
     const syncSecret = process.env.INTERNAL_SYNC_SECRET;
     if (system1Url && syncSecret) {
       try {
-        await fetch(`${system1Url.trim().replace(/\/$/, '')}/api/sync`, {
+        await fetch(`${system1Url.trim().replace(/\/$/, "")}/api/sync`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -86,10 +164,10 @@ export default async function handler(req, res) {
           },
           body: JSON.stringify({
             action: "syncPendingOrder",
-            email: gmail,
-            courseSlug: courseSlug,
+            email: cleanEmail,
+            courseSlug,
             courseName: finalCourseName,
-            thumbnail: thumbnail
+            thumbnail
           })
         });
       } catch (syncErr) {
@@ -105,9 +183,8 @@ export default async function handler(req, res) {
     });
   } catch (error) {
     console.error("REGISTER_ERROR:", error);
-
     return res.status(500).json({
-      error: error.message
+      error: "Không thể ghi nhận đăng ký. Vui lòng thử lại"
     });
   }
 }
