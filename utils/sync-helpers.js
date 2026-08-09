@@ -227,10 +227,10 @@ export async function sendApprovalEmail(email, courseName) {
   // Ví dụ sử dụng Resend:
   // const resend = new Resend(process.env.RESEND_API_KEY);
   // await resend.emails.send({
-  //   from: 'Culinary Academy <academy@yeunauan.live>',
+  //   from: 'Culinary Academy <academy@clone.example>',
   //   to: email,
   //   subject: 'Khóa học của bạn đã được xét duyệt',
   //   html: `<p>Khóa học <strong>${courseName}</strong> đã được Admin xét duyệt.</p>
-  //          <p>Vui lòng truy cập: <a href="https://yeunauan.live/my-courses">https://yeunauan.live/my-courses</a> để xem trạng thái khóa học.</p>`
+  //          <p>Vui lòng truy cập LMS clone để xem trạng thái khóa học.</p>`
   // });
 }
