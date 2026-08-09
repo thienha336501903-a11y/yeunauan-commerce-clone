@@ -2,13 +2,23 @@ import { supabase } from "./supabase.js";
 
 export async function syncCourseToExternalSystems(courseData) {
   const secret = process.env.INTERNAL_SYNC_SECRET;
-  const sys1Url = process.env.SYSTEM1_URL;
-  const sys3Url = process.env.SYSTEM3_URL;
+  const sys1Url = process.env.SYSTEM1_URL || process.env.PORTAL_URL;
+  const sys3Url = process.env.SYSTEM3_URL || process.env.LMS_PUBLIC_URL;
   
-  const results = { lms: "SKIPPED", portal: "SKIPPED", error: null };
+  const results = {
+    lms: sys3Url ? "SKIPPED" : "DISABLED",
+    portal: sys1Url ? "SKIPPED" : "DISABLED",
+    error: null
+  };
   
   if (!secret) {
-    results.error = "Missing INTERNAL_SYNC_SECRET";
+    if (!sys3Url && !sys1Url) {
+      results.lms = "DISABLED";
+      results.portal = "DISABLED";
+      results.error = null;
+    } else {
+      results.error = "Missing INTERNAL_SYNC_SECRET";
+    }
     return results;
   }
 
@@ -112,13 +122,23 @@ export async function syncCourseToExternalSystems(courseData) {
 
 export async function syncEnrollmentToExternalSystems(orderData, actionType) {
   const secret = process.env.INTERNAL_SYNC_SECRET;
-  const sys1Url = process.env.SYSTEM1_URL;
-  const sys3Url = process.env.SYSTEM3_URL;
+  const sys1Url = process.env.SYSTEM1_URL || process.env.PORTAL_URL;
+  const sys3Url = process.env.SYSTEM3_URL || process.env.LMS_PUBLIC_URL;
   
-  const results = { lms: "SKIPPED", portal: "SKIPPED", error: null };
+  const results = {
+    lms: sys3Url ? "SKIPPED" : "DISABLED",
+    portal: sys1Url ? "SKIPPED" : "DISABLED",
+    error: null
+  };
   
   if (!secret) {
-    results.error = "Missing INTERNAL_SYNC_SECRET";
+    if (!sys3Url && !sys1Url) {
+      results.lms = "DISABLED";
+      results.portal = "DISABLED";
+      results.error = null;
+    } else {
+      results.error = "Missing INTERNAL_SYNC_SECRET";
+    }
     return results;
   }
   
