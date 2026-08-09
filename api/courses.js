@@ -65,6 +65,7 @@ export default async function handler(req, res) {
 
     if (req.method === "POST") {
       const {
+        id,
         slug,
         courseName,
         title,
@@ -81,7 +82,7 @@ export default async function handler(req, res) {
         transferNote,
         qrImageUrl,
         expected_start_date
-      } = req.body;
+      } = req.body || {};
 
       if (!slug || (!courseName && !title)) {
         return res.status(400).json({ error: "Thiếu thông tin bắt buộc (slug, title)" });
@@ -91,9 +92,12 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "Lịch khai giảng dự kiến phải có định dạng YYYY-MM-DD" });
       }
 
+      const courseId = id || (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : require("crypto").randomUUID());
+
       const { data, error } = await supabase
         .from("courses")
         .insert({
+          id: courseId,
           slug,
           title: title || courseName,
           price,
