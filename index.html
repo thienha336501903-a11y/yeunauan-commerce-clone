@@ -294,8 +294,9 @@ document.getElementById('regForm').addEventListener('submit',async(e)=>{
       const data=await response.json();
       if(response.ok){
         console.log('[Checkout] register success', data);
-        console.log('[Checkout] redirecting to my-courses');
-        window.location.href = 'https://yeunauan.live/my-courses';
+        console.log('[Checkout] redirecting to clone LMS portal');
+        const targetLmsUrl = (window.LMS_PUBLIC_URL || 'https://yeunauan-lms-clone.vercel.app').replace(/\/$/, '');
+        window.location.href = targetLmsUrl;
       }else{
         console.error('[Checkout] register api failed', data);
         alert(data.error||'Lỗi hệ thống');
