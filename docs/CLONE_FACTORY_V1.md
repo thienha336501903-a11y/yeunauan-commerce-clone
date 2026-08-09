@@ -74,4 +74,21 @@ Before releasing any clone build:
 - `OLD_SYNC_TARGET = ZERO`: Zero sync requests targeted at old Production domains or old Supabase.
 - `MISSING_SYNC_SECRET_ERROR = ZERO`: Zero `Missing INTERNAL_SYNC_SECRET` errors returned during course creation.
 
+## Baseline Course Data Guard & Mutation Safety Rules
+
+### Real Course Mutation Guard:
+1. **Synthetic Course Identity Standard**:
+   - All synthetic test courses MUST use slugs prefixed with `__clone_factory_test_` (e.g. `__clone_factory_test_<uuid>`).
+   - Cleanup scripts MUST target ONLY exact IDs/slugs matching `__clone_factory_test_`.
+   - BROAD OR COUNT-BASED `DELETE` AND `UPDATE` OPERATIONS ARE STRICTLY FORBIDDEN.
+2. **Fingerprint Verification**:
+   - Automated tests MUST calculate a pre-test fingerprint over the 7 canonical baseline course rows before executing synthetic operations.
+   - Post-test verification MUST confirm that `BASELINE_COURSE_FINGERPRINT_BEFORE === BASELINE_COURSE_FINGERPRINT_AFTER`.
+   - If any canonical row is mutated or deleted:
+     **FAIL & STOP**: `STOP — BASELINE COURSE DATA MUTATION`
+
+### Verification Gate:
+- `REAL_COURSE_MUTATION_GUARD = PASS`: Baseline 7 course rows (IDs, slugs, titles, prices, posters, sort_orders) remain 100% untouched after all pre-release tests.
+
+
 
