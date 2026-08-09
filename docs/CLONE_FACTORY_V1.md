@@ -48,3 +48,30 @@ Before releasing any clone build:
 - If course creation fails with `null value in column "id" of relation "courses" violates not-null constraint`, the release gate MUST fail with:
   **STOP — COURSE CREATE SCHEMA INCOMPATIBLE**
 
+## Sync Architecture & Isolation Gates
+
+### Sync Configuration Model:
+```json
+"sync": {
+  "mode": "clone-internal|disabled",
+  "internalSecretMode": "generate",
+  "portalEnabled": false
+}
+```
+
+### Factory Rules:
+1. **Clone-Internal Sync Mode (`sync.mode = clone-internal`)**:
+   - Generate a unique, clone-specific `INTERNAL_SYNC_SECRET`.
+   - Set the identical `INTERNAL_SYNC_SECRET` on both Commerce and LMS clone services across all Vercel environments (**Production**, **Preview**, **Development**).
+   - Point `SYSTEM3_URL` / `LMS_PUBLIC_URL` strictly to `https://yeunauan-lms-clone.vercel.app`.
+2. **Unconfigured / Disabled Portal (`portalEnabled: false`)**:
+   - When no Portal clone exists (`SYSTEM1_URL` is omitted), sync helpers MUST cleanly mark Portal sync status as `DISABLED` or `NOT_CONFIGURED` without raising error states.
+   - Missing `INTERNAL_SYNC_SECRET` or unconfigured sync targets MUST NEVER generate red runtime errors when sync is disabled.
+
+### Pre-Release Verification Gates:
+- `INTERNAL_SYNC_CONFIG = PASS`: Both Commerce and LMS clones share identical valid `INTERNAL_SYNC_SECRET`.
+- `SYNC_TARGET_ISOLATION = PASS`: Commerce → LMS sync targets `https://yeunauan-lms-clone.vercel.app` exclusively.
+- `OLD_SYNC_TARGET = ZERO`: Zero sync requests targeted at old Production domains or old Supabase.
+- `MISSING_SYNC_SECRET_ERROR = ZERO`: Zero `Missing INTERNAL_SYNC_SECRET` errors returned during course creation.
+
+
