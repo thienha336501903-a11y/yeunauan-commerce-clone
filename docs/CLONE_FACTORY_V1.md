@@ -36,3 +36,15 @@ Before releasing any clone build:
   `Invalid api_key`
   The deployment MUST fail immediately with error:
   **STOP — CLOUDINARY CONFIG FAILED**
+
+## Course Creation & UUID Fallback Compatibility
+
+### UUID Generation Standard:
+- Every API endpoint inserting into clone tables (`courses`, `lessons`, `student_enrollments`, `orders`, `course_slug_mappings`, `site_config`) MUST supply an explicit fallback UUID (e.g. `req.body.id || crypto.randomUUID()`) when `id` is omitted in the request payload.
+- This guarantees full execution compatibility regardless of whether database column defaults are configured.
+
+### Verification Gate:
+- `COURSE_CREATE_SCHEMA_COMPATIBILITY = PASS`: Before releasing any clone build, perform an end-to-end synthetic course lifecycle test (POST create course, PUT edit course, DELETE course).
+- If course creation fails with `null value in column "id" of relation "courses" violates not-null constraint`, the release gate MUST fail with:
+  **STOP — COURSE CREATE SCHEMA INCOMPATIBLE**
+
