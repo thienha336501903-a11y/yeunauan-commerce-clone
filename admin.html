@@ -412,7 +412,7 @@
     function renderCourses(courses) {
       const box = document.getElementById("courseList");
       const countText = document.getElementById("countText");
-      const origin = "https://shop.yeunauan.live";
+      const origin = window.location.origin;
 
       countText.innerText = `Tìm thấy ${courses.length}/${allCourses.length} khóa học`;
       countText.classList.remove("hidden");
