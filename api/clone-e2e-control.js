@@ -5,6 +5,7 @@ import { supabase } from "../utils/supabase.js";
 const CLONE_REF = "yyiavtiwtekkocqpephr";
 const TEST_BILL_NAME = "__clone_factory_test_bill_20260809.png";
 const TEST_COURSE = "banhmi4k";
+const TEST_EMAIL = "daubepnho116@gmail.com";
 const CLONE_LMS_SYNC_URL = "https://yeunauan-lms-clone.vercel.app/api/sync";
 
 function isAuthorized(req) {
@@ -81,13 +82,29 @@ async function syncExactCloneLms(action, order) {
 async function statusPayload() {
   const orders = await findTestOrders();
   const enrollments = await enrollmentRows(orders);
+  const countTable = async (table) => {
+    const { count, error } = await supabase
+      .from(table)
+      .select("*", { count: "exact", head: true });
+    if (error) throw error;
+    return count;
+  };
+  const [courses, lessons, allEnrollments, allOrders, siteConfig, mappings] = await Promise.all([
+    countTable("courses"),
+    countTable("lessons"),
+    countTable("student_enrollments"),
+    countTable("orders"),
+    countTable("site_config"),
+    countTable("course_slug_mappings")
+  ]);
   return {
     success: true,
     cloneRefOk: true,
     testOrderCount: orders.length,
     orderStatuses: orders.map((order) => order.status),
     enrollmentCount: enrollments.length,
-    enrollmentStatuses: enrollments.map((row) => row.status)
+    enrollmentStatuses: enrollments.map((row) => row.status),
+    counts: { courses, lessons, enrollments: allEnrollments, orders: allOrders, siteConfig, mappings }
   };
 }
 
@@ -149,17 +166,31 @@ async function approveTestOrder() {
 
 async function cleanupTestData() {
   const orders = await findTestOrders();
+  if (orders.length !== 1) {
+    throw new Error(`Safety guard: expected exactly one test order, found ${orders.length}`);
+  }
   let deletedEnrollments = 0;
   let deletedOrders = 0;
   let deletedImages = 0;
 
   for (const order of orders) {
-    if (order.raw_data?.e2eControlVersion !== 1 || order.raw_data?.preexistingEnrollmentCount !== 0) {
-      throw new Error("Safety guard: missing clean pre-approval baseline marker");
+    const hasControlMarker = order.raw_data?.e2eControlVersion === 1 &&
+      order.raw_data?.preexistingEnrollmentCount === 0;
+    const isAdminApprovedRecovery = !hasControlMarker &&
+      order.customer_email === TEST_EMAIL &&
+      order.course_slug === TEST_COURSE &&
+      order.status === "Đã duyệt" &&
+      order.raw_data?.billName === TEST_BILL_NAME;
+    if (!hasControlMarker && !isAdminApprovedRecovery) {
+      throw new Error("Safety guard: order does not match the exact E2E recovery identity");
     }
 
-    const createdEnrollmentId = order.raw_data?.createdEnrollmentId;
-    const createdStudentId = order.raw_data?.createdStudentId;
+    const exactEnrollments = await enrollmentRows([order]);
+    if (exactEnrollments.length !== 1) {
+      throw new Error(`Safety guard: expected exactly one test enrollment, found ${exactEnrollments.length}`);
+    }
+    const createdEnrollmentId = order.raw_data?.createdEnrollmentId || exactEnrollments[0].id;
+    const createdStudentId = order.raw_data?.createdStudentId || exactEnrollments[0].student_id;
     if (!createdEnrollmentId) {
       throw new Error("Safety guard: missing exact test enrollment ID");
     }
@@ -195,13 +226,22 @@ async function cleanupTestData() {
       }
     }
 
-    if (!order.raw_data?.preexistingStudentId && createdStudentId) {
+    if ((!order.raw_data?.preexistingStudentId || isAdminApprovedRecovery) && createdStudentId) {
       const { count, error: studentEnrollmentError } = await supabase
         .from("student_enrollments")
         .select("id", { count: "exact", head: true })
         .eq("student_id", createdStudentId);
       if (studentEnrollmentError) throw studentEnrollmentError;
       if (count === 0) {
+        const { data: exactStudent, error: exactStudentError } = await supabase
+          .from("students")
+          .select("id, email")
+          .eq("id", createdStudentId)
+          .maybeSingle();
+        if (exactStudentError) throw exactStudentError;
+        if (!exactStudent || exactStudent.email !== TEST_EMAIL) {
+          throw new Error("Safety guard: student identity mismatch");
+        }
         const { error: studentDeleteError } = await supabase
           .from("students")
           .delete()
