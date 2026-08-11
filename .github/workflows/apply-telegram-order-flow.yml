@@ -24,20 +24,27 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Fix patch-script nested template literal
+      - name: Fix patch-script nested templates
         run: |
           python3 - <<'PY'
           from pathlib import Path
           p = Path('scripts/apply-telegram-order-flow.js')
-          s = p.read_text()
-          lines = s.splitlines()
+          lines = p.read_text().splitlines()
+          fixed_sync = False
+          fixed_webhook = False
           for i, line in enumerate(lines):
               if "await fetch(\\`${system1Url.trim().replace(" in line and "/api/sync\\`" in line:
                   indent = line[:len(line)-len(line.lstrip())]
                   lines[i] = indent + "await fetch(system1Url.trim().replace(/\\\\\/$/, '') + '/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Sync-Secret': syncSecret }, body: JSON.stringify({ action: 'syncPendingOrder', email: cleanEmail, courseSlug, courseName: finalCourseName, thumbnail }) });"
-                  break
-          else:
-              raise SystemExit('nested template marker not found')
+                  fixed_sync = True
+              if "const webhookUrl = \\`${proto}://${host}/api/telegram-webhook\\`;" in line:
+                  indent = line[:len(line)-len(line.lstrip())]
+                  lines[i] = indent + "const webhookUrl = proto + '://' + host + '/api/telegram-webhook';"
+                  fixed_webhook = True
+          if not fixed_sync:
+              raise SystemExit('sync nested template marker not found')
+          if not fixed_webhook:
+              raise SystemExit('webhook nested template marker not found')
           p.write_text('\n'.join(lines) + '\n')
           PY
 
@@ -77,4 +84,4 @@ jobs:
           git commit -m "feat: add per-order Telegram join flow"
           git push origin HEAD:agent/telegram-order-invite-flow
 
-# trigger: 2026-08-11T17:12:00+07:00
+# trigger: 2026-08-11T17:14:00+07:00
