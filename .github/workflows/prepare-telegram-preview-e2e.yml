@@ -53,8 +53,7 @@ jobs:
             -X POST \
             -H "X-Admin-Password: $ADMIN_PASSWORD" \
             -H "Content-Type: application/json" \
-            -d '{}' \
-            --token="$VERCEL_TOKEN" > /tmp/setup.json
+            -d '{}' > /tmp/setup.json
           node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('/tmp/setup.json','utf8'));if(!j.success){console.error(j);process.exit(1)};console.log('Webhook registered:',j.webhookUrl);"
 
       - name: Create prefixed Telegram test course
@@ -77,8 +76,7 @@ jobs:
             -X POST \
             -H "X-Admin-Password: $ADMIN_PASSWORD" \
             -H "Content-Type: application/json" \
-            --data-binary @/tmp/course.json \
-            --token="$VERCEL_TOKEN" > /tmp/course-response.json
+            --data-binary @/tmp/course.json > /tmp/course-response.json
           COURSE_ID=$(node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('/tmp/course-response.json','utf8'));if(!j.success||!j.data?.id){console.error(j);process.exit(1)};process.stdout.write(j.data.id)")
           echo "COURSE_ID=$COURSE_ID" >> "$GITHUB_ENV"
           echo "Created test course: $COURSE_ID"
@@ -92,8 +90,7 @@ jobs:
             -X POST \
             -H "X-Admin-Password: $ADMIN_PASSWORD" \
             -H "Content-Type: application/json" \
-            --data-binary @/tmp/connect-request.json \
-            --token="$VERCEL_TOKEN" > /tmp/connect-response.json
+            --data-binary @/tmp/connect-request.json > /tmp/connect-response.json
           CONNECT_URL=$(node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('/tmp/connect-response.json','utf8'));if(!j.success||!j.connectUrl){console.error(j);process.exit(1)};process.stdout.write(j.connectUrl)")
           echo "CONNECT_URL=$CONNECT_URL" >> "$GITHUB_ENV"
           echo "### Telegram E2E ready" >> "$GITHUB_STEP_SUMMARY"
