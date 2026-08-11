@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { telegramApi, telegramBotAdminRights, telegramConfigStatus } from '../utils/telegram.js';
+import { telegramApi, telegramBotAdminRights, telegramConfigStatus, getTelegramRuntimeConfig } from '../utils/telegram.js';
 
 function safeEqual(a, b) {
   const x = Buffer.from(String(a || ''), 'utf8');
@@ -10,11 +10,12 @@ function safeEqual(a, b) {
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   if (!safeEqual(req.headers['x-admin-password'], process.env.ADMIN_PASSWORD)) return res.status(401).json({ error: 'Unauthorized' });
-  const cfg = telegramConfigStatus();
+  const cfg = await telegramConfigStatus();
   if (!cfg.botToken || !cfg.webhookSecret || !cfg.adminChatId || cfg.adminUserIds.length === 0) {
-    return res.status(409).json({ error: 'Thiếu TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, TELEGRAM_ADMIN_CHAT_ID hoặc TELEGRAM_ADMIN_USER_IDS', config: cfg });
+    return res.status(409).json({ error: 'Thiếu cấu hình Telegram runtime', config: cfg });
   }
   try {
+    const runtime = await getTelegramRuntimeConfig();
     const proto = String(req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim();
     const host = String(req.headers.host || '').trim();
     const webhookUrl = proto + '://' + host + '/api/telegram-webhook';
@@ -26,7 +27,7 @@ export default async function handler(req, res) {
 
     const webhook = await telegramApi('setWebhook', {
       url: webhookUrl,
-      secret_token: String(process.env.TELEGRAM_WEBHOOK_SECRET).trim(),
+      secret_token: runtime.webhookSecret,
       allowed_updates: ['message', 'chat_join_request', 'callback_query'],
       drop_pending_updates: false
     });
