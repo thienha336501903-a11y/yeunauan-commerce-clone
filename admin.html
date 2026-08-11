@@ -222,6 +222,32 @@
           <textarea id="courseDescriptionInput" rows="2" placeholder="Tóm tắt khóa học..." class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-pink-500 transition text-sm"></textarea>
         </div>
 
+        <!-- DELIVERY MODE -->
+        <div class="border-t border-slate-100 pt-6">
+          <h4 class="text-lg font-bold text-slate-900 mb-4">Hình thức học</h4>
+          <select id="courseDeliveryModeInput" onchange="toggleTelegramFields()" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-pink-500 transition text-sm">
+            <option value="lms">Học trên hệ thống LMS</option>
+            <option value="telegram">Học trên Telegram</option>
+          </select>
+          <div id="telegramCourseFields" class="hidden mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs uppercase font-extrabold text-slate-500 tracking-wider mb-2">Telegram Chat / Channel ID *</label>
+              <input type="text" id="telegramChatIdInput" placeholder="Ví dụ: -1001234567890" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-pink-500 transition text-sm font-mono">
+            </div>
+            <div>
+              <label class="block text-xs uppercase font-extrabold text-slate-500 tracking-wider mb-2">Tên nhóm/kênh Telegram</label>
+              <input type="text" id="telegramChatTitleInput" placeholder="Ví dụ: Khóa Bánh mì 4K" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-pink-500 transition text-sm">
+            </div>
+            <div>
+              <label class="block text-xs uppercase font-extrabold text-slate-500 tracking-wider mb-2">Link hết hạn sau (giờ)</label>
+              <input type="number" id="telegramInviteTtlInput" min="1" max="720" value="72" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-pink-500 transition text-sm">
+            </div>
+            <div class="flex items-end">
+              <p class="text-xs text-slate-500 pb-3">Mỗi order sẽ được bot tạo một link xin gia nhập riêng. Link không được công khai trước khi bill được ghi nhận.</p>
+            </div>
+          </div>
+        </div>
+
         <!-- BANK PAYMENT SETTINGS SECTION -->
         <div class="border-t border-slate-100 pt-6">
           <h4 class="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
@@ -857,6 +883,15 @@
     }
 
     // 7. COURSE MODAL ACTIONS (OPEN / CLOSE / SUBMIT)
+    function toggleTelegramFields() {
+      const mode = document.getElementById('courseDeliveryModeInput')?.value || 'lms';
+      const box = document.getElementById('telegramCourseFields');
+      if (!box) return;
+      box.classList.toggle('hidden', mode !== 'telegram');
+      const chatId = document.getElementById('telegramChatIdInput');
+      if (chatId) chatId.required = mode === 'telegram';
+    }
+
     function openCourseModal(course = null) {
       const modal = document.getElementById("courseModal");
       const form = document.getElementById("courseForm");
@@ -880,6 +915,11 @@
         document.getElementById("courseActiveInput").checked = course.active;
         document.getElementById("courseImageUrlInput").value = course.imageUrl || "";
         document.getElementById("courseDescriptionInput").value = course.description || "";
+        document.getElementById("courseDeliveryModeInput").value = course.deliveryMode || "lms";
+        document.getElementById("telegramChatIdInput").value = course.telegramChatId || "";
+        document.getElementById("telegramChatTitleInput").value = course.telegramChatTitle || "";
+        document.getElementById("telegramInviteTtlInput").value = course.telegramInviteTtlHours || 72;
+        toggleTelegramFields();
         
         // Bank details from raw_data
         document.getElementById("bankNameInput").value = course.bankName || "";
@@ -895,6 +935,11 @@
         document.getElementById("courseActiveInput").checked = true;
         document.getElementById("courseSortOrderInput").value = 0;
         document.getElementById("courseExpectedStartDateInput").value = "";
+        document.getElementById("courseDeliveryModeInput").value = "lms";
+        document.getElementById("telegramChatIdInput").value = "";
+        document.getElementById("telegramChatTitleInput").value = "";
+        document.getElementById("telegramInviteTtlInput").value = 72;
+        toggleTelegramFields();
 
         // Auto-fill bank details from the most recently created course
         if (allCourses && allCourses.length > 0) {
@@ -934,6 +979,10 @@
       const active = document.getElementById("courseActiveInput").checked;
       const imageUrl = document.getElementById("courseImageUrlInput").value.trim();
       const description = document.getElementById("courseDescriptionInput").value.trim();
+      const deliveryMode = document.getElementById("courseDeliveryModeInput").value;
+      const telegramChatId = document.getElementById("telegramChatIdInput").value.trim();
+      const telegramChatTitle = document.getElementById("telegramChatTitleInput").value.trim();
+      const telegramInviteTtlHours = parseInt(document.getElementById("telegramInviteTtlInput").value, 10) || 72;
       
       // Bank configurations
       const bankName = document.getElementById("bankNameInput").value.trim();
@@ -953,6 +1002,10 @@
         active,
         imageUrl,
         description,
+        deliveryMode,
+        telegramChatId,
+        telegramChatTitle,
+        telegramInviteTtlHours,
         bankName,
         bankAccount,
         bankOwner,
@@ -1006,6 +1059,10 @@
         imageUrl: course.imageUrl,
         active: !currentStatus,
         is_published: course.is_published === true,
+        deliveryMode: course.deliveryMode || 'lms',
+        telegramChatId: course.telegramChatId || '',
+        telegramChatTitle: course.telegramChatTitle || '',
+        telegramInviteTtlHours: course.telegramInviteTtlHours || 72,
         bankName: course.bankName,
         bankAccount: course.bankAccount,
         bankOwner: course.bankOwner,

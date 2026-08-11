@@ -1,190 +1,106 @@
-import crypto from "crypto";
-import { v2 as cloudinary } from "cloudinary";
-import { supabase } from "../utils/supabase.js";
+import crypto from 'crypto';
+import { v2 as cloudinary } from 'cloudinary';
+import { supabase } from '../utils/supabase.js';
+import { createOrderInvite } from '../utils/telegram.js';
 
 const MAX_BILL_BYTES = 5 * 1024 * 1024;
-const ALLOWED_BILL_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-const DEFAULT_COURSE_SLUG = "banhmi4k";
-
-function normalizeEmail(email) {
-  return String(email || "").trim().toLowerCase();
-}
-
-function isValidEmail(email) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !/[^\x00-\x7F]/.test(email);
-}
-
-function normalizeBase64(value) {
-  return String(value || "").replace(/\s+/g, "");
-}
-
-function isValidBase64(value) {
-  return value.length > 0 &&
-    value.length % 4 === 0 &&
-    /^[A-Za-z0-9+/]+={0,2}$/.test(value);
-}
+const ALLOWED_BILL_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const DEFAULT_COURSE_SLUG = 'banhmi4k';
+const normalizeEmail = email => String(email || '').trim().toLowerCase();
+const isValidEmail = email => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !/[^\x00-\x7F]/.test(email);
+const normalizeBase64 = value => String(value || '').replace(/\s+/g, '');
+const isValidBase64 = value => value.length > 0 && value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({
-      error: "Method not allowed"
-    });
-  }
-
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   try {
-    const {
-      gmail,
-      billName,
-      billType,
-      billData,
-      course
-    } = req.body || {};
-
+    const { gmail, billName, billType, billData, course } = req.body || {};
     const cleanEmail = normalizeEmail(gmail);
-    const cleanBillType = String(billType || "").trim().toLowerCase();
+    const cleanBillType = String(billType || '').trim().toLowerCase();
     const cleanBillData = normalizeBase64(billData);
     const courseSlug = String(course || DEFAULT_COURSE_SLUG).trim().toLowerCase();
 
-    if (!cleanEmail || !billName || !cleanBillType || !cleanBillData) {
-      return res.status(400).json({
-        error: "Thiếu dữ liệu"
-      });
-    }
-
-    if (!isValidEmail(cleanEmail)) {
-      return res.status(400).json({
-        error: "Địa chỉ email không hợp lệ"
-      });
-    }
-
-    if (!ALLOWED_BILL_TYPES.has(cleanBillType)) {
-      return res.status(400).json({
-        error: "Chỉ nhận file JPG, PNG hoặc WEBP"
-      });
-    }
-
-    if (!isValidBase64(cleanBillData)) {
-      return res.status(400).json({
-        error: "Dữ liệu ảnh bill không hợp lệ"
-      });
-    }
-
-    const billBytes = Buffer.byteLength(cleanBillData, "base64");
-    if (!billBytes) {
-      return res.status(400).json({
-        error: "Ảnh bill trống"
-      });
-    }
-    if (billBytes > MAX_BILL_BYTES) {
-      return res.status(413).json({
-        error: "Ảnh bill quá lớn. Vui lòng chọn ảnh dưới 5MB"
-      });
-    }
-
-    if (!/^[a-z0-9_-]+$/.test(courseSlug)) {
-      return res.status(400).json({
-        error: "Mã khóa học không hợp lệ"
-      });
-    }
+    if (!cleanEmail || !billName || !cleanBillType || !cleanBillData) return res.status(400).json({ error: 'Thiếu dữ liệu' });
+    if (!isValidEmail(cleanEmail)) return res.status(400).json({ error: 'Địa chỉ email không hợp lệ' });
+    if (!ALLOWED_BILL_TYPES.has(cleanBillType)) return res.status(400).json({ error: 'Chỉ nhận file JPG, PNG hoặc WEBP' });
+    if (!isValidBase64(cleanBillData)) return res.status(400).json({ error: 'Dữ liệu ảnh bill không hợp lệ' });
+    const billBytes = Buffer.byteLength(cleanBillData, 'base64');
+    if (!billBytes) return res.status(400).json({ error: 'Ảnh bill trống' });
+    if (billBytes > MAX_BILL_BYTES) return res.status(413).json({ error: 'Ảnh bill quá lớn. Vui lòng chọn ảnh dưới 5MB' });
+    if (!/^[a-z0-9_-]+$/.test(courseSlug)) return res.status(400).json({ error: 'Mã khóa học không hợp lệ' });
 
     const { data: courseRec, error: courseError } = await supabase
-      .from("courses")
-      .select("image_url, title, active")
-      .eq("slug", courseSlug)
+      .from('courses')
+      .select('id, image_url, title, active, delivery_mode, telegram_chat_id, telegram_invite_ttl_hours')
+      .eq('slug', courseSlug)
       .maybeSingle();
+    if (courseError) throw courseError;
+    if (!courseRec || courseRec.active === false) return res.status(404).json({ error: 'Khóa học không tồn tại hoặc chưa mở đăng ký' });
 
-    if (courseError) {
-      throw courseError;
-    }
-    if (!courseRec || courseRec.active === false) {
-      return res.status(404).json({
-        error: "Khóa học không tồn tại hoặc chưa mở đăng ký"
-      });
-    }
+    const missingCloudinaryEnv = ['CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET'].filter(name => !process.env[name]);
+    if (missingCloudinaryEnv.length) return res.status(500).json({ error: 'Hệ thống upload bill chưa được cấu hình đầy đủ' });
 
-    const missingCloudinaryEnv = [
-      "CLOUDINARY_CLOUD_NAME",
-      "CLOUDINARY_API_KEY",
-      "CLOUDINARY_API_SECRET"
-    ].filter((name) => !process.env[name]);
-
-    if (missingCloudinaryEnv.length) {
-      console.error("REGISTER_CONFIG_ERROR: Missing Cloudinary env:", missingCloudinaryEnv.join(", "));
-      return res.status(500).json({
-        error: "Hệ thống upload bill chưa được cấu hình đầy đủ"
-      });
-    }
-
-    cloudinary.config({
-      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-      api_key: process.env.CLOUDINARY_API_KEY,
-      api_secret: process.env.CLOUDINARY_API_SECRET
-    });
-
-    const uploadResult = await cloudinary.uploader.upload(
-      "data:" + cleanBillType + ";base64," + cleanBillData,
-      {
-        folder: "bill-chuyen-khoan/" + courseSlug,
-        resource_type: "image"
-      }
-    );
-
+    cloudinary.config({ cloud_name: process.env.CLOUDINARY_CLOUD_NAME, api_key: process.env.CLOUDINARY_API_KEY, api_secret: process.env.CLOUDINARY_API_SECRET });
+    const uploadResult = await cloudinary.uploader.upload('data:' + cleanBillType + ';base64,' + cleanBillData, { folder: 'bill-chuyen-khoan/' + courseSlug, resource_type: 'image' });
     const billLink = uploadResult.secure_url;
     const finalCourseName = courseRec.title || courseSlug;
-    const thumbnail = courseRec.image_url || "";
+    const thumbnail = courseRec.image_url || '';
+    const orderId = crypto.randomUUID();
+    const deliveryMode = courseRec.delivery_mode === 'telegram' ? 'telegram' : 'lms';
 
-    const { error: insertError } = await supabase
-      .from("orders")
-      .insert({
-        id: crypto.randomUUID(),
-        course_slug: courseSlug,
-        course_title: finalCourseName,
-        customer_email: cleanEmail,
-        proof_image_url: billLink,
-        status: "Chờ duyệt",
-        raw_data: {
-          billName: String(billName).slice(0, 120),
-          billType: cleanBillType
-        }
-      });
+    const orderPayload = {
+      id: orderId,
+      course_id: courseRec.id,
+      course_slug: courseSlug,
+      course_title: finalCourseName,
+      customer_email: cleanEmail,
+      proof_image_url: billLink,
+      status: 'Chờ duyệt',
+      delivery_mode: deliveryMode,
+      telegram_chat_id: deliveryMode === 'telegram' ? String(courseRec.telegram_chat_id || '').trim() || null : null,
+      raw_data: { billName: String(billName).slice(0, 120), billType: cleanBillType }
+    };
 
-    if (insertError) {
-      throw insertError;
+    if (deliveryMode === 'telegram') {
+      if (!orderPayload.telegram_chat_id) return res.status(409).json({ error: 'Khóa học Telegram chưa cấu hình Chat ID' });
+      orderPayload.sync_lms_status = 'SKIPPED_TELEGRAM';
+      orderPayload.sync_portal_status = 'SKIPPED_TELEGRAM';
+      orderPayload.telegram_join_status = 'invite_creating';
+    }
+
+    const { error: insertError } = await supabase.from('orders').insert(orderPayload);
+    if (insertError) throw insertError;
+
+    if (deliveryMode === 'telegram') {
+      try {
+        const invite = await createOrderInvite({ chatId: orderPayload.telegram_chat_id, orderId, courseSlug, ttlHours: courseRec.telegram_invite_ttl_hours || 72 });
+        const { error: inviteUpdateError } = await supabase.from('orders').update({
+          telegram_invite_link: invite.inviteLink,
+          telegram_invite_name: invite.inviteName,
+          telegram_invite_expires_at: invite.expiresAt,
+          telegram_join_status: 'invite_ready',
+          sync_error: null,
+          updated_at: new Date().toISOString()
+        }).eq('id', orderId);
+        if (inviteUpdateError) throw inviteUpdateError;
+        return res.status(200).json({ success: true, file: billLink, course: courseSlug, courseName: finalCourseName, orderId, deliveryMode: 'telegram', telegramInviteLink: invite.inviteLink, telegramInviteExpiresAt: invite.expiresAt });
+      } catch (telegramError) {
+        console.error('TELEGRAM_INVITE_ERROR:', telegramError);
+        await supabase.from('orders').update({ telegram_join_status: 'invite_error', sync_error: String(telegramError.message || telegramError).slice(0, 500), updated_at: new Date().toISOString() }).eq('id', orderId);
+        return res.status(200).json({ success: true, file: billLink, course: courseSlug, courseName: finalCourseName, orderId, deliveryMode: 'telegram', telegramReady: false, message: 'Đã nhận bill nhưng chưa tạo được link Telegram. Admin sẽ xử lý đơn này.' });
+      }
     }
 
     const system1Url = process.env.SYSTEM1_URL;
     const syncSecret = process.env.INTERNAL_SYNC_SECRET;
     if (system1Url && syncSecret) {
       try {
-        await fetch(`${system1Url.trim().replace(/\/$/, "")}/api/sync`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Sync-Secret": syncSecret
-          },
-          body: JSON.stringify({
-            action: "syncPendingOrder",
-            email: cleanEmail,
-            courseSlug,
-            courseName: finalCourseName,
-            thumbnail
-          })
-        });
-      } catch (syncErr) {
-        console.error("Error syncing pending order to Portal:", syncErr);
-      }
+        await fetch(system1Url.trim().replace(/\/$/, '') + '/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Sync-Secret': syncSecret }, body: JSON.stringify({ action: 'syncPendingOrder', email: cleanEmail, courseSlug, courseName: finalCourseName, thumbnail }) });
+      } catch (syncErr) { console.error('Error syncing pending order to Portal:', syncErr); }
     }
-
-    return res.status(200).json({
-      success: true,
-      file: billLink,
-      course: courseSlug,
-      courseName: finalCourseName
-    });
+    return res.status(200).json({ success: true, file: billLink, course: courseSlug, courseName: finalCourseName, orderId, deliveryMode: 'lms' });
   } catch (error) {
-    console.error("REGISTER_ERROR:", error);
-    return res.status(500).json({
-      error: "Không thể ghi nhận đăng ký. Vui lòng thử lại"
-    });
+    console.error('REGISTER_ERROR:', error);
+    return res.status(500).json({ error: 'Không thể ghi nhận đăng ký. Vui lòng thử lại' });
   }
 }
