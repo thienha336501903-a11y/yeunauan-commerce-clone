@@ -205,6 +205,11 @@ export async function createOrderInvite({ chatId, orderId, courseSlug, ttlHours 
   };
 }
 
+export async function revokeTelegramInvite(chatId, inviteLink) {
+  if (!chatId || !inviteLink) return null;
+  return telegramApi('revokeChatInviteLink', { chat_id: String(chatId), invite_link: String(inviteLink) });
+}
+
 export async function approveTelegramJoin(chatId, userId) {
   return telegramApi('approveChatJoinRequest', { chat_id: String(chatId), user_id: Number(userId) });
 }
