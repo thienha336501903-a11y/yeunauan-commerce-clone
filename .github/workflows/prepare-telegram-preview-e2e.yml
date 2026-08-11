@@ -17,6 +17,7 @@ jobs:
       VERCEL_ORG_ID: team_cAthcmyw4079BDgelX0YjG9i
       VERCEL_PROJECT_ID: prj_9LIdNafm4JYpYCNA6ujbIlQs2Bh9
       PREVIEW_URL: https://yeunauan-commerce-clone-1m5xg85ri.vercel.app
+      PREVIEW_BRANCH: agent/telegram-order-invite-flow
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,13 +26,13 @@ jobs:
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
 
-      - name: Pull Preview environment
+      - name: Pull branch-specific Preview environment
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           mkdir -p .vercel
           printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
-          vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
+          vercel pull --yes --environment=preview --git-branch="$PREVIEW_BRANCH" --token="$VERCEL_TOKEN"
 
       - name: Load Admin credential
         run: |
