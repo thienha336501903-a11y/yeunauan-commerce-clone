@@ -2,7 +2,7 @@ import { supabase } from '../utils/supabase.js';
 
 export default async function handler(req, res) {
   try {
-    const courseSlug = req.query.course || 'banhmi4k';
+    const courseSlug = req.query.course || 'donut';
     const { data: course, error } = await supabase
       .from('courses')
       .select('*')
