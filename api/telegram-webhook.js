@@ -4,6 +4,7 @@ import {
   approveTelegramJoin,
   declineTelegramJoin,
   answerTelegramCallback,
+  getTelegramWebhookSecret,
   isAllowedTelegramAdmin,
   notifyAdminJoinRequest,
   sendCourseChatPicker,
@@ -29,12 +30,12 @@ async function handleCourseConnectStart(message) {
   if (!match) return false;
 
   const adminUserId = message.from?.id;
-  if (!isAllowedTelegramAdmin(adminUserId)) {
+  if (!(await isAllowedTelegramAdmin(adminUserId))) {
     await sendTelegramPrivateMessage(message.chat.id, 'Bạn không có quyền kết nối khóa học Telegram cho hệ thống này.', true);
     return true;
   }
 
-  const courseId = verifyCourseConnectToken(match[1]);
+  const courseId = await verifyCourseConnectToken(match[1]);
   if (!courseId) {
     await sendTelegramPrivateMessage(message.chat.id, 'Link kết nối Telegram không hợp lệ hoặc đã bị chỉnh sửa. Hãy tạo lại link từ trang Admin.', true);
     return true;
@@ -70,7 +71,7 @@ async function handleCourseConnectStart(message) {
 async function handleSharedChat(message) {
   if (message?.chat?.type !== 'private' || !message.chat_shared) return false;
   const adminUserId = message.from?.id;
-  if (!isAllowedTelegramAdmin(adminUserId)) {
+  if (!(await isAllowedTelegramAdmin(adminUserId))) {
     await sendTelegramPrivateMessage(message.chat.id, 'Bạn không có quyền gắn group/channel vào khóa học.', true);
     return true;
   }
@@ -137,8 +138,13 @@ async function handleSharedChat(message) {
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ ok: false });
-  const expected = String(process.env.TELEGRAM_WEBHOOK_SECRET || '').trim();
-  if (!expected) return res.status(503).json({ ok: false });
+
+  let expected;
+  try {
+    expected = await getTelegramWebhookSecret();
+  } catch {
+    return res.status(503).json({ ok: false });
+  }
   if (!safeEqual(req.headers['x-telegram-bot-api-secret-token'], expected)) return res.status(401).json({ ok: false });
 
   try {
@@ -173,7 +179,7 @@ export default async function handler(req, res) {
 
     if (update.callback_query) {
       const cb = update.callback_query;
-      if (!isAllowedTelegramAdmin(cb.from?.id)) {
+      if (!(await isAllowedTelegramAdmin(cb.from?.id))) {
         try { await answerTelegramCallback(cb.id, 'Bạn không có quyền duyệt đơn.'); } catch {}
         return res.status(200).json({ ok: true });
       }
