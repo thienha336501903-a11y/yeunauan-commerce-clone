@@ -16,37 +16,51 @@ jobs:
     env:
       VERCEL_ORG_ID: team_cAthcmyw4079BDgelX0YjG9i
       VERCEL_PROJECT_ID: prj_9LIdNafm4JYpYCNA6ujbIlQs2Bh9
-      PREVIEW_URL: https://yeunauan-commerce-clone-1m5xg85ri.vercel.app
       PREVIEW_BRANCH: agent/telegram-order-invite-flow
     steps:
       - uses: actions/checkout@v4
         with:
           ref: agent/telegram-order-invite-flow
+          fetch-depth: 0
 
-      - name: Install Vercel CLI
-        run: npm install --global vercel@latest
+      - name: Validate current branch
+        run: |
+          node --check api/telegram-setup.js
+          node --check api/telegram-connect.js
+          node --check api/telegram-webhook.js
+          node --check utils/telegram.js
+          git diff --check origin/main...HEAD
 
-      - name: Pull branch-specific Preview environment
+      - name: Install Vercel CLI and link project
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
+          npm install --global vercel@latest
           mkdir -p .vercel
           printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
-          vercel pull --yes --environment=preview --git-branch="$PREVIEW_BRANCH" --token="$VERCEL_TOKEN"
+          vercel project inspect --token="$VERCEL_TOKEN" >/dev/null
 
-      - name: Load Admin credential
+      - name: Create isolated Preview Admin password
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
-          set -a
-          source .vercel/.env.preview.local
-          set +a
-          if [ -z "${ADMIN_PASSWORD:-}" ]; then
-            echo "ADMIN_PASSWORD missing from Preview env"
-            exit 1
-          fi
+          ADMIN_PASSWORD=$(openssl rand -hex 32)
           echo "::add-mask::$ADMIN_PASSWORD"
+          printf '%s' "$ADMIN_PASSWORD" > /tmp/preview-admin-password
+          vercel env add ADMIN_PASSWORD preview "$PREVIEW_BRANCH" --sensitive --token="$VERCEL_TOKEN" < /tmp/preview-admin-password
+          rm -f /tmp/preview-admin-password
           echo "ADMIN_PASSWORD=$ADMIN_PASSWORD" >> "$GITHUB_ENV"
+          echo "Branch-only Preview ADMIN_PASSWORD created"
 
-      - name: Register Telegram webhook on Preview
+      - name: Redeploy branch Preview only
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          PREVIEW_URL=$(vercel deploy --yes --token="$VERCEL_TOKEN")
+          echo "PREVIEW_URL=$PREVIEW_URL" >> "$GITHUB_ENV"
+          echo "Preview redeployed: $PREVIEW_URL"
+
+      - name: Register Telegram webhook on protected Preview
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
@@ -55,7 +69,7 @@ jobs:
             -H "X-Admin-Password: $ADMIN_PASSWORD" \
             -H "Content-Type: application/json" \
             -d '{}' > /tmp/setup.json
-          node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('/tmp/setup.json','utf8'));if(!j.success){console.error(j);process.exit(1)};console.log('Webhook registered:',j.webhookUrl);"
+          node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('/tmp/setup.json','utf8'));if(!j.success){console.error(j);process.exit(1)};console.log('Webhook registered on Preview; protection bypass:',Boolean(j.previewProtectionBypass));"
 
       - name: Create prefixed Telegram test course
         env:
