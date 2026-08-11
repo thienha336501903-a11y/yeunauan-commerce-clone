@@ -42,5 +42,5 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
-          vercel curl "$PREVIEW_URL/api/e2e-cleanup-telegram" -X POST > /tmp/cleanup.json
+          vercel curl "$PREVIEW_URL/api/telegram-setup?e2e_cleanup=1" -X POST > /tmp/cleanup.json
           node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('/tmp/cleanup.json','utf8'));if(!j.success){console.error(j);process.exit(1)};console.log('Cleanup PASS', {inviteRevoked:j.inviteRevoked,billRemoved:j.billRemoved,orderDeleted:j.orderDeleted,courseDeleted:j.courseDeleted,alreadyCleaned:j.alreadyCleaned});"
