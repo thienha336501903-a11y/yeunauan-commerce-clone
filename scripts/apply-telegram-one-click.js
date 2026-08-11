@@ -1,4 +1,4 @@
-const fs = require('fs');
+import fs from 'fs';
 
 const path = 'admin.html';
 let text = fs.readFileSync(path, 'utf8');
