@@ -7,6 +7,7 @@ import {
   getTelegramWebhookSecret,
   isAllowedTelegramAdmin,
   notifyAdminJoinRequest,
+  revokeTelegramInvite,
   sendCourseChatPicker,
   sendTelegramPrivateMessage,
   verifyBotInvitePermission,
@@ -14,8 +15,11 @@ import {
 } from '../utils/telegram.js';
 
 function safeEqual(a, b) {
-  const x = Buffer.from(String(a || ''), 'utf8');
-  const y = Buffer.from(String(b || ''), 'utf8');
+  const left = String(a || '');
+  const right = String(b || '');
+  if (!left || !right) return false;
+  const x = Buffer.from(left, 'utf8');
+  const y = Buffer.from(right, 'utf8');
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
 
@@ -136,6 +140,15 @@ async function handleSharedChat(message) {
   return true;
 }
 
+async function declineUnexpectedRequester(order, joinUserId) {
+  if (!joinUserId || !order?.telegram_chat_id) return;
+  try {
+    await declineTelegramJoin(order.telegram_chat_id, joinUserId);
+  } catch (error) {
+    console.error('TELEGRAM_UNEXPECTED_REQUESTER_DECLINE_ERROR:', error);
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ ok: false });
 
@@ -158,21 +171,46 @@ export default async function handler(req, res) {
     if (update.chat_join_request) {
       const join = update.chat_join_request;
       const inviteLink = join.invite_link?.invite_link;
-      if (!inviteLink) return res.status(200).json({ ok: true });
+      const joinUserId = join.from?.id;
+      if (!inviteLink || !joinUserId) return res.status(200).json({ ok: true });
+
       const { data: order, error } = await supabase.from('orders').select('*').eq('delivery_mode', 'telegram').eq('telegram_invite_link', inviteLink).maybeSingle();
       if (error) throw error;
       if (!order || String(order.telegram_chat_id) !== String(join.chat?.id)) return res.status(200).json({ ok: true });
       if (order.telegram_join_update_id && Number(order.telegram_join_update_id) === Number(update.update_id)) return res.status(200).json({ ok: true });
-      const { data: updated, error: updateError } = await supabase.from('orders').update({
-        telegram_user_id: join.from?.id || null,
+
+      if (order.telegram_user_id) {
+        if (String(order.telegram_user_id) !== String(joinUserId)) await declineUnexpectedRequester(order, joinUserId);
+        return res.status(200).json({ ok: true });
+      }
+
+      const requestPayload = {
+        telegram_user_id: joinUserId,
         telegram_username: join.from?.username || null,
         telegram_first_name: join.from?.first_name || null,
         telegram_join_status: 'requested',
         telegram_join_requested_at: new Date().toISOString(),
         telegram_join_update_id: update.update_id || null,
         updated_at: new Date().toISOString()
-      }).eq('id', order.id).select().single();
+      };
+
+      const { data: updated, error: updateError } = await supabase
+        .from('orders')
+        .update(requestPayload)
+        .eq('id', order.id)
+        .is('telegram_user_id', null)
+        .eq('telegram_join_status', 'invite_ready')
+        .select()
+        .maybeSingle();
       if (updateError) throw updateError;
+
+      if (!updated) {
+        const { data: current, error: currentError } = await supabase.from('orders').select('*').eq('id', order.id).maybeSingle();
+        if (currentError) throw currentError;
+        if (current?.telegram_user_id && String(current.telegram_user_id) !== String(joinUserId)) await declineUnexpectedRequester(current, joinUserId);
+        return res.status(200).json({ ok: true });
+      }
+
       try { await notifyAdminJoinRequest(updated, join.from); } catch (notifyErr) { console.error('TELEGRAM_ADMIN_NOTIFY_ERROR:', notifyErr); }
       return res.status(200).json({ ok: true });
     }
@@ -193,13 +231,32 @@ export default async function handler(req, res) {
         try { await answerTelegramCallback(cb.id, 'Đơn chưa có yêu cầu tham gia hợp lệ.'); } catch {}
         return res.status(200).json({ ok: true });
       }
+      if (order.telegram_join_status === 'approved' || order.telegram_join_status === 'declined') {
+        try { await answerTelegramCallback(cb.id, 'Đơn này đã được xử lý trước đó.'); } catch {}
+        return res.status(200).json({ ok: true });
+      }
+      if (order.telegram_join_status !== 'requested') {
+        try { await answerTelegramCallback(cb.id, 'Đơn chưa ở trạng thái chờ duyệt Telegram.'); } catch {}
+        return res.status(200).json({ ok: true });
+      }
+
       if (action === 'tgapprove') {
         await approveTelegramJoin(order.telegram_chat_id, order.telegram_user_id);
-        await supabase.from('orders').update({ status: 'Đã duyệt', telegram_join_status: 'approved', telegram_join_decided_at: new Date().toISOString(), sync_lms_status: 'SKIPPED_TELEGRAM', sync_portal_status: 'SKIPPED_TELEGRAM', updated_at: new Date().toISOString() }).eq('id', order.id);
+        const { error: updateError } = await supabase.from('orders').update({
+          status: 'Đã duyệt', telegram_join_status: 'approved', telegram_join_decided_at: new Date().toISOString(),
+          sync_lms_status: 'SKIPPED_TELEGRAM', sync_portal_status: 'SKIPPED_TELEGRAM', sync_error: null, updated_at: new Date().toISOString()
+        }).eq('id', order.id);
+        if (updateError) throw updateError;
+        try { await revokeTelegramInvite(order.telegram_chat_id, order.telegram_invite_link); } catch (revokeError) { console.error('TELEGRAM_INVITE_REVOKE_ERROR:', revokeError); }
         await answerTelegramCallback(cb.id, 'Đã duyệt học viên vào khóa Telegram.');
       } else {
         await declineTelegramJoin(order.telegram_chat_id, order.telegram_user_id);
-        await supabase.from('orders').update({ status: 'Từ chối', telegram_join_status: 'declined', telegram_join_decided_at: new Date().toISOString(), sync_lms_status: 'SKIPPED_TELEGRAM', sync_portal_status: 'SKIPPED_TELEGRAM', updated_at: new Date().toISOString() }).eq('id', order.id);
+        const { error: updateError } = await supabase.from('orders').update({
+          status: 'Từ chối', telegram_join_status: 'declined', telegram_join_decided_at: new Date().toISOString(),
+          sync_lms_status: 'SKIPPED_TELEGRAM', sync_portal_status: 'SKIPPED_TELEGRAM', sync_error: null, updated_at: new Date().toISOString()
+        }).eq('id', order.id);
+        if (updateError) throw updateError;
+        try { await revokeTelegramInvite(order.telegram_chat_id, order.telegram_invite_link); } catch (revokeError) { console.error('TELEGRAM_INVITE_REVOKE_ERROR:', revokeError); }
         await answerTelegramCallback(cb.id, 'Đã từ chối yêu cầu tham gia.');
       }
       return res.status(200).json({ ok: true });
