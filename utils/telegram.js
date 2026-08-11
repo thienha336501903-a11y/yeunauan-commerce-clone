@@ -1,15 +1,45 @@
 import crypto from 'crypto';
+import { supabase } from './supabase.js';
 
-function getBotToken() {
-  const token = String(process.env.TELEGRAM_BOT_TOKEN || '').trim();
-  if (!token) throw new Error('TELEGRAM_BOT_TOKEN chưa được cấu hình');
-  return token;
+let cachedDbConfig = null;
+let cachedDbConfigAt = 0;
+const CONFIG_CACHE_MS = 30 * 1000;
+
+function normalizeAdminIds(value) {
+  if (Array.isArray(value)) return value.map(v => String(v).trim()).filter(Boolean);
+  return String(value || '').split(',').map(v => v.trim()).filter(Boolean);
 }
 
-function getConnectSecret() {
-  const secret = String(process.env.TELEGRAM_WEBHOOK_SECRET || '').trim();
-  if (!secret) throw new Error('TELEGRAM_WEBHOOK_SECRET chưa được cấu hình');
-  return secret;
+async function loadDbRuntimeConfig() {
+  if (cachedDbConfig && Date.now() - cachedDbConfigAt < CONFIG_CACHE_MS) return cachedDbConfig;
+  const { data, error } = await supabase
+    .from('site_config')
+    .select('value')
+    .eq('key', 'telegram_runtime')
+    .maybeSingle();
+  if (error) throw error;
+  cachedDbConfig = data?.value && typeof data.value === 'object' ? data.value : {};
+  cachedDbConfigAt = Date.now();
+  return cachedDbConfig;
+}
+
+export async function getTelegramRuntimeConfig() {
+  const db = await loadDbRuntimeConfig().catch(error => {
+    console.warn('TELEGRAM_RUNTIME_CONFIG_DB_ERROR:', error.message || error);
+    return {};
+  });
+  return {
+    botToken: String(process.env.TELEGRAM_BOT_TOKEN || db.botToken || '').trim(),
+    webhookSecret: String(process.env.TELEGRAM_WEBHOOK_SECRET || db.webhookSecret || '').trim(),
+    adminChatId: String(process.env.TELEGRAM_ADMIN_CHAT_ID || db.adminChatId || '').trim(),
+    adminUserIds: normalizeAdminIds(process.env.TELEGRAM_ADMIN_USER_IDS || db.adminUserIds || [])
+  };
+}
+
+export async function getTelegramWebhookSecret() {
+  const cfg = await getTelegramRuntimeConfig();
+  if (!cfg.webhookSecret) throw new Error('TELEGRAM_WEBHOOK_SECRET chưa được cấu hình');
+  return cfg.webhookSecret;
 }
 
 function safeEqual(a, b) {
@@ -28,8 +58,9 @@ function expandUuid(compact) {
 }
 
 export async function telegramApi(method, payload = {}) {
-  const token = getBotToken();
-  const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+  const cfg = await getTelegramRuntimeConfig();
+  if (!cfg.botToken) throw new Error('TELEGRAM_BOT_TOKEN chưa được cấu hình');
+  const response = await fetch(`https://api.telegram.org/bot${cfg.botToken}/${method}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -42,34 +73,34 @@ export async function telegramApi(method, payload = {}) {
   return data.result;
 }
 
-export function telegramConfigStatus() {
+export async function telegramConfigStatus() {
+  const cfg = await getTelegramRuntimeConfig();
   return {
-    botToken: Boolean(String(process.env.TELEGRAM_BOT_TOKEN || '').trim()),
-    webhookSecret: Boolean(String(process.env.TELEGRAM_WEBHOOK_SECRET || '').trim()),
-    adminChatId: Boolean(String(process.env.TELEGRAM_ADMIN_CHAT_ID || '').trim()),
-    adminUserIds: String(process.env.TELEGRAM_ADMIN_USER_IDS || '').split(',').map(v => v.trim()).filter(Boolean)
+    botToken: Boolean(cfg.botToken),
+    webhookSecret: Boolean(cfg.webhookSecret),
+    adminChatId: Boolean(cfg.adminChatId),
+    adminUserIds: cfg.adminUserIds
   };
 }
 
-export function isAllowedTelegramAdmin(userId) {
-  const ids = String(process.env.TELEGRAM_ADMIN_USER_IDS || '')
-    .split(',')
-    .map(v => v.trim())
-    .filter(Boolean);
-  return ids.length > 0 && ids.includes(String(userId));
+export async function isAllowedTelegramAdmin(userId) {
+  const cfg = await getTelegramRuntimeConfig();
+  return cfg.adminUserIds.length > 0 && cfg.adminUserIds.includes(String(userId));
 }
 
-export function createCourseConnectToken(courseId) {
+export async function createCourseConnectToken(courseId) {
   const compact = compactUuid(courseId);
   if (!/^[0-9a-f]{32}$/.test(compact)) throw new Error('Course ID không hợp lệ để tạo Telegram connect token');
-  const signature = crypto.createHmac('sha256', getConnectSecret()).update(compact).digest('base64url').slice(0, 16);
+  const secret = await getTelegramWebhookSecret();
+  const signature = crypto.createHmac('sha256', secret).update(compact).digest('base64url').slice(0, 16);
   return `c_${compact}_${signature}`;
 }
 
-export function verifyCourseConnectToken(token) {
+export async function verifyCourseConnectToken(token) {
   const match = /^c_([0-9a-f]{32})_([A-Za-z0-9_-]{16})$/.exec(String(token || '').trim());
   if (!match) return null;
-  const expected = crypto.createHmac('sha256', getConnectSecret()).update(match[1]).digest('base64url').slice(0, 16);
+  const secret = await getTelegramWebhookSecret();
+  const expected = crypto.createHmac('sha256', secret).update(match[1]).digest('base64url').slice(0, 16);
   if (!safeEqual(match[2], expected)) return null;
   return expandUuid(match[1]);
 }
@@ -187,8 +218,8 @@ export async function answerTelegramCallback(callbackQueryId, text) {
 }
 
 export async function notifyAdminJoinRequest(order, from) {
-  const adminChatId = String(process.env.TELEGRAM_ADMIN_CHAT_ID || '').trim();
-  if (!adminChatId) return null;
+  const cfg = await getTelegramRuntimeConfig();
+  if (!cfg.adminChatId) return null;
   const username = from?.username ? '@' + from.username : '(không có username)';
   const lines = [
     '📥 YÊU CẦU VÀO KHÓA TELEGRAM',
@@ -200,7 +231,7 @@ export async function notifyAdminJoinRequest(order, from) {
     `Bill: ${order.proof_image_url || '(không có)'}`
   ];
   return telegramApi('sendMessage', {
-    chat_id: adminChatId,
+    chat_id: cfg.adminChatId,
     text: lines.join('\n'),
     disable_web_page_preview: false,
     reply_markup: {
