@@ -16,6 +16,7 @@ export default async function handler(req, res) {
 
     const rawData = course.raw_data || {};
     const courseImage = course.image_url || rawData.imageUrl || rawData.posterUrl || rawData.posterImageUrl || rawData.thumbnail || rawData.heroUrl || rawData.heroImageUrl || rawData.coverUrl || '';
+    const deliveryMode = course.delivery_mode === 'telegram' ? 'telegram' : 'lms';
 
     return res.status(200).json({
       course: course.slug,
@@ -27,7 +28,8 @@ export default async function handler(req, res) {
       bankOwner: rawData.bankOwner || '',
       transferNote: rawData.transferNote || '',
       qrImageUrl: rawData.qrImageUrl || '',
-      deliveryMode: course.delivery_mode === 'telegram' ? 'telegram' : 'lms'
+      deliveryMode,
+      telegramReady: deliveryMode !== 'telegram' || Boolean(String(course.telegram_chat_id || '').trim())
     });
   } catch (error) {
     return res.status(500).json({ error: error.message });
