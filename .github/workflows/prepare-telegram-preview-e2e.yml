@@ -16,7 +16,6 @@ jobs:
     env:
       VERCEL_ORG_ID: team_cAthcmyw4079BDgelX0YjG9i
       VERCEL_PROJECT_ID: prj_9LIdNafm4JYpYCNA6ujbIlQs2Bh9
-      PREVIEW_BRANCH: agent/telegram-order-invite-flow
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,19 +39,33 @@ jobs:
           printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
           vercel project inspect --token="$VERCEL_TOKEN" >/dev/null
 
-      - name: Create isolated Preview Admin password
+      - name: Save existing Preview Admin password
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          vercel env pull /tmp/preview-env --yes --environment=preview --token="$VERCEL_TOKEN"
+          set -a
+          source /tmp/preview-env
+          set +a
+          if [ -z "${ADMIN_PASSWORD:-}" ]; then
+            echo "Existing Preview ADMIN_PASSWORD is unexpectedly missing"
+            exit 1
+          fi
+          echo "::add-mask::$ADMIN_PASSWORD"
+          echo "OLD_ADMIN_PASSWORD=$ADMIN_PASSWORD" >> "$GITHUB_ENV"
+          rm -f /tmp/preview-env
+
+      - name: Temporarily isolate Preview Admin password
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           ADMIN_PASSWORD=$(openssl rand -hex 32)
           echo "::add-mask::$ADMIN_PASSWORD"
-          printf '%s' "$ADMIN_PASSWORD" > /tmp/preview-admin-password
-          vercel env add ADMIN_PASSWORD preview "$PREVIEW_BRANCH" --sensitive --token="$VERCEL_TOKEN" < /tmp/preview-admin-password
-          rm -f /tmp/preview-admin-password
+          printf '%s' "$ADMIN_PASSWORD" | vercel env update ADMIN_PASSWORD preview --yes --token="$VERCEL_TOKEN"
           echo "ADMIN_PASSWORD=$ADMIN_PASSWORD" >> "$GITHUB_ENV"
-          echo "Branch-only Preview ADMIN_PASSWORD created"
+          echo "Preview-only ADMIN_PASSWORD temporarily isolated"
 
-      - name: Redeploy branch Preview only
+      - name: Redeploy Preview only
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
@@ -69,7 +82,7 @@ jobs:
             -H "X-Admin-Password: $ADMIN_PASSWORD" \
             -H "Content-Type: application/json" \
             -d '{}' > /tmp/setup.json
-          node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('/tmp/setup.json','utf8'));if(!j.success){console.error(j);process.exit(1)};console.log('Webhook registered on Preview; protection bypass:',Boolean(j.previewProtectionBypass));"
+          node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('/tmp/setup.json','utf8'));if(!j.success){console.error(j);process.exit(1)};if(!j.previewProtectionBypass){console.error('Preview webhook did not enable protection bypass');process.exit(1)};console.log('Webhook registered on protected Preview');"
 
       - name: Create prefixed Telegram test course
         env:
@@ -113,3 +126,11 @@ jobs:
           echo "Course ID: $COURSE_ID" >> "$GITHUB_STEP_SUMMARY"
           echo "Connect URL: $CONNECT_URL" >> "$GITHUB_STEP_SUMMARY"
           echo "Connect URL: $CONNECT_URL"
+
+      - name: Restore shared Preview Admin password
+        if: always() && env.OLD_ADMIN_PASSWORD != ''
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          printf '%s' "$OLD_ADMIN_PASSWORD" | vercel env update ADMIN_PASSWORD preview --yes --token="$VERCEL_TOKEN"
+          echo "Shared Preview ADMIN_PASSWORD restored for future deployments"
