@@ -1,0 +1,34 @@
+name: Validate Telegram runtime fallback
+
+on:
+  push:
+    branches:
+      - agent/telegram-order-invite-flow
+    paths:
+      - .github/workflows/validate-telegram-runtime.yml
+      - utils/telegram.js
+      - api/telegram-connect.js
+      - api/telegram-setup.js
+      - api/telegram-webhook.js
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/telegram-order-invite-flow
+      - name: Syntax and diff validation
+        run: |
+          node --check api/config.js
+          node --check api/courses.js
+          node --check api/register.js
+          node --check api/orders.js
+          node --check api/telegram-connect.js
+          node --check api/telegram-setup.js
+          node --check api/telegram-webhook.js
+          node --check utils/telegram.js
+          git diff --check origin/main...HEAD
