@@ -45,7 +45,7 @@ export default async function handler(req, res) {
 
     const bot = await telegramApi('getMe');
     if (!bot?.username) throw new Error('Bot Telegram chưa có username');
-    const token = createCourseConnectToken(course.id);
+    const token = await createCourseConnectToken(course.id);
     const connectUrl = `https://t.me/${encodeURIComponent(bot.username)}?start=${encodeURIComponent(token)}`;
 
     return res.status(200).json({
