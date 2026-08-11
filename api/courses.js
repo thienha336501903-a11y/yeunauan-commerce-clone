@@ -5,6 +5,7 @@ const normalizeExpectedStartDate = value => /^\d{4}-\d{2}-\d{2}$/.test(String(va
 const validDateInput = value => String(value || '').trim() === '' || /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
 const mode = value => value === 'telegram' ? 'telegram' : 'lms';
 const ttl = value => Math.min(720, Math.max(1, Number.parseInt(value, 10) || 72));
+const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 
 async function syncCourseIfLms(course, dataId) {
   if (mode(course.deliveryMode) === 'telegram') {
@@ -31,12 +32,12 @@ export default async function handler(req, res) {
       const { data: courses, error } = await supabase.from('courses').select('*').order('sort_order', { ascending: true }).order('created_at', { ascending: false });
       if (error) throw error;
       return res.status(200).json(courses.map(c => ({
+        ...(c.raw_data || {}),
         id: c.id, slug: c.slug, courseName: c.title, price: c.price || '', imageUrl: c.image_url || c.raw_data?.imageUrl || c.raw_data?.posterUrl || c.raw_data?.posterImageUrl || c.raw_data?.thumbnail || c.raw_data?.heroUrl || c.raw_data?.heroImageUrl || c.raw_data?.coverUrl || '',
         expected_start_date: c.expected_start_date || '', active: c.active, sort_order: c.sort_order, description: c.description || '', teacher_name: c.teacher_name || '', is_published: c.is_published === true, created_at: c.created_at,
         sync_lms_status: c.sync_lms_status || 'PENDING', sync_portal_status: c.sync_portal_status || 'PENDING', sync_error: c.sync_error || '',
         deliveryMode: mode(c.delivery_mode), telegramChatId: c.telegram_chat_id || '', telegramChatTitle: c.telegram_chat_title || '', telegramInviteTtlHours: c.telegram_invite_ttl_hours || 72,
-        telegramConnected: Boolean(String(c.telegram_chat_id || '').trim()),
-        ...(c.raw_data || {})
+        telegramConnected: Boolean(String(c.telegram_chat_id || '').trim())
       })));
     }
 
@@ -47,7 +48,12 @@ export default async function handler(req, res) {
       const courseName = String(body.courseName || body.title || '').trim();
       if (!slug || !courseName) return res.status(400).json({ error: 'Thiếu thông tin bắt buộc (slug, title)' });
       if (!validDateInput(body.expected_start_date)) return res.status(400).json({ error: 'Lịch khai giảng dự kiến phải có định dạng YYYY-MM-DD' });
-      const deliveryMode = mode(body.deliveryMode || body.delivery_mode);
+
+      const hasDeliveryMode = hasOwn(body, 'deliveryMode') || hasOwn(body, 'delivery_mode');
+      const hasTelegramChatId = hasOwn(body, 'telegramChatId') || hasOwn(body, 'telegram_chat_id');
+      const hasTelegramChatTitle = hasOwn(body, 'telegramChatTitle') || hasOwn(body, 'telegram_chat_title');
+      const hasTelegramTtl = hasOwn(body, 'telegramInviteTtlHours') || hasOwn(body, 'telegram_invite_ttl_hours');
+      let deliveryMode = mode(body.deliveryMode || body.delivery_mode);
       const telegramChatId = String(body.telegramChatId || body.telegram_chat_id || '').trim();
 
       const base = {
@@ -69,15 +75,31 @@ export default async function handler(req, res) {
         data = result.data;
       } else {
         if (!id) return res.status(400).json({ error: 'Thiếu ID khóa học để cập nhật' });
-        const { data: existing, error: existingErr } = await supabase.from('courses').select('image_url, raw_data, expected_start_date, telegram_chat_id, telegram_chat_title').eq('id', id).maybeSingle();
+        const { data: existing, error: existingErr } = await supabase
+          .from('courses')
+          .select('image_url, raw_data, expected_start_date, delivery_mode, telegram_chat_id, telegram_chat_title, telegram_invite_ttl_hours')
+          .eq('id', id)
+          .maybeSingle();
         if (existingErr) throw existingErr;
-        base.image_url = base.image_url || existing?.image_url || '';
-        base.raw_data = { ...(existing?.raw_data || {}), ...base.raw_data };
-        if (!Object.prototype.hasOwnProperty.call(body, 'expected_start_date')) delete base.expected_start_date;
-        if (deliveryMode === 'telegram' && !Object.prototype.hasOwnProperty.call(body, 'telegramChatId') && !Object.prototype.hasOwnProperty.call(body, 'telegram_chat_id')) {
-          base.telegram_chat_id = existing?.telegram_chat_id || null;
-          base.telegram_chat_title = existing?.telegram_chat_title || null;
+        if (!existing) return res.status(404).json({ error: 'Không tìm thấy khóa học' });
+
+        if (!hasDeliveryMode) {
+          deliveryMode = mode(existing.delivery_mode);
+          base.delivery_mode = deliveryMode;
         }
+        base.image_url = base.image_url || existing.image_url || '';
+        base.raw_data = { ...(existing.raw_data || {}), ...base.raw_data };
+        if (!hasOwn(body, 'expected_start_date')) delete base.expected_start_date;
+        if (!hasTelegramTtl) base.telegram_invite_ttl_hours = existing.telegram_invite_ttl_hours || 72;
+
+        if (deliveryMode === 'telegram') {
+          if (!hasTelegramChatId) base.telegram_chat_id = existing.telegram_chat_id || null;
+          if (!hasTelegramChatTitle) base.telegram_chat_title = existing.telegram_chat_title || null;
+        } else {
+          base.telegram_chat_id = null;
+          base.telegram_chat_title = null;
+        }
+
         const result = await supabase.from('courses').update(base).eq('id', id).select().single();
         if (result.error) throw result.error;
         data = result.data;
