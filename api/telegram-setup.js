@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { telegramApi, telegramConfigStatus } from '../utils/telegram.js';
+import { telegramApi, telegramBotAdminRights, telegramConfigStatus } from '../utils/telegram.js';
 
 function safeEqual(a, b) {
   const x = Buffer.from(String(a || ''), 'utf8');
@@ -19,8 +19,18 @@ export default async function handler(req, res) {
     const host = String(req.headers.host || '').trim();
     const webhookUrl = proto + '://' + host + '/api/telegram-webhook';
     const bot = await telegramApi('getMe');
-    const webhook = await telegramApi('setWebhook', { url: webhookUrl, secret_token: String(process.env.TELEGRAM_WEBHOOK_SECRET).trim(), allowed_updates: ['chat_join_request', 'callback_query'], drop_pending_updates: false });
-    return res.status(200).json({ success: true, bot: { id: bot.id, username: bot.username }, webhookUrl, webhook });
+    const rights = telegramBotAdminRights();
+
+    await telegramApi('setMyDefaultAdministratorRights', { rights, for_channels: false });
+    await telegramApi('setMyDefaultAdministratorRights', { rights, for_channels: true });
+
+    const webhook = await telegramApi('setWebhook', {
+      url: webhookUrl,
+      secret_token: String(process.env.TELEGRAM_WEBHOOK_SECRET).trim(),
+      allowed_updates: ['message', 'chat_join_request', 'callback_query'],
+      drop_pending_updates: false
+    });
+    return res.status(200).json({ success: true, bot: { id: bot.id, username: bot.username }, webhookUrl, webhook, allowedUpdates: ['message', 'chat_join_request', 'callback_query'] });
   } catch (error) {
     return res.status(502).json({ error: error.message || String(error) });
   }
