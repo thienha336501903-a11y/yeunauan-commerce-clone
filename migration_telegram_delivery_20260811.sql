@@ -6,7 +6,10 @@ alter table public.courses
   add column if not exists delivery_mode text not null default 'lms',
   add column if not exists telegram_chat_id text,
   add column if not exists telegram_chat_title text,
-  add column if not exists telegram_invite_ttl_hours integer not null default 72;
+  add column if not exists telegram_invite_ttl_hours integer not null default 72,
+  add column if not exists telegram_connect_request_id bigint,
+  add column if not exists telegram_connect_user_id bigint,
+  add column if not exists telegram_connect_expires_at timestamptz;
 
 alter table public.orders
   add column if not exists delivery_mode text not null default 'lms',
@@ -40,6 +43,10 @@ begin
       check (delivery_mode in ('lms', 'telegram'));
   end if;
 end $$;
+
+create index if not exists idx_courses_telegram_connect_request
+  on public.courses (telegram_connect_request_id)
+  where telegram_connect_request_id is not null;
 
 create index if not exists idx_orders_telegram_invite_link
   on public.orders (telegram_invite_link)
