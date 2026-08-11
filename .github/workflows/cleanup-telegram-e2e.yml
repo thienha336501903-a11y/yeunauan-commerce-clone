@@ -29,16 +29,15 @@ jobs:
           mkdir -p .vercel
           printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
 
-      - name: Pull Preview runtime environment
+      - name: Revoke test invite and remove test bill
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           vercel env pull /tmp/preview-env --yes --environment=preview --token="$VERCEL_TOKEN"
-          cat /tmp/preview-env >> "$GITHUB_ENV"
+          set -a
+          source /tmp/preview-env
+          set +a
           rm -f /tmp/preview-env
-
-      - name: Revoke test invite and remove test bill
-        run: |
           node --input-type=module <<'NODE'
           import { createClient } from '@supabase/supabase-js';
           import { v2 as cloudinary } from 'cloudinary';
