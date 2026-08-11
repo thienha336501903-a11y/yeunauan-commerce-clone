@@ -37,6 +37,12 @@ export default async function handler(req, res) {
     if (courseError) throw courseError;
     if (!courseRec || courseRec.active === false) return res.status(404).json({ error: 'Khóa học không tồn tại hoặc chưa mở đăng ký' });
 
+    const deliveryMode = courseRec.delivery_mode === 'telegram' ? 'telegram' : 'lms';
+    const telegramChatId = deliveryMode === 'telegram' ? String(courseRec.telegram_chat_id || '').trim() : '';
+    if (deliveryMode === 'telegram' && !telegramChatId) {
+      return res.status(409).json({ error: 'Khóa học Telegram đang chờ Admin kết nối group/channel. Vui lòng thử lại sau.' });
+    }
+
     const missingCloudinaryEnv = ['CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET'].filter(name => !process.env[name]);
     if (missingCloudinaryEnv.length) return res.status(500).json({ error: 'Hệ thống upload bill chưa được cấu hình đầy đủ' });
 
@@ -46,7 +52,6 @@ export default async function handler(req, res) {
     const finalCourseName = courseRec.title || courseSlug;
     const thumbnail = courseRec.image_url || '';
     const orderId = crypto.randomUUID();
-    const deliveryMode = courseRec.delivery_mode === 'telegram' ? 'telegram' : 'lms';
 
     const orderPayload = {
       id: orderId,
@@ -57,12 +62,11 @@ export default async function handler(req, res) {
       proof_image_url: billLink,
       status: 'Chờ duyệt',
       delivery_mode: deliveryMode,
-      telegram_chat_id: deliveryMode === 'telegram' ? String(courseRec.telegram_chat_id || '').trim() || null : null,
+      telegram_chat_id: deliveryMode === 'telegram' ? telegramChatId : null,
       raw_data: { billName: String(billName).slice(0, 120), billType: cleanBillType }
     };
 
     if (deliveryMode === 'telegram') {
-      if (!orderPayload.telegram_chat_id) return res.status(409).json({ error: 'Khóa học Telegram chưa cấu hình Chat ID' });
       orderPayload.sync_lms_status = 'SKIPPED_TELEGRAM';
       orderPayload.sync_portal_status = 'SKIPPED_TELEGRAM';
       orderPayload.telegram_join_status = 'invite_creating';
