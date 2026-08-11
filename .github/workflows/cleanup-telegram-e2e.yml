@@ -1,0 +1,76 @@
+name: Cleanup Telegram E2E
+
+on:
+  push:
+    branches:
+      - agent/telegram-order-invite-flow
+    paths:
+      - .github/workflows/cleanup-telegram-e2e.yml
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: team_cAthcmyw4079BDgelX0YjG9i
+      VERCEL_PROJECT_ID: prj_9LIdNafm4JYpYCNA6ujbIlQs2Bh9
+      TEST_CHAT_ID: '-1001804857034'
+      TEST_INVITE_LINK: 'https://t.me/+C5x_zSbdx_03ZGNl'
+      TEST_CLOUDINARY_PUBLIC_ID: 'bill-chuyen-khoan/__clone_factory_test_telegram_oneclick_20260811/rmczzzpjbnty5cuthrae'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies and Vercel CLI
+        run: |
+          npm install
+          npm install --global vercel@latest
+          mkdir -p .vercel
+          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
+
+      - name: Pull Preview runtime environment
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          vercel env pull /tmp/preview-env --yes --environment=preview --token="$VERCEL_TOKEN"
+          cat /tmp/preview-env >> "$GITHUB_ENV"
+          rm -f /tmp/preview-env
+
+      - name: Revoke test invite and remove test bill
+        run: |
+          node --input-type=module <<'NODE'
+          import { createClient } from '@supabase/supabase-js';
+          import { v2 as cloudinary } from 'cloudinary';
+
+          const required = ['SUPABASE_URL','SUPABASE_SERVICE_ROLE_KEY','CLOUDINARY_CLOUD_NAME','CLOUDINARY_API_KEY','CLOUDINARY_API_SECRET'];
+          for (const key of required) {
+            if (!process.env[key]) throw new Error(`Missing runtime env: ${key}`);
+          }
+
+          const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+            auth: { persistSession: false, autoRefreshToken: false }
+          });
+          const { data, error } = await supabase.from('site_config').select('value').eq('key','telegram_runtime').maybeSingle();
+          if (error) throw error;
+          const botToken = String(process.env.TELEGRAM_BOT_TOKEN || data?.value?.botToken || '').trim();
+          if (!botToken) throw new Error('Telegram bot token unavailable');
+
+          const tg = await fetch(`https://api.telegram.org/bot${botToken}/revokeChatInviteLink`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: process.env.TEST_CHAT_ID, invite_link: process.env.TEST_INVITE_LINK })
+          });
+          const tgJson = await tg.json().catch(() => ({}));
+          if (!tg.ok || !tgJson.ok) throw new Error(`Telegram revoke failed: ${tgJson.description || tg.status}`);
+          console.log('Telegram test invite revoked');
+
+          cloudinary.config({
+            cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+            api_key: process.env.CLOUDINARY_API_KEY,
+            api_secret: process.env.CLOUDINARY_API_SECRET
+          });
+          const destroyed = await cloudinary.uploader.destroy(process.env.TEST_CLOUDINARY_PUBLIC_ID, { resource_type: 'image', invalidate: true });
+          if (!['ok','not found'].includes(String(destroyed.result))) throw new Error(`Cloudinary destroy failed: ${destroyed.result}`);
+          console.log('Cloudinary test bill removed:', destroyed.result);
+          NODE
