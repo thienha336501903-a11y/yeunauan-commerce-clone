@@ -35,6 +35,7 @@ export default async function handler(req, res) {
         expected_start_date: c.expected_start_date || '', active: c.active, sort_order: c.sort_order, description: c.description || '', teacher_name: c.teacher_name || '', is_published: c.is_published === true, created_at: c.created_at,
         sync_lms_status: c.sync_lms_status || 'PENDING', sync_portal_status: c.sync_portal_status || 'PENDING', sync_error: c.sync_error || '',
         deliveryMode: mode(c.delivery_mode), telegramChatId: c.telegram_chat_id || '', telegramChatTitle: c.telegram_chat_title || '', telegramInviteTtlHours: c.telegram_invite_ttl_hours || 72,
+        telegramConnected: Boolean(String(c.telegram_chat_id || '').trim()),
         ...(c.raw_data || {})
       })));
     }
@@ -48,13 +49,12 @@ export default async function handler(req, res) {
       if (!validDateInput(body.expected_start_date)) return res.status(400).json({ error: 'Lịch khai giảng dự kiến phải có định dạng YYYY-MM-DD' });
       const deliveryMode = mode(body.deliveryMode || body.delivery_mode);
       const telegramChatId = String(body.telegramChatId || body.telegram_chat_id || '').trim();
-      if (deliveryMode === 'telegram' && !telegramChatId) return res.status(400).json({ error: 'Khóa Telegram bắt buộc phải có Telegram Chat/Channel ID' });
 
       const base = {
         slug, title: courseName, price: body.price, image_url: String(body.imageUrl || '').trim(), expected_start_date: normalizeExpectedStartDate(body.expected_start_date),
         active: body.active !== undefined ? body.active : true, sort_order: body.sort_order !== undefined ? Number.parseInt(body.sort_order, 10) || 0 : 0,
         description: body.description || '', teacher_name: body.teacher_name || '', delivery_mode: deliveryMode,
-        telegram_chat_id: deliveryMode === 'telegram' ? telegramChatId : null,
+        telegram_chat_id: deliveryMode === 'telegram' ? telegramChatId || null : null,
         telegram_chat_title: deliveryMode === 'telegram' ? String(body.telegramChatTitle || body.telegram_chat_title || '').trim() || null : null,
         telegram_invite_ttl_hours: ttl(body.telegramInviteTtlHours || body.telegram_invite_ttl_hours),
         raw_data: { bankName: body.bankName || '', bankAccount: body.bankAccount || '', bankOwner: body.bankOwner || '', transferNote: body.transferNote || '', qrImageUrl: body.qrImageUrl || '' }
@@ -69,11 +69,15 @@ export default async function handler(req, res) {
         data = result.data;
       } else {
         if (!id) return res.status(400).json({ error: 'Thiếu ID khóa học để cập nhật' });
-        const { data: existing, error: existingErr } = await supabase.from('courses').select('image_url, raw_data, expected_start_date').eq('id', id).maybeSingle();
+        const { data: existing, error: existingErr } = await supabase.from('courses').select('image_url, raw_data, expected_start_date, telegram_chat_id, telegram_chat_title').eq('id', id).maybeSingle();
         if (existingErr) throw existingErr;
         base.image_url = base.image_url || existing?.image_url || '';
         base.raw_data = { ...(existing?.raw_data || {}), ...base.raw_data };
         if (!Object.prototype.hasOwnProperty.call(body, 'expected_start_date')) delete base.expected_start_date;
+        if (deliveryMode === 'telegram' && !Object.prototype.hasOwnProperty.call(body, 'telegramChatId') && !Object.prototype.hasOwnProperty.call(body, 'telegram_chat_id')) {
+          base.telegram_chat_id = existing?.telegram_chat_id || null;
+          base.telegram_chat_title = existing?.telegram_chat_title || null;
+        }
         const result = await supabase.from('courses').update(base).eq('id', id).select().single();
         if (result.error) throw result.error;
         data = result.data;
@@ -81,7 +85,7 @@ export default async function handler(req, res) {
 
       let syncResults = { lms: 'PENDING', portal: 'PENDING', error: null };
       try { syncResults = await syncCourseIfLms({ ...body, slug, courseName, deliveryMode }, data.id); } catch (syncErr) { console.error('Course sync trigger error:', syncErr); syncResults.error = String(syncErr.message || syncErr); }
-      return res.status(req.method === 'POST' ? 201 : 200).json({ success: true, data: { ...data, syncResults } });
+      return res.status(req.method === 'POST' ? 201 : 200).json({ success: true, data: { ...data, syncResults, telegramConnected: Boolean(String(data.telegram_chat_id || '').trim()) } });
     }
 
     if (req.method === 'DELETE') {
