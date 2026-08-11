@@ -21,6 +21,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: agent/telegram-order-invite-flow
+          fetch-depth: 0
       - name: Syntax and diff validation
         run: |
           node --check api/config.js
