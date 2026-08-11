@@ -16,64 +16,31 @@ jobs:
     env:
       VERCEL_ORG_ID: team_cAthcmyw4079BDgelX0YjG9i
       VERCEL_PROJECT_ID: prj_9LIdNafm4JYpYCNA6ujbIlQs2Bh9
-      TEST_CHAT_ID: '-1001804857034'
-      TEST_INVITE_LINK: 'https://t.me/+C5x_zSbdx_03ZGNl'
-      TEST_CLOUDINARY_PUBLIC_ID: 'bill-chuyen-khoan/__clone_factory_test_telegram_oneclick_20260811/rmczzzpjbnty5cuthrae'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: agent/telegram-order-invite-flow
 
-      - name: Install dependencies and Vercel CLI
-        run: |
-          npm install
-          npm install --global vercel@latest
-          mkdir -p .vercel
-          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
-
-      - name: Revoke test invite and remove test bill
+      - name: Install Vercel CLI and link project
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
-          vercel env pull /tmp/preview-env --yes --environment=preview --token="$VERCEL_TOKEN"
-          set -a
-          source /tmp/preview-env
-          set +a
-          rm -f /tmp/preview-env
-          node --input-type=module <<'NODE'
-          import { createClient } from '@supabase/supabase-js';
-          import { v2 as cloudinary } from 'cloudinary';
+          npm install --global vercel@latest
+          mkdir -p .vercel
+          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
+          vercel project inspect --token="$VERCEL_TOKEN" >/dev/null
 
-          const clean = value => String(value || '').trim().replace(/^['"]+|['"]+$/g, '').trim();
-          const cfg = {
-            supabaseUrl: clean(process.env.SUPABASE_URL),
-            supabaseKey: clean(process.env.SUPABASE_SERVICE_ROLE_KEY),
-            cloudName: clean(process.env.CLOUDINARY_CLOUD_NAME),
-            cloudKey: clean(process.env.CLOUDINARY_API_KEY),
-            cloudSecret: clean(process.env.CLOUDINARY_API_SECRET)
-          };
-          for (const [key, value] of Object.entries(cfg)) {
-            if (!value) throw new Error(`Missing runtime value: ${key}`);
-          }
-          if (!/^https?:\/\//i.test(cfg.supabaseUrl)) throw new Error('SUPABASE_URL format invalid after normalization');
+      - name: Deploy cleanup Preview only
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          PREVIEW_URL=$(vercel deploy --yes --token="$VERCEL_TOKEN")
+          echo "PREVIEW_URL=$PREVIEW_URL" >> "$GITHUB_ENV"
+          echo "Cleanup Preview: $PREVIEW_URL"
 
-          const supabase = createClient(cfg.supabaseUrl, cfg.supabaseKey, {
-            auth: { persistSession: false, autoRefreshToken: false }
-          });
-          const { data, error } = await supabase.from('site_config').select('value').eq('key','telegram_runtime').maybeSingle();
-          if (error) throw error;
-          const botToken = clean(process.env.TELEGRAM_BOT_TOKEN || data?.value?.botToken);
-          if (!botToken) throw new Error('Telegram bot token unavailable');
-
-          const tg = await fetch(`https://api.telegram.org/bot${botToken}/revokeChatInviteLink`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: process.env.TEST_CHAT_ID, invite_link: process.env.TEST_INVITE_LINK })
-          });
-          const tgJson = await tg.json().catch(() => ({}));
-          if (!tg.ok || !tgJson.ok) throw new Error(`Telegram revoke failed: ${tgJson.description || tg.status}`);
-          console.log('Telegram test invite revoked');
-
-          cloudinary.config({ cloud_name: cfg.cloudName, api_key: cfg.cloudKey, api_secret: cfg.cloudSecret });
-          const destroyed = await cloudinary.uploader.destroy(process.env.TEST_CLOUDINARY_PUBLIC_ID, { resource_type: 'image', invalidate: true });
-          if (!['ok','not found'].includes(String(destroyed.result))) throw new Error(`Cloudinary destroy failed: ${destroyed.result}`);
-          console.log('Cloudinary test bill removed:', destroyed.result);
-          NODE
+      - name: Execute exact Telegram E2E cleanup
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          vercel curl "$PREVIEW_URL/api/e2e-cleanup-telegram" -X POST > /tmp/cleanup.json
+          node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('/tmp/cleanup.json','utf8'));if(!j.success){console.error(j);process.exit(1)};console.log('Cleanup PASS', {inviteRevoked:j.inviteRevoked,billRemoved:j.billRemoved,orderDeleted:j.orderDeleted,courseDeleted:j.courseDeleted,alreadyCleaned:j.alreadyCleaned});"
