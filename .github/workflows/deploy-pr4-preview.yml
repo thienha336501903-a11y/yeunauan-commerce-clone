@@ -1,0 +1,43 @@
+name: Deploy PR4 Telegram Preview
+
+on:
+  push:
+    branches:
+      - agent/telegram-order-invite-flow
+    paths:
+      - .github/workflows/deploy-pr4-preview.yml
+
+permissions:
+  contents: read
+
+env:
+  VERCEL_ORG_ID: team_cAthcmyw4079BDgelX0YjG9i
+  VERCEL_PROJECT_ID: prj_9LIdNafm4JYpYCNA6ujbIlQs2Bh9
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/telegram-order-invite-flow
+      - name: Require Vercel token
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "VERCEL_TOKEN secret is not available"
+            exit 2
+          fi
+      - name: Install Vercel CLI
+        run: npm install --global vercel
+      - name: Pull Preview project settings
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
+      - name: Deploy Preview only
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          PREVIEW_URL=$(vercel deploy --yes --token="$VERCEL_TOKEN")
+          echo "PREVIEW_URL=$PREVIEW_URL"
