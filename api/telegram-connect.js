@@ -3,8 +3,11 @@ import { supabase } from '../utils/supabase.js';
 import { createCourseConnectToken, telegramApi } from '../utils/telegram.js';
 
 function safeEqual(a, b) {
-  const x = Buffer.from(String(a || ''), 'utf8');
-  const y = Buffer.from(String(b || ''), 'utf8');
+  const left = String(a || '');
+  const right = String(b || '');
+  if (!left || !right) return false;
+  const x = Buffer.from(left, 'utf8');
+  const y = Buffer.from(right, 'utf8');
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
 
