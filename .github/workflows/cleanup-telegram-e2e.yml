@@ -42,17 +42,25 @@ jobs:
           import { createClient } from '@supabase/supabase-js';
           import { v2 as cloudinary } from 'cloudinary';
 
-          const required = ['SUPABASE_URL','SUPABASE_SERVICE_ROLE_KEY','CLOUDINARY_CLOUD_NAME','CLOUDINARY_API_KEY','CLOUDINARY_API_SECRET'];
-          for (const key of required) {
-            if (!process.env[key]) throw new Error(`Missing runtime env: ${key}`);
+          const clean = value => String(value || '').trim().replace(/^['"]+|['"]+$/g, '').trim();
+          const cfg = {
+            supabaseUrl: clean(process.env.SUPABASE_URL),
+            supabaseKey: clean(process.env.SUPABASE_SERVICE_ROLE_KEY),
+            cloudName: clean(process.env.CLOUDINARY_CLOUD_NAME),
+            cloudKey: clean(process.env.CLOUDINARY_API_KEY),
+            cloudSecret: clean(process.env.CLOUDINARY_API_SECRET)
+          };
+          for (const [key, value] of Object.entries(cfg)) {
+            if (!value) throw new Error(`Missing runtime value: ${key}`);
           }
+          if (!/^https?:\/\//i.test(cfg.supabaseUrl)) throw new Error('SUPABASE_URL format invalid after normalization');
 
-          const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+          const supabase = createClient(cfg.supabaseUrl, cfg.supabaseKey, {
             auth: { persistSession: false, autoRefreshToken: false }
           });
           const { data, error } = await supabase.from('site_config').select('value').eq('key','telegram_runtime').maybeSingle();
           if (error) throw error;
-          const botToken = String(process.env.TELEGRAM_BOT_TOKEN || data?.value?.botToken || '').trim();
+          const botToken = clean(process.env.TELEGRAM_BOT_TOKEN || data?.value?.botToken);
           if (!botToken) throw new Error('Telegram bot token unavailable');
 
           const tg = await fetch(`https://api.telegram.org/bot${botToken}/revokeChatInviteLink`, {
@@ -64,11 +72,7 @@ jobs:
           if (!tg.ok || !tgJson.ok) throw new Error(`Telegram revoke failed: ${tgJson.description || tg.status}`);
           console.log('Telegram test invite revoked');
 
-          cloudinary.config({
-            cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-            api_key: process.env.CLOUDINARY_API_KEY,
-            api_secret: process.env.CLOUDINARY_API_SECRET
-          });
+          cloudinary.config({ cloud_name: cfg.cloudName, api_key: cfg.cloudKey, api_secret: cfg.cloudSecret });
           const destroyed = await cloudinary.uploader.destroy(process.env.TEST_CLOUDINARY_PUBLIC_ID, { resource_type: 'image', invalidate: true });
           if (!['ok','not found'].includes(String(destroyed.result))) throw new Error(`Cloudinary destroy failed: ${destroyed.result}`);
           console.log('Cloudinary test bill removed:', destroyed.result);
