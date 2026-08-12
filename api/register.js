@@ -8,20 +8,22 @@ const ALLOWED_BILL_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const DEFAULT_COURSE_SLUG = 'banhmi4k';
 const normalizeEmail = email => String(email || '').trim().toLowerCase();
 const isValidEmail = email => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !/[^\x00-\x7F]/.test(email);
+const normalizeTelegramNick = value => String(value || '').trim().replace(/\s+/g, ' ');
+const isValidTelegramNick = value => value.length >= 2 && value.length <= 64 && !/[\x00-\x1F\x7F]/.test(value);
 const normalizeBase64 = value => String(value || '').replace(/\s+/g, '');
 const isValidBase64 = value => value.length > 0 && value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   try {
-    const { gmail, billName, billType, billData, course } = req.body || {};
+    const { gmail, telegramNick, billName, billType, billData, course } = req.body || {};
     const cleanEmail = normalizeEmail(gmail);
+    const cleanTelegramNick = normalizeTelegramNick(telegramNick);
     const cleanBillType = String(billType || '').trim().toLowerCase();
     const cleanBillData = normalizeBase64(billData);
     const courseSlug = String(course || DEFAULT_COURSE_SLUG).trim().toLowerCase();
 
-    if (!cleanEmail || !billName || !cleanBillType || !cleanBillData) return res.status(400).json({ error: 'Thiếu dữ liệu' });
-    if (!isValidEmail(cleanEmail)) return res.status(400).json({ error: 'Địa chỉ email không hợp lệ' });
+    if (!billName || !cleanBillType || !cleanBillData) return res.status(400).json({ error: 'Thiếu dữ liệu' });
     if (!ALLOWED_BILL_TYPES.has(cleanBillType)) return res.status(400).json({ error: 'Chỉ nhận file JPG, PNG hoặc WEBP' });
     if (!isValidBase64(cleanBillData)) return res.status(400).json({ error: 'Dữ liệu ảnh bill không hợp lệ' });
     const billBytes = Buffer.byteLength(cleanBillData, 'base64');
@@ -43,6 +45,14 @@ export default async function handler(req, res) {
       return res.status(409).json({ error: 'Khóa học Telegram đang chờ Admin kết nối group/channel. Vui lòng thử lại sau.' });
     }
 
+    if (deliveryMode === 'telegram') {
+      if (!cleanTelegramNick) return res.status(400).json({ error: 'Vui lòng nhập nick Telegram của bạn' });
+      if (!isValidTelegramNick(cleanTelegramNick)) return res.status(400).json({ error: 'Nick Telegram phải từ 2 đến 64 ký tự' });
+    } else {
+      if (!cleanEmail) return res.status(400).json({ error: 'Vui lòng nhập Gmail của bạn' });
+      if (!isValidEmail(cleanEmail)) return res.status(400).json({ error: 'Địa chỉ email không hợp lệ' });
+    }
+
     const missingCloudinaryEnv = ['CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET'].filter(name => !process.env[name]);
     if (missingCloudinaryEnv.length) return res.status(500).json({ error: 'Hệ thống upload bill chưa được cấu hình đầy đủ' });
 
@@ -58,12 +68,13 @@ export default async function handler(req, res) {
       course_id: courseRec.id,
       course_slug: courseSlug,
       course_title: finalCourseName,
-      customer_email: cleanEmail,
+      customer_email: deliveryMode === 'lms' ? cleanEmail : null,
+      telegram_claimed_username: deliveryMode === 'telegram' ? cleanTelegramNick : null,
       proof_image_url: billLink,
       status: 'Chờ duyệt',
       delivery_mode: deliveryMode,
       telegram_chat_id: deliveryMode === 'telegram' ? telegramChatId : null,
-      raw_data: { billName: String(billName).slice(0, 120), billType: cleanBillType }
+      raw_data: { billName: String(billName).slice(0, 120), billType: cleanBillType, contactType: deliveryMode === 'telegram' ? 'telegram' : 'email', ...(deliveryMode === 'telegram' ? { telegramClaimedUsername: cleanTelegramNick } : {}) }
     };
 
     if (deliveryMode === 'telegram') {

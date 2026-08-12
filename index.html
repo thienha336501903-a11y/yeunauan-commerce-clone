@@ -183,7 +183,7 @@
       Đang tải khóa học...
   </h1>
 
-  <p class="mt-4 text-[#7a675c] text-base sm:text-lg leading-relaxed font-bold">
+  <p id="courseIntroCopy" class="mt-4 text-[#7a675c] text-base sm:text-lg leading-relaxed font-bold">
     Đăng ký nhanh bằng Gmail, chuyển khoản và gửi bill xác nhận.
     Admin kiểm tra thanh toán và cấp quyền học trong vòng 24 giờ.
   </p>
@@ -222,7 +222,7 @@
 </a></div></div><div id="qrSection" class="pin rounded-[34px] overflow-hidden bg-[#241712] text-white"><div class="p-5 sm:p-6 border-b border-white/10 text-center"><p class="mini-kicker text-[#f1ba72] mb-2">Mã QR Chuyển khoản</p><h3 class="serif text-5xl sm:text-6xl leading-none">Scan<br>to Pay</h3></div><div class="p-5 sm:p-6 text-center"><div id="qrBox" class="hidden"><div class="bg-white rounded-[30px] p-3 inline-block w-full max-w-[300px] mx-auto shadow-[0_18px_38px_rgba(0,0,0,.25)]"><img id="qrImage" src="" alt="QR chuyển khoản" loading="lazy" decoding="async" class="mx-auto w-full rounded-[22px] bg-white p-2"></div><p class="text-xs text-white/58 mt-3 font-bold">Quét mã bằng app ngân hàng để tự động điền thông tin.</p></div><div id="qrEmpty" class="text-center text-white/62 py-8 font-bold">Chưa có QR. Hãy thêm <b>qrImageUrl</b> trong tab Config.</div><div id="downloadQrBox" class="hidden mt-5"><button onclick="downloadQR()" class="primary-btn w-full py-3 px-6 rounded-full text-sm font-black uppercase tracking-[.14em] transition">Tải QR về máy</button></div>
 <a href="#register" class="mobile-bill-after-qr mobile-only">Tôi đã chuyển khoản - Gửi bill</a>
 </div></div></div></div></div></section>
-<section id="register" class="px-4 sm:px-6 lg:px-10 py-5 sm:py-8 pb-12 sm:pb-16"><div class="max-w-7xl mx-auto grid lg:grid-cols-[.78fr_1.22fr] gap-5 lg:gap-7 items-stretch"><div class="pin rounded-[34px] p-5 sm:p-7 bg-[#b65c4b] text-white"><p class="mini-kicker text-white/70 mb-3">Upload Receipt</p><h2 class="serif text-5xl sm:text-6xl lg:text-7xl leading-none">Gửi bill<br>xác nhận</h2><p class="mt-5 text-white/78 text-base sm:text-lg font-bold leading-relaxed">Sau khi thanh toán, nhập Gmail nhận khóa học và upload ảnh bill. Admin sẽ kiểm tra và cấp quyền học trong vòng 24 giờ.</p></div><div class="pin rounded-[34px] p-5 sm:p-7 bg-white"><form id="regForm" class="space-y-6"><div><label class="block font-black mb-2 text-[#241712] uppercase tracking-wider text-sm">Gmail nhận khóa học</label><input type="email" id="gmail" required class="input-pin w-full rounded-[24px] p-4 text-lg font-bold" placeholder="Nhập Gmail của bạn"></div><div><label class="block font-black mb-2 text-[#241712] uppercase tracking-wider text-sm">Ảnh bill chuyển khoản</label><label class="block border-2 border-dashed border-black/18 rounded-[30px] p-6 sm:p-8 text-center cursor-pointer hover:bg-[#faf7f2] transition"><input type="file" id="bill" required accept="image/jpeg,image/png,image/webp" class="hidden"><div id="uploadText"><p class="serif text-6xl mb-1 text-[#b65c4b]">+</p><p class="font-black text-lg text-[#241712]">Chọn ảnh bill để xác nhận</p><p class="text-sm text-black/55 mt-1 font-bold">Chỉ nhận JPG, PNG, WEBP. Tối đa 5MB.</p></div><img id="billPreview" src="" alt="Xem trước bill" class="hidden mt-5 rounded-[24px] border border-black/10 max-h-[520px] w-full object-contain mx-auto shadow-lg bg-white"></label></div><div id="progressBox" class="hidden"><div class="flex justify-between text-sm mb-2 font-black text-[#241712]"><span id="progressText">Đang xử lý...</span><span id="progressPercent">0%</span></div><div class="w-full h-3 bg-[#e9dfd2] rounded-full overflow-hidden"><div id="progressBar" class="progress-bar h-full rounded-full" style="width:0%"></div></div></div><button id="btnSubmit" type="submit" class="dark-btn w-full py-4 rounded-full font-black text-lg transition disabled:opacity-60 disabled:cursor-not-allowed uppercase tracking-[.15em]">Gửi đăng ký</button><p class="text-sm text-black/55 text-center leading-relaxed font-bold">Gmail của bạn sẽ được cấp quyền truy cập thư mục khóa học sau khi xác nhận thanh toán.</p></form></div></div></section>
+<section id="register" class="px-4 sm:px-6 lg:px-10 py-5 sm:py-8 pb-12 sm:pb-16"><div class="max-w-7xl mx-auto grid lg:grid-cols-[.78fr_1.22fr] gap-5 lg:gap-7 items-stretch"><div class="pin rounded-[34px] p-5 sm:p-7 bg-[#b65c4b] text-white"><p class="mini-kicker text-white/70 mb-3">Upload Receipt</p><h2 class="serif text-5xl sm:text-6xl lg:text-7xl leading-none">Gửi bill<br>xác nhận</h2><p id="registerIntroCopy" class="mt-5 text-white/78 text-base sm:text-lg font-bold leading-relaxed">Sau khi thanh toán, nhập Gmail nhận khóa học và upload ảnh bill. Admin sẽ kiểm tra và cấp quyền học trong vòng 24 giờ.</p></div><div class="pin rounded-[34px] p-5 sm:p-7 bg-white"><form id="regForm" class="space-y-6"><div><label id="contactLabel" class="block font-black mb-2 text-[#241712] uppercase tracking-wider text-sm">Gmail nhận khóa học</label><input type="email" id="gmail" required autocomplete="email" class="input-pin w-full rounded-[24px] p-4 text-lg font-bold" placeholder="Nhập Gmail của bạn"></div><div><label class="block font-black mb-2 text-[#241712] uppercase tracking-wider text-sm">Ảnh bill chuyển khoản</label><label class="block border-2 border-dashed border-black/18 rounded-[30px] p-6 sm:p-8 text-center cursor-pointer hover:bg-[#faf7f2] transition"><input type="file" id="bill" required accept="image/jpeg,image/png,image/webp" class="hidden"><div id="uploadText"><p class="serif text-6xl mb-1 text-[#b65c4b]">+</p><p class="font-black text-lg text-[#241712]">Chọn ảnh bill để xác nhận</p><p class="text-sm text-black/55 mt-1 font-bold">Chỉ nhận JPG, PNG, WEBP. Tối đa 5MB.</p></div><img id="billPreview" src="" alt="Xem trước bill" class="hidden mt-5 rounded-[24px] border border-black/10 max-h-[520px] w-full object-contain mx-auto shadow-lg bg-white"></label></div><div id="progressBox" class="hidden"><div class="flex justify-between text-sm mb-2 font-black text-[#241712]"><span id="progressText">Đang xử lý...</span><span id="progressPercent">0%</span></div><div class="w-full h-3 bg-[#e9dfd2] rounded-full overflow-hidden"><div id="progressBar" class="progress-bar h-full rounded-full" style="width:0%"></div></div></div><button id="btnSubmit" type="submit" class="dark-btn w-full py-4 rounded-full font-black text-lg transition disabled:opacity-60 disabled:cursor-not-allowed uppercase tracking-[.15em]">Gửi đăng ký</button><p id="registerFootnote" class="text-sm text-black/55 text-center leading-relaxed font-bold">Gmail của bạn sẽ được cấp quyền truy cập thư mục khóa học sau khi xác nhận thanh toán.</p></form></div></div></section>
 </div>
 <div id="mobilePaymentSticky" class="mobile-sticky-payment mobile-only">
   <a id="mobileStickyAction" href="#register">Tôi đã chuyển khoản - Gửi bill</a>
@@ -236,7 +236,30 @@ function getGoogleDriveFileId(input){const url=String(input||'').trim();let m=ur
 function normalizeImageUrl(url){const value=String(url||'').trim();if(!value)return'';const id=getGoogleDriveFileId(value);return id?`https://drive.google.com/uc?export=view&id=${encodeURIComponent(id)}`:value}
 function handleCourseImageError(img){console.warn('[course-image] failed to load',img.getAttribute('data-original-src')||img.src);img.onerror=null;img.src=COURSE_IMAGE_PLACEHOLDER;img.classList.add('object-contain')}async function downloadQR(){const qrImg=document.getElementById('qrImage');if(!qrImg||!qrImg.src)return;try{const res=await fetch(qrImg.src);const blob=await res.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='ma-qr-chuyen-khoan.png';document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);showToast('Bắt đầu tải mã QR...')}catch(err){window.open(qrImg.src,'_blank')}}
 function setProgress(percent,text){document.getElementById('progressBox').classList.remove('hidden');document.getElementById('progressBar').style.width=percent+'%';document.getElementById('progressPercent').innerText=percent+'%';document.getElementById('progressText').innerText=text}
-async function loadConfig(){try{const params=new URLSearchParams(window.location.search);const course=params.get('course')||'banhmi4k';const res=await fetch(`/api/config?course=${encodeURIComponent(course)}`,{cache:'no-store'});const data=await res.json();window.currentCourseName=data.courseName||'';document.getElementById('courseName').innerText=window.currentCourseName;{const courseImg=document.getElementById('courseImage');const normalizedImage=normalizeImageUrl(data.imageUrl)||COURSE_IMAGE_PLACEHOLDER;courseImg.setAttribute('data-original-src',data.imageUrl||'');courseImg.src=normalizedImage;}document.getElementById('bankName').innerText=data.bankName||'';document.getElementById('bankAccount').innerText=data.bankAccount||'';document.getElementById('bankOwner').innerText=data.bankOwner||'';document.getElementById('price').innerText=data.price||'';document.getElementById('pricePayment').innerText=data.price||'';document.getElementById('transferNote').innerText=data.transferNote||'';if(data.qrImageUrl&&data.qrImageUrl.trim()!==''){document.getElementById('qrImage').src=data.qrImageUrl;document.getElementById('qrBox').classList.remove('hidden');document.getElementById('downloadQrBox').classList.remove('hidden');document.getElementById('qrEmpty').classList.add('hidden')}else{document.getElementById('qrBox').classList.add('hidden');document.getElementById('downloadQrBox').classList.add('hidden');document.getElementById('qrEmpty').classList.remove('hidden')}}catch(err){console.log('Không tải được cấu hình:',err)}}
+function applyDeliveryCopy(data){
+  const isTelegram=data&&data.deliveryMode==='telegram';
+  const contactInput=document.getElementById('gmail');
+  const courseIntro=document.getElementById('courseIntroCopy');
+  const registerIntro=document.getElementById('registerIntroCopy');
+  const contactLabel=document.getElementById('contactLabel');
+  const footnote=document.getElementById('registerFootnote');
+  if(isTelegram){
+    if(courseIntro) courseIntro.innerText='Đăng ký nhanh bằng Telegram, chuyển khoản và gửi bill xác nhận. Admin kiểm tra thanh toán và duyệt quyền tham gia khóa học trên Telegram trong vòng 24 giờ.';
+    if(registerIntro) registerIntro.innerText='Sau khi thanh toán, nhập nick Telegram của bạn và upload ảnh bill. Admin sẽ kiểm tra và duyệt quyền tham gia khóa học trên Telegram trong vòng 24 giờ.';
+    if(contactLabel) contactLabel.innerText='Telegram nhận khóa học';
+    if(contactInput){contactInput.type='text';contactInput.placeholder='Nhập nick Telegram của bạn';contactInput.autocomplete='off';contactInput.inputMode='text';}
+    if(footnote) footnote.innerText='Nick Telegram của bạn sẽ được dùng để đối chiếu và duyệt vào nhóm/kênh khóa học sau khi xác nhận thanh toán.';
+    document.getElementById('transferNote').innerText='Tên Nick Telegram của bạn';
+  }else{
+    if(courseIntro) courseIntro.innerText='Đăng ký nhanh bằng Gmail, chuyển khoản và gửi bill xác nhận. Admin kiểm tra thanh toán và cấp quyền học trong vòng 24 giờ.';
+    if(registerIntro) registerIntro.innerText='Sau khi thanh toán, nhập Gmail nhận khóa học và upload ảnh bill. Admin sẽ kiểm tra và cấp quyền học trong vòng 24 giờ.';
+    if(contactLabel) contactLabel.innerText='Gmail nhận khóa học';
+    if(contactInput){contactInput.type='email';contactInput.placeholder='Nhập Gmail của bạn';contactInput.autocomplete='email';contactInput.inputMode='email';}
+    if(footnote) footnote.innerText='Gmail của bạn sẽ được cấp quyền truy cập thư mục khóa học sau khi xác nhận thanh toán.';
+    document.getElementById('transferNote').innerText=data.transferNote||'';
+  }
+}
+async function loadConfig(){try{const params=new URLSearchParams(window.location.search);const course=params.get('course')||'banhmi4k';const res=await fetch(`/api/config?course=${encodeURIComponent(course)}`,{cache:'no-store'});const data=await res.json();window.currentDeliveryMode=data.deliveryMode==='telegram'?'telegram':'lms';window.currentCourseName=data.courseName||'';document.getElementById('courseName').innerText=window.currentCourseName;{const courseImg=document.getElementById('courseImage');const normalizedImage=normalizeImageUrl(data.imageUrl)||COURSE_IMAGE_PLACEHOLDER;courseImg.setAttribute('data-original-src',data.imageUrl||'');courseImg.src=normalizedImage;}document.getElementById('bankName').innerText=data.bankName||'';document.getElementById('bankAccount').innerText=data.bankAccount||'';document.getElementById('bankOwner').innerText=data.bankOwner||'';document.getElementById('price').innerText=data.price||'';document.getElementById('pricePayment').innerText=data.price||'';applyDeliveryCopy(data);if(data.qrImageUrl&&data.qrImageUrl.trim()!==''){document.getElementById('qrImage').src=data.qrImageUrl;document.getElementById('qrBox').classList.remove('hidden');document.getElementById('downloadQrBox').classList.remove('hidden');document.getElementById('qrEmpty').classList.add('hidden')}else{document.getElementById('qrBox').classList.add('hidden');document.getElementById('downloadQrBox').classList.add('hidden');document.getElementById('qrEmpty').classList.remove('hidden')}}catch(err){console.log('Không tải được cấu hình:',err)}}
 loadConfig();
 document.getElementById('bill').addEventListener('change',function(){const file=this.files[0];const preview=document.getElementById('billPreview');const uploadText=document.getElementById('uploadText');if(!file){preview.classList.add('hidden');preview.src='';uploadText.classList.remove('hidden');return}const allowedTypes=['image/jpeg','image/png','image/webp'];if(!allowedTypes.includes(file.type)){alert('Chỉ nhận file JPG, PNG hoặc WEBP.');this.value='';preview.classList.add('hidden');preview.src='';uploadText.classList.remove('hidden');return}if(file.size>5*1024*1024){alert('Ảnh bill quá lớn. Vui lòng chọn ảnh dưới 5MB.');this.value='';preview.classList.add('hidden');preview.src='';uploadText.classList.remove('hidden');return}preview.src=URL.createObjectURL(file);preview.classList.remove('hidden');uploadText.classList.add('hidden')});
 document.getElementById('regForm').addEventListener('submit',async(e)=>{
@@ -246,7 +269,22 @@ document.getElementById('regForm').addEventListener('submit',async(e)=>{
   btn.innerText='ĐANG XỬ LÝ...';
   console.log('[Checkout] submit started');
   setProgress(15,'Đang kiểm tra dữ liệu...');
-  const gmail=document.getElementById('gmail').value.trim();
+  const contact=document.getElementById('gmail').value.trim();
+  const isTelegram=window.currentDeliveryMode==='telegram';
+  if(!contact){
+    alert(isTelegram?'Vui lòng nhập nick Telegram của bạn':'Vui lòng nhập Gmail của bạn');
+    btn.disabled=false;
+    btn.innerText='GỬI ĐĂNG KÝ';
+    return;
+  }
+  if(isTelegram&&(contact.length<2||contact.length>64)){
+    alert('Nick Telegram phải từ 2 đến 64 ký tự');
+    btn.disabled=false;
+    btn.innerText='GỬI ĐĂNG KÝ';
+    return;
+  }
+  const gmail=isTelegram?'':contact;
+  const telegramNick=isTelegram?contact:'';
   const file=document.getElementById('bill').files[0];
   if(!file){
     alert('Vui lòng chọn ảnh bill chuyển khoản');
@@ -283,6 +321,7 @@ document.getElementById('regForm').addEventListener('submit',async(e)=>{
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({
           gmail,
+          telegramNick,
           billName:file.name,
           billType:file.type,
           billData:base64Data,
