@@ -230,8 +230,8 @@ export async function notifyAdminJoinRequest(order, from) {
     '📥 YÊU CẦU VÀO KHÓA TELEGRAM',
     '',
     `Khóa: ${order.course_title || order.course_slug}`,
-    `Email: ${order.customer_email}`,
-    `Telegram: ${from?.first_name || ''} ${username}`,
+    `Nick Telegram khách khai báo: ${order.telegram_claimed_username || '(không có)'}`,
+    `Telegram thực tế: ${from?.first_name || ''} ${username}`,
     `Order: ${order.id}`,
     `Bill: ${order.proof_image_url || '(không có)'}`
   ];

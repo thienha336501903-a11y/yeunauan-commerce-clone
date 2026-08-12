@@ -19,10 +19,10 @@ export default async function handler(req, res) {
           ...(o.raw_data || {}),
           id: o.id, created_at: o.created_at, 'Thời gian': timeFormatted, time: timeFormatted,
           'Course': o.course_slug, course: o.course_slug, 'Tên khóa học': o.course_title, courseName: o.course_title,
-          'Gmail': o.customer_email, gmail: o.customer_email, 'Link bill': o.proof_image_url, billLink: o.proof_image_url,
+          'Gmail': o.customer_email || '', gmail: o.customer_email || '', 'Telegram khai báo': o.telegram_claimed_username || '', telegramClaimedUsername: o.telegram_claimed_username || '', 'Link bill': o.proof_image_url, billLink: o.proof_image_url,
           'Trạng thái': o.status, status: o.status, note: o.note || '', customer_phone: o.customer_phone || '', customer_name: o.customer_name || '',
           sync_lms_status: o.sync_lms_status || 'PENDING', sync_portal_status: o.sync_portal_status || 'PENDING', sync_error: o.sync_error || '',
-          delivery_mode: o.delivery_mode || 'lms', telegram_chat_id: o.telegram_chat_id || '', telegram_invite_link: o.telegram_invite_link || '', telegram_invite_expires_at: o.telegram_invite_expires_at || '',
+          delivery_mode: o.delivery_mode || 'lms', telegram_claimed_username: o.telegram_claimed_username || '', telegram_chat_id: o.telegram_chat_id || '', telegram_invite_link: o.telegram_invite_link || '', telegram_invite_expires_at: o.telegram_invite_expires_at || '',
           telegram_user_id: o.telegram_user_id || null, telegram_username: o.telegram_username || '', telegram_first_name: o.telegram_first_name || '', telegram_join_status: o.telegram_join_status || '', telegram_join_requested_at: o.telegram_join_requested_at || '', telegram_join_decided_at: o.telegram_join_decided_at || ''
         };
       }));
