@@ -1,0 +1,96 @@
+name: Promote Telegram Production
+
+on:
+  push:
+    branches:
+      - ops/promote-telegram-production-20260812
+    paths:
+      - .github/workflows/promote-telegram-production.yml
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: team_cAthcmyw4079BDgelX0YjG9i
+      VERCEL_PROJECT_ID: prj_9LIdNafm4JYpYCNA6ujbIlQs2Bh9
+      EXPECTED_MAIN_SHA: 14ad7bee12215c85e4e7d950cccf70350a5af5d1
+      CANONICAL_URL: https://yeunauan-commerce-clone.vercel.app
+    steps:
+      - name: Checkout merged main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Verify exact merged main
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          test "$ACTUAL_SHA" = "$EXPECTED_MAIN_SHA"
+          node --check api/config.js
+          node --check api/courses.js
+          node --check api/orders.js
+          node --check api/register.js
+          node --check api/telegram-connect.js
+          node --check api/telegram-setup.js
+          node --check api/telegram-webhook.js
+          node --check utils/telegram.js
+
+      - name: Install Vercel CLI and link Clone project
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$VERCEL_TOKEN"
+          npm install --global vercel@latest
+          mkdir -p .vercel
+          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
+          vercel project inspect --token="$VERCEL_TOKEN" >/dev/null
+          vercel env pull /tmp/prod-env --yes --environment=production --token="$VERCEL_TOKEN"
+          set -a
+          source /tmp/prod-env
+          set +a
+          rm -f /tmp/prod-env
+          test -n "${ADMIN_PASSWORD:-}"
+          echo "::add-mask::$ADMIN_PASSWORD"
+          echo "ADMIN_PASSWORD=$ADMIN_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Deploy canonical Production Clone
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          PROD_DEPLOY_URL=$(vercel deploy --prod --yes --token="$VERCEL_TOKEN")
+          echo "Production deployment: $PROD_DEPLOY_URL"
+          echo "PROD_DEPLOY_URL=$PROD_DEPLOY_URL" >> "$GITHUB_ENV"
+
+      - name: Register Telegram Production webhook
+        run: |
+          set -euo pipefail
+          curl --retry 5 --retry-delay 2 --retry-all-errors --fail-with-body -sS \
+            -X POST \
+            -H "X-Admin-Password: $ADMIN_PASSWORD" \
+            "$CANONICAL_URL/api/telegram-setup" > /tmp/setup.json
+          node <<'NODE'
+          const j=require('/tmp/setup.json');
+          if(!j.success) throw new Error('telegram setup failed: '+JSON.stringify(j));
+          if(j.previewProtectionBypass !== false) throw new Error('production webhook unexpectedly uses preview bypass');
+          if(j.webhookUrl !== 'https://yeunauan-commerce-clone.vercel.app/api/telegram-webhook') throw new Error('unexpected webhook URL: '+j.webhookUrl);
+          if(j.bot?.username !== 'yeunauan_course_bot') throw new Error('unexpected bot username');
+          if(j.webhook !== true) throw new Error('Telegram setWebhook did not return true');
+          console.log('Telegram Production webhook PASS');
+          NODE
+
+      - name: Canonical smoke tests
+        run: |
+          set -euo pipefail
+          ROOT_CODE=$(curl --retry 5 --retry-delay 2 --retry-all-errors -sS -o /tmp/root.html -w '%{http_code}' "$CANONICAL_URL/")
+          test "$ROOT_CODE" = "200"
+          curl --retry 5 --retry-delay 2 --retry-all-errors --fail-with-body -sS "$CANONICAL_URL/api/config?course=banhmi4k" > /tmp/config.json
+          node -e "const j=require('/tmp/config.json'); if(j.course!=='banhmi4k') throw new Error(JSON.stringify(j));"
+          AUTH_CODE=$(curl -sS -o /tmp/auth.json -w '%{http_code}' "$CANONICAL_URL/api/telegram-connect?courseId=00000000-0000-0000-0000-000000000000")
+          test "$AUTH_CODE" = "401"
+          echo "Canonical Production smoke PASS"
