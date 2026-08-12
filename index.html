@@ -294,9 +294,20 @@ document.getElementById('regForm').addEventListener('submit',async(e)=>{
       const data=await response.json();
       if(response.ok){
         console.log('[Checkout] register success', data);
-        console.log('[Checkout] redirecting to clone LMS portal');
-        const targetLmsUrl = (window.LMS_PUBLIC_URL || 'https://yeunauan-lms-clone.vercel.app').replace(/\/$/, '');
-        window.location.href = targetLmsUrl;
+        if(data.deliveryMode==='telegram'){
+          setProgress(100, data.telegramInviteLink ? 'Đang mở Telegram...' : 'Đã ghi nhận bill.');
+          if(data.telegramInviteLink){
+            window.location.href=data.telegramInviteLink;
+          }else{
+            alert(data.message||'Đã nhận bill. Link Telegram đang được Admin xử lý.');
+            btn.disabled=false;
+            btn.innerText='GỬI ĐĂNG KÝ';
+          }
+        }else{
+          console.log('[Checkout] redirecting to clone LMS portal');
+          const targetLmsUrl = (window.LMS_PUBLIC_URL || 'https://yeunauan-lms-clone.vercel.app').replace(/\/$/, '');
+          window.location.href = targetLmsUrl;
+        }
       }else{
         console.error('[Checkout] register api failed', data);
         alert(data.error||'Lỗi hệ thống');
