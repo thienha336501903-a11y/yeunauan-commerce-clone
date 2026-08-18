@@ -115,10 +115,10 @@ export default async function handler(req, res) {
       } catch (syncErr) { console.error('Error syncing pending order to Portal:', syncErr); }
     }
 
-    // Keep the proven legacy mobile handoff: checkout never asks Google to log in
-    // inside an embedded app browser. The LMS handoff page tells iPhone users to
-    // open the same URL in Safari, then Safari forwards to My Courses.
-    const managerPath = '/open-in-browser.html?registered=1&course=' + encodeURIComponent(courseSlug);
+    // Lượt đầu sau checkout luôn dừng ở trang hướng dẫn. Trang đó tự xóa
+    // checkout=1 khỏi URL, nên khi iPhone chọn “Mở bằng Safari” chính URL hiện tại
+    // sẽ tự chuyển thẳng sang Khóa học của tôi mà không cần UA/referrer/fallback.
+    const managerPath = '/open-in-browser.html?checkout=1&course=' + encodeURIComponent(courseSlug);
     return res.status(200).json({ success: true, file: billLink, course: courseSlug, courseName: finalCourseName, orderId, deliveryMode, managerPath });
   } catch (error) {
     console.error('REGISTER_ERROR:', error);
