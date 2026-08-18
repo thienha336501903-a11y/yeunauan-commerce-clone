@@ -1,0 +1,70 @@
+name: Patch Student Manager Redirect V2
+
+on:
+  push:
+    branches: [agent/fix-student-manager-redirect]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-student-manager-redirect
+          fetch-depth: 0
+      - name: Patch checkout redirect
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('api/register.js'); s=p.read_text()
+          old="""    // V4 keeps its real course delivery mode in the database, but after bill upload
+    // it follows the legacy LMS navigation flow back to the learner course manager.
+    const checkoutDeliveryMode = deliveryMode === 'v4' ? 'lms' : deliveryMode;
+    return res.status(200).json({ success: true, file: billLink, course: courseSlug, courseName: finalCourseName, orderId, deliveryMode: checkoutDeliveryMode, courseDeliveryMode: deliveryMode });
+"""
+          new="""    const managerPath = '/my-courses.html?registered=1&course=' + encodeURIComponent(courseSlug);
+    return res.status(200).json({ success: true, file: billLink, course: courseSlug, courseName: finalCourseName, orderId, deliveryMode, managerPath });
+"""
+          if old not in s: raise SystemExit('register block missing')
+          p.write_text(s.replace(old,new))
+
+          p=Path('index.html'); s=p.read_text()
+          old="""          const targetLmsUrl = (window.LMS_PUBLIC_URL || 'https://yeunauan-lms-clone.vercel.app').replace(/\\/$/, '');
+          if(data.deliveryMode==='v4'){
+            console.log('[Checkout] redirecting to V4 Web entry');
+            const courseSlug=data.course||new URLSearchParams(window.location.search).get('course')||'';
+            window.location.href=targetLmsUrl+'/v4-entry.html?course='+encodeURIComponent(courseSlug);
+          }else{
+            console.log('[Checkout] redirecting to clone LMS portal');
+            window.location.href = targetLmsUrl;
+          }
+"""
+          new="""          const targetLmsUrl = (window.LMS_PUBLIC_URL || 'https://yeunauan-lms-clone.vercel.app').replace(/\\/$/, '');
+          const courseSlug=data.course||new URLSearchParams(window.location.search).get('course')||'';
+          const managerPath=String(data.managerPath||('/my-courses.html?registered=1&course='+encodeURIComponent(courseSlug)));
+          console.log('[Checkout] redirecting to student course manager', { deliveryMode:data.deliveryMode, course:courseSlug });
+          window.location.href=managerPath.startsWith('http')?managerPath:targetLmsUrl+(managerPath.startsWith('/')?'':'/')+managerPath;
+"""
+          if old not in s: raise SystemExit('checkout block missing')
+          p.write_text(s.replace(old,new))
+          PY
+          node --check api/register.js
+          node - <<'NODE'
+          const fs=require('fs'), html=fs.readFileSync('index.html','utf8');
+          for(const [,src] of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)){if(src.trim())new Function(src)}
+          NODE
+          git diff --check
+          grep -q 'my-courses.html?registered=1' api/register.js
+          grep -q 'redirecting to student course manager' index.html
+      - name: Commit runtime and delete both temp workflows
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f .github/workflows/patch-student-manager-redirect.yml .github/workflows/patch-student-manager-redirect-v2.yml || true
+          git add api/register.js index.html
+          git commit -m "fix: redirect checkout to student course manager"
+          git push origin HEAD:agent/fix-student-manager-redirect
