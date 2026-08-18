@@ -1,0 +1,63 @@
+name: Harden V4 Web delivery mode
+
+on:
+  push:
+    branches:
+      - feat/v4-web-delivery-mode
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/v4-web-delivery-mode
+          fetch-depth: 0
+      - name: Fix V4 enrollment email and sales copy
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, count=1):
+              p = Path(path)
+              text = p.read_text()
+              found = text.count(old)
+              if found < count:
+                  raise SystemExit(f'{path}: expected {count} match(es), found {found}: {old[:120]!r}')
+              p.write_text(text.replace(old, new, count))
+
+          replace(
+              'api/register.js',
+              "customer_email: deliveryMode === 'lms' ? cleanEmail : null,",
+              "customer_email: deliveryMode !== 'telegram' ? cleanEmail : null,"
+          )
+
+          replace(
+              'index.html',
+              "function applyDeliveryCopy(data){\n  const isTelegram=data&&data.deliveryMode==='telegram';",
+              "function applyDeliveryCopy(data){\n  const isTelegram=data&&data.deliveryMode==='telegram';\n  const isV4=data&&data.deliveryMode==='v4';"
+          )
+
+          replace(
+              'index.html',
+              "    document.getElementById('transferNote').innerText='Tên Nick Telegram của bạn';\n  }else{\n    if(courseIntro) courseIntro.innerText='Đăng ký nhanh bằng Gmail, chuyển khoản và gửi bill xác nhận. Admin kiểm tra thanh toán và cấp quyền học trong vòng 24 giờ.';",
+              "    document.getElementById('transferNote').innerText='Tên Nick Telegram của bạn';\n  }else if(isV4){\n    if(courseIntro) courseIntro.innerText='Đăng ký nhanh bằng Gmail, chuyển khoản và gửi bill xác nhận. Admin kiểm tra thanh toán và cấp quyền học trên V4 Web trong vòng 24 giờ.';\n    if(registerIntro) registerIntro.innerText='Sau khi thanh toán, nhập Gmail nhận khóa học và upload ảnh bill. Admin sẽ kiểm tra và cấp quyền học trên V4 Web.';\n    if(contactLabel) contactLabel.innerText='Gmail nhận khóa học';\n    if(contactInput){contactInput.type='email';contactInput.placeholder='Nhập Gmail của bạn';contactInput.autocomplete='email';contactInput.inputMode='email';}\n    if(footnote) footnote.innerText='Sau khi được duyệt, Gmail này sẽ dùng để đăng nhập và học trực tiếp trên V4 Web.';\n    document.getElementById('transferNote').innerText=data.transferNote||'';\n  }else{\n    if(courseIntro) courseIntro.innerText='Đăng ký nhanh bằng Gmail, chuyển khoản và gửi bill xác nhận. Admin kiểm tra thanh toán và cấp quyền học trong vòng 24 giờ.';"
+          )
+          PY
+
+          node --check api/courses.js
+          node --check api/config.js
+          node --check api/register.js
+          git diff --check
+          rm .github/workflows/v4-web-mode-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: preserve V4 learner email and checkout copy"
+          git push origin HEAD:feat/v4-web-delivery-mode
