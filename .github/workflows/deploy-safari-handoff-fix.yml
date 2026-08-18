@@ -1,5 +1,6 @@
 name: Deploy Safari Handoff Fix
 
+# one-time trigger after workflow became available on default branch
 on:
   push:
     branches: [main]
