@@ -39,7 +39,8 @@ export default async function handler(req, res) {
     if (courseError) throw courseError;
     if (!courseRec || courseRec.active === false) return res.status(404).json({ error: 'Khóa học không tồn tại hoặc chưa mở đăng ký' });
 
-    const deliveryMode = courseRec.delivery_mode === 'telegram' ? 'telegram' : 'lms';
+    const normalizedDeliveryMode = String(courseRec.delivery_mode || '').trim().toLowerCase();
+    const deliveryMode = ['lms', 'v4', 'telegram'].includes(normalizedDeliveryMode) ? normalizedDeliveryMode : 'lms';
     const telegramChatId = deliveryMode === 'telegram' ? String(courseRec.telegram_chat_id || '').trim() : '';
     if (deliveryMode === 'telegram' && !telegramChatId) {
       return res.status(409).json({ error: 'Khóa học Telegram đang chờ Admin kết nối group/channel. Vui lòng thử lại sau.' });
@@ -113,7 +114,7 @@ export default async function handler(req, res) {
         await fetch(system1Url.trim().replace(/\/$/, '') + '/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Sync-Secret': syncSecret }, body: JSON.stringify({ action: 'syncPendingOrder', email: cleanEmail, courseSlug, courseName: finalCourseName, thumbnail }) });
       } catch (syncErr) { console.error('Error syncing pending order to Portal:', syncErr); }
     }
-    return res.status(200).json({ success: true, file: billLink, course: courseSlug, courseName: finalCourseName, orderId, deliveryMode: 'lms' });
+    return res.status(200).json({ success: true, file: billLink, course: courseSlug, courseName: finalCourseName, orderId, deliveryMode });
   } catch (error) {
     console.error('REGISTER_ERROR:', error);
     return res.status(500).json({ error: 'Không thể ghi nhận đăng ký. Vui lòng thử lại' });

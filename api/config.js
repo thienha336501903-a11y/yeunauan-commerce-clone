@@ -16,7 +16,8 @@ export default async function handler(req, res) {
 
     const rawData = course.raw_data || {};
     const courseImage = course.image_url || rawData.imageUrl || rawData.posterUrl || rawData.posterImageUrl || rawData.thumbnail || rawData.heroUrl || rawData.heroImageUrl || rawData.coverUrl || '';
-    const deliveryMode = course.delivery_mode === 'telegram' ? 'telegram' : 'lms';
+    const normalizedDeliveryMode = String(course.delivery_mode || '').trim().toLowerCase();
+    const deliveryMode = ['lms', 'v4', 'telegram'].includes(normalizedDeliveryMode) ? normalizedDeliveryMode : 'lms';
 
     return res.status(200).json({
       course: course.slug,
