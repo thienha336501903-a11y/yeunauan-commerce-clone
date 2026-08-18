@@ -6,6 +6,9 @@ on:
       - agent/fix-student-manager-redirect
     paths:
       - .github/workflows/patch-student-manager-redirect.yml
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
