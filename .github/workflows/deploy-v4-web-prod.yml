@@ -1,0 +1,85 @@
+name: Deploy V4 Web mode to Commerce Production
+
+on:
+  push:
+    branches:
+      - ops/deploy-v4-web-20260818
+    paths:
+      - .github/workflows/deploy-v4-web-prod.yml
+
+permissions:
+  contents: write
+
+jobs:
+  production:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: team_cAthcmyw4079BDgelX0YjG9i
+      VERCEL_PROJECT_ID: prj_9LIdNafm4JYpYCNA6ujbIlQs2Bh9
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ops/deploy-v4-web-20260818
+          fetch-depth: 0
+
+      - name: Require Vercel token
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: test -n "$VERCEL_TOKEN"
+
+      - name: Verify runtime matches merged main
+        run: |
+          test "$(git merge-base HEAD origin/main)" = "5801548ef36a7e08bc4b6f3a5ebfe80ff9bb46b0"
+          node --check api/config.js
+          node --check api/courses.js
+          node --check api/register.js
+          node --check api/orders.js
+          grep -q '<option value="v4">Học trên V4 Web</option>' admin.html
+          grep -q "\['lms', 'v4', 'telegram'\]" api/register.js
+          grep -q "v4-entry.html?course=" index.html
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Link Production project
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          mkdir -p .vercel
+          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
+          vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+
+      - name: Deploy Production
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          URL=$(vercel deploy --yes --prod --token="$VERCEL_TOKEN")
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "DEPLOY_URL=$URL" >> "$GITHUB_ENV"
+          echo "### Commerce V4 Web mode Production" >> "$GITHUB_STEP_SUMMARY"
+          echo "$URL" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Smoke test deployment and canonical
+        run: |
+          for URL in "$DEPLOY_URL" "https://yeunauan-commerce-clone.vercel.app"; do
+            OK=0
+            for i in $(seq 1 30); do
+              CODE=$(curl -L -sS -o /tmp/page.html -w '%{http_code}' "$URL/admin.html" || true)
+              if [ "$CODE" = "200" ] && grep -q '<option value="v4">Học trên V4 Web</option>' /tmp/page.html; then
+                OK=1
+                break
+              fi
+              sleep 4
+            done
+            test "$OK" = "1"
+          done
+
+      - name: Remove temporary workflow
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/deploy-v4-web-prod.yml
+          git commit -m "chore: remove V4 Web production deploy workflow" || true
+          git push origin HEAD:ops/deploy-v4-web-20260818 || true
