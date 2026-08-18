@@ -69,7 +69,7 @@ export default async function handler(req, res) {
       course_id: courseRec.id,
       course_slug: courseSlug,
       course_title: finalCourseName,
-      customer_email: deliveryMode === 'lms' ? cleanEmail : null,
+      customer_email: deliveryMode !== 'telegram' ? cleanEmail : null,
       telegram_claimed_username: deliveryMode === 'telegram' ? cleanTelegramNick : null,
       proof_image_url: billLink,
       status: 'Chờ duyệt',
