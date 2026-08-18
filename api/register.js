@@ -114,7 +114,11 @@ export default async function handler(req, res) {
         await fetch(system1Url.trim().replace(/\/$/, '') + '/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Sync-Secret': syncSecret }, body: JSON.stringify({ action: 'syncPendingOrder', email: cleanEmail, courseSlug, courseName: finalCourseName, thumbnail }) });
       } catch (syncErr) { console.error('Error syncing pending order to Portal:', syncErr); }
     }
-    return res.status(200).json({ success: true, file: billLink, course: courseSlug, courseName: finalCourseName, orderId, deliveryMode });
+
+    // V4 keeps its real course delivery mode in the database, but after bill upload
+    // it follows the legacy LMS navigation flow back to the learner course manager.
+    const checkoutDeliveryMode = deliveryMode === 'v4' ? 'lms' : deliveryMode;
+    return res.status(200).json({ success: true, file: billLink, course: courseSlug, courseName: finalCourseName, orderId, deliveryMode: checkoutDeliveryMode, courseDeliveryMode: deliveryMode });
   } catch (error) {
     console.error('REGISTER_ERROR:', error);
     return res.status(500).json({ error: 'Không thể ghi nhận đăng ký. Vui lòng thử lại' });
