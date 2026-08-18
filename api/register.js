@@ -115,10 +115,8 @@ export default async function handler(req, res) {
       } catch (syncErr) { console.error('Error syncing pending order to Portal:', syncErr); }
     }
 
-    // V4 keeps its real course delivery mode in the database, but after bill upload
-    // it follows the legacy LMS navigation flow back to the learner course manager.
-    const checkoutDeliveryMode = deliveryMode === 'v4' ? 'lms' : deliveryMode;
-    return res.status(200).json({ success: true, file: billLink, course: courseSlug, courseName: finalCourseName, orderId, deliveryMode: checkoutDeliveryMode, courseDeliveryMode: deliveryMode });
+    const managerPath = '/my-courses.html?registered=1&course=' + encodeURIComponent(courseSlug);
+    return res.status(200).json({ success: true, file: billLink, course: courseSlug, courseName: finalCourseName, orderId, deliveryMode, managerPath });
   } catch (error) {
     console.error('REGISTER_ERROR:', error);
     return res.status(500).json({ error: 'Không thể ghi nhận đăng ký. Vui lòng thử lại' });
