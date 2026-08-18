@@ -238,6 +238,7 @@ function handleCourseImageError(img){console.warn('[course-image] failed to load
 function setProgress(percent,text){document.getElementById('progressBox').classList.remove('hidden');document.getElementById('progressBar').style.width=percent+'%';document.getElementById('progressPercent').innerText=percent+'%';document.getElementById('progressText').innerText=text}
 function applyDeliveryCopy(data){
   const isTelegram=data&&data.deliveryMode==='telegram';
+  const isV4=data&&data.deliveryMode==='v4';
   const contactInput=document.getElementById('gmail');
   const courseIntro=document.getElementById('courseIntroCopy');
   const registerIntro=document.getElementById('registerIntroCopy');
@@ -250,6 +251,13 @@ function applyDeliveryCopy(data){
     if(contactInput){contactInput.type='text';contactInput.placeholder='Nhập nick Telegram của bạn';contactInput.autocomplete='off';contactInput.inputMode='text';}
     if(footnote) footnote.innerText='Nick Telegram của bạn sẽ được dùng để đối chiếu và duyệt vào nhóm/kênh khóa học sau khi xác nhận thanh toán.';
     document.getElementById('transferNote').innerText='Tên Nick Telegram của bạn';
+  }else if(isV4){
+    if(courseIntro) courseIntro.innerText='Đăng ký nhanh bằng Gmail, chuyển khoản và gửi bill xác nhận. Admin kiểm tra thanh toán và cấp quyền học trên V4 Web trong vòng 24 giờ.';
+    if(registerIntro) registerIntro.innerText='Sau khi thanh toán, nhập Gmail nhận khóa học và upload ảnh bill. Admin sẽ kiểm tra và cấp quyền học trên V4 Web.';
+    if(contactLabel) contactLabel.innerText='Gmail nhận khóa học';
+    if(contactInput){contactInput.type='email';contactInput.placeholder='Nhập Gmail của bạn';contactInput.autocomplete='email';contactInput.inputMode='email';}
+    if(footnote) footnote.innerText='Sau khi được duyệt, Gmail này sẽ dùng để đăng nhập và học trực tiếp trên V4 Web.';
+    document.getElementById('transferNote').innerText=data.transferNote||'';
   }else{
     if(courseIntro) courseIntro.innerText='Đăng ký nhanh bằng Gmail, chuyển khoản và gửi bill xác nhận. Admin kiểm tra thanh toán và cấp quyền học trong vòng 24 giờ.';
     if(registerIntro) registerIntro.innerText='Sau khi thanh toán, nhập Gmail nhận khóa học và upload ảnh bill. Admin sẽ kiểm tra và cấp quyền học trong vòng 24 giờ.';
@@ -259,7 +267,7 @@ function applyDeliveryCopy(data){
     document.getElementById('transferNote').innerText=data.transferNote||'';
   }
 }
-async function loadConfig(){try{const params=new URLSearchParams(window.location.search);const course=params.get('course')||'banhmi4k';const res=await fetch(`/api/config?course=${encodeURIComponent(course)}`,{cache:'no-store'});const data=await res.json();window.currentDeliveryMode=data.deliveryMode==='telegram'?'telegram':'lms';window.currentCourseName=data.courseName||'';document.getElementById('courseName').innerText=window.currentCourseName;{const courseImg=document.getElementById('courseImage');const normalizedImage=normalizeImageUrl(data.imageUrl)||COURSE_IMAGE_PLACEHOLDER;courseImg.setAttribute('data-original-src',data.imageUrl||'');courseImg.src=normalizedImage;}document.getElementById('bankName').innerText=data.bankName||'';document.getElementById('bankAccount').innerText=data.bankAccount||'';document.getElementById('bankOwner').innerText=data.bankOwner||'';document.getElementById('price').innerText=data.price||'';document.getElementById('pricePayment').innerText=data.price||'';applyDeliveryCopy(data);if(data.qrImageUrl&&data.qrImageUrl.trim()!==''){document.getElementById('qrImage').src=data.qrImageUrl;document.getElementById('qrBox').classList.remove('hidden');document.getElementById('downloadQrBox').classList.remove('hidden');document.getElementById('qrEmpty').classList.add('hidden')}else{document.getElementById('qrBox').classList.add('hidden');document.getElementById('downloadQrBox').classList.add('hidden');document.getElementById('qrEmpty').classList.remove('hidden')}}catch(err){console.log('Không tải được cấu hình:',err)}}
+async function loadConfig(){try{const params=new URLSearchParams(window.location.search);const course=params.get('course')||'banhmi4k';const res=await fetch(`/api/config?course=${encodeURIComponent(course)}`,{cache:'no-store'});const data=await res.json();window.currentDeliveryMode=['telegram','v4'].includes(data.deliveryMode)?data.deliveryMode:'lms';window.currentCourseName=data.courseName||'';document.getElementById('courseName').innerText=window.currentCourseName;{const courseImg=document.getElementById('courseImage');const normalizedImage=normalizeImageUrl(data.imageUrl)||COURSE_IMAGE_PLACEHOLDER;courseImg.setAttribute('data-original-src',data.imageUrl||'');courseImg.src=normalizedImage;}document.getElementById('bankName').innerText=data.bankName||'';document.getElementById('bankAccount').innerText=data.bankAccount||'';document.getElementById('bankOwner').innerText=data.bankOwner||'';document.getElementById('price').innerText=data.price||'';document.getElementById('pricePayment').innerText=data.price||'';applyDeliveryCopy(data);if(data.qrImageUrl&&data.qrImageUrl.trim()!==''){document.getElementById('qrImage').src=data.qrImageUrl;document.getElementById('qrBox').classList.remove('hidden');document.getElementById('downloadQrBox').classList.remove('hidden');document.getElementById('qrEmpty').classList.add('hidden')}else{document.getElementById('qrBox').classList.add('hidden');document.getElementById('downloadQrBox').classList.add('hidden');document.getElementById('qrEmpty').classList.remove('hidden')}}catch(err){console.log('Không tải được cấu hình:',err)}}
 loadConfig();
 document.getElementById('bill').addEventListener('change',function(){const file=this.files[0];const preview=document.getElementById('billPreview');const uploadText=document.getElementById('uploadText');if(!file){preview.classList.add('hidden');preview.src='';uploadText.classList.remove('hidden');return}const allowedTypes=['image/jpeg','image/png','image/webp'];if(!allowedTypes.includes(file.type)){alert('Chỉ nhận file JPG, PNG hoặc WEBP.');this.value='';preview.classList.add('hidden');preview.src='';uploadText.classList.remove('hidden');return}if(file.size>5*1024*1024){alert('Ảnh bill quá lớn. Vui lòng chọn ảnh dưới 5MB.');this.value='';preview.classList.add('hidden');preview.src='';uploadText.classList.remove('hidden');return}preview.src=URL.createObjectURL(file);preview.classList.remove('hidden');uploadText.classList.add('hidden')});
 document.getElementById('regForm').addEventListener('submit',async(e)=>{
@@ -343,9 +351,15 @@ document.getElementById('regForm').addEventListener('submit',async(e)=>{
             btn.innerText='GỬI ĐĂNG KÝ';
           }
         }else{
-          console.log('[Checkout] redirecting to clone LMS portal');
           const targetLmsUrl = (window.LMS_PUBLIC_URL || 'https://yeunauan-lms-clone.vercel.app').replace(/\/$/, '');
-          window.location.href = targetLmsUrl;
+          if(data.deliveryMode==='v4'){
+            console.log('[Checkout] redirecting to V4 Web entry');
+            const courseSlug=data.course||new URLSearchParams(window.location.search).get('course')||'';
+            window.location.href=targetLmsUrl+'/v4-entry.html?course='+encodeURIComponent(courseSlug);
+          }else{
+            console.log('[Checkout] redirecting to clone LMS portal');
+            window.location.href = targetLmsUrl;
+          }
         }
       }else{
         console.error('[Checkout] register api failed', data);

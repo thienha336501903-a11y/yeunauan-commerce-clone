@@ -3,7 +3,7 @@ import { supabase } from '../utils/supabase.js';
 
 const normalizeExpectedStartDate = value => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim()) ? String(value).trim() : null;
 const validDateInput = value => String(value || '').trim() === '' || /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
-const mode = value => value === 'telegram' ? 'telegram' : 'lms';
+const mode = value => { const normalized = String(value || '').trim().toLowerCase(); return ['lms', 'v4', 'telegram'].includes(normalized) ? normalized : 'lms'; };
 const ttl = value => Math.min(720, Math.max(1, Number.parseInt(value, 10) || 72));
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 
