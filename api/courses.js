@@ -41,15 +41,23 @@ async function validateV4ReadySource(courseSlug) {
 
   const { data: source, error: sourceError } = await supabase
     .from('tgcloner_sources')
-    .select('id,title,username,indexed_message_count,indexed_at')
+    .select('id,title,username,indexed_at')
     .eq('id', mapping.source_id)
     .maybeSingle();
   if (sourceError) throw sourceError;
   if (!source) return { ok: false, error: 'Nguồn Telegram của khóa V4 không còn tồn tại.' };
-  if (Number(source.indexed_message_count || 0) < 1) {
+
+  // Do not trust tgcloner_sources.indexed_message_count here: that field is a
+  // historical-reader summary and may lag behind live webhook indexing.
+  const { count, error: countError } = await supabase
+    .from('tgcloner_source_messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('source_id', mapping.source_id);
+  if (countError) throw countError;
+  if (Number(count || 0) < 1) {
     return { ok: false, error: 'Nguồn Telegram chưa có bài nào được index. Hãy đưa nội dung vào nguồn V4 và kiểm tra index trước khi chuyển Sẵn sàng.' };
   }
-  return { ok: true, source };
+  return { ok: true, source, indexedMessageCount: Number(count || 0) };
 }
 
 export default async function handler(req, res) {
