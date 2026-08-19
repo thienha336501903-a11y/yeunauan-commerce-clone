@@ -83,6 +83,9 @@ export default async function handler(req, res) {
       orderPayload.sync_portal_status = 'SKIPPED_TELEGRAM';
       orderPayload.telegram_join_status = 'invite_creating';
     }
+    if (deliveryMode === 'v4') {
+      orderPayload.sync_portal_status = 'SKIPPED_V4';
+    }
 
     const { error: insertError } = await supabase.from('orders').insert(orderPayload);
     if (insertError) throw insertError;
@@ -107,18 +110,21 @@ export default async function handler(req, res) {
       }
     }
 
-    const system1Url = process.env.SYSTEM1_URL;
-    const syncSecret = process.env.INTERNAL_SYNC_SECRET;
-    if (system1Url && syncSecret) {
-      try {
-        await fetch(system1Url.trim().replace(/\/$/, '') + '/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Sync-Secret': syncSecret }, body: JSON.stringify({ action: 'syncPendingOrder', email: cleanEmail, courseSlug, courseName: finalCourseName, thumbnail }) });
-      } catch (syncErr) { console.error('Error syncing pending order to Portal:', syncErr); }
+    // Only legacy LMS orders are mirrored into the legacy student Portal.
+    // V4 has its own course manager in LMS Clone and reads this order directly.
+    if (deliveryMode === 'lms') {
+      const system1Url = process.env.SYSTEM1_URL;
+      const syncSecret = process.env.INTERNAL_SYNC_SECRET;
+      if (system1Url && syncSecret) {
+        try {
+          await fetch(system1Url.trim().replace(/\/$/, '') + '/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Sync-Secret': syncSecret }, body: JSON.stringify({ action: 'syncPendingOrder', email: cleanEmail, courseSlug, courseName: finalCourseName, thumbnail }) });
+        } catch (syncErr) { console.error('Error syncing pending order to Portal:', syncErr); }
+      }
     }
 
-    // Lượt đầu sau checkout luôn dừng ở trang hướng dẫn. Trang đó tự xóa
-    // checkout=1 khỏi URL, nên khi iPhone chọn “Mở bằng Safari” chính URL hiện tại
-    // sẽ tự chuyển thẳng sang Khóa học của tôi mà không cần UA/referrer/fallback.
-    const managerPath = '/open-in-browser.html?checkout=1&course=' + encodeURIComponent(courseSlug);
+    const managerPath = deliveryMode === 'v4'
+      ? '/my-courses.html?registered=1&course=' + encodeURIComponent(courseSlug)
+      : 'https://yeunauan.live/my-courses';
     return res.status(200).json({ success: true, file: billLink, course: courseSlug, courseName: finalCourseName, orderId, deliveryMode, managerPath });
   } catch (error) {
     console.error('REGISTER_ERROR:', error);
