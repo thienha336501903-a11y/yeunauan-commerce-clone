@@ -928,7 +928,7 @@
       }
       try {
         const query = courseSlug ? ('?courseSlug=' + encodeURIComponent(courseSlug)) : '';
-        const response = await fetch('/api/v4-sources' + query, {
+        const response = await fetch('/api/courses?action=v4-sources' + query, {
           cache: 'no-store',
           headers: { 'X-Admin-Password': currentAdminPassword }
         });
@@ -1243,7 +1243,7 @@
           if (savedCourseId) document.getElementById("courseId").value = savedCourseId;
 
           if (deliveryMode === 'v4') {
-            const mappingResponse = await fetch('/api/v4-sources', {
+            const mappingResponse = await fetch('/api/courses?action=v4-sources', {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
@@ -1259,7 +1259,7 @@
               return;
             }
           } else if (id) {
-            fetch('/api/v4-sources', {
+            fetch('/api/courses?action=v4-sources', {
               method: 'DELETE',
               headers: {
                 'Content-Type': 'application/json',
