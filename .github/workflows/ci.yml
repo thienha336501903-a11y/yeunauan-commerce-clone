@@ -1,0 +1,27 @@
+name: Commerce CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Syntax checks
+        run: |
+          node --check api/courses.js
+          node --check api/orders.js
+          node --check api/register.js
+          node --check utils/v4-sync-helpers.js
+      - name: Regression tests
+        run: node --test tests/*.test.js

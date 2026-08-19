@@ -1,4 +1,5 @@
 import { supabase } from '../utils/supabase.js';
+import { syncV4EnrollmentToLms } from '../utils/v4-sync-helpers.js';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -48,9 +49,15 @@ export default async function handler(req, res) {
           if (updateErr) throw updateErr;
           return res.status(200).json({ success: true, data: { ...updatedOrder, syncResults } });
         }
-        const { syncEnrollmentToExternalSystems } = await import('../utils/sync-helpers.js');
+
         const actionType = existingOrder.status === 'Đã duyệt' ? 'create' : 'revoke';
-        const syncResults = await syncEnrollmentToExternalSystems(existingOrder, actionType);
+        let syncResults;
+        if (String(existingOrder.delivery_mode || '').toLowerCase() === 'v4') {
+          syncResults = await syncV4EnrollmentToLms(existingOrder, actionType);
+        } else {
+          const { syncEnrollmentToExternalSystems } = await import('../utils/sync-helpers.js');
+          syncResults = await syncEnrollmentToExternalSystems(existingOrder, actionType);
+        }
         const { data: updatedOrder, error: updateErr } = await supabase.from('orders').update({ sync_lms_status: syncResults.lms, sync_portal_status: syncResults.portal, sync_error: syncResults.error }).eq('id', id).select().single();
         if (updateErr) throw updateErr;
         return res.status(200).json({ success: true, data: { ...updatedOrder, syncResults } });
@@ -78,9 +85,13 @@ export default async function handler(req, res) {
       let updatedData = { ...data };
       if (status !== undefined && data.delivery_mode !== 'telegram') {
         try {
-          const { syncEnrollmentToExternalSystems } = await import('../utils/sync-helpers.js');
           const actionType = status === 'Đã duyệt' ? 'create' : 'revoke';
-          syncResults = await syncEnrollmentToExternalSystems(data, actionType);
+          if (String(data.delivery_mode || '').toLowerCase() === 'v4') {
+            syncResults = await syncV4EnrollmentToLms(data, actionType);
+          } else {
+            const { syncEnrollmentToExternalSystems } = await import('../utils/sync-helpers.js');
+            syncResults = await syncEnrollmentToExternalSystems(data, actionType);
+          }
           const { data: finalData } = await supabase.from('orders').update({ sync_lms_status: syncResults.lms, sync_portal_status: syncResults.portal, sync_error: syncResults.error }).eq('id', id).select().single();
           if (finalData) updatedData = finalData;
         } catch (syncErr) { console.error('Order sync trigger error:', syncErr); }
