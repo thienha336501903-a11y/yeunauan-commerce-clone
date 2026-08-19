@@ -1,6 +1,6 @@
 name: V4 self-service Preview
 
-# one-time Preview trigger; remove after QA
+# one-time Preview trigger after folding V4 source API into courses.js
 on:
   push:
     branches:
@@ -29,7 +29,6 @@ jobs:
           node --check api/courses.js
           node --check api/orders.js
           node --check api/register.js
-          node --check api/v4-sources.js
           node --check utils/v4-sync-helpers.js
           node --test tests/*.test.js
           git diff --check
