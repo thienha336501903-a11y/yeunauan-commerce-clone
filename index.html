@@ -357,8 +357,8 @@ document.getElementById('regForm').addEventListener('submit',async(e)=>{
             const courseSlug=data.course||new URLSearchParams(window.location.search).get('course')||'';
             window.location.href=targetLmsUrl+'/v4-entry.html?course='+encodeURIComponent(courseSlug);
           }else{
-            console.log('[Checkout] redirecting to clone LMS portal');
-            window.location.href = targetLmsUrl;
+            console.log('[Checkout] redirecting to original student portal');
+            window.location.href = 'https://yeunauan.live/my-courses';
           }
         }
       }else{
