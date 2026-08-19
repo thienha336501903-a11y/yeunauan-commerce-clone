@@ -22,7 +22,6 @@ jobs:
           node --check api/courses.js
           node --check api/orders.js
           node --check api/register.js
-          node --check api/v4-sources.js
           node --check utils/v4-sync-helpers.js
       - name: Regression tests
         run: node --test tests/*.test.js
