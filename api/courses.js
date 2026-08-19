@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { supabase } from '../utils/supabase.js';
+import { syncV4CourseToLms } from '../utils/v4-sync-helpers.js';
 
 const normalizeExpectedStartDate = value => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim()) ? String(value).trim() : null;
 const validDateInput = value => String(value || '').trim() === '' || /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
@@ -8,15 +9,47 @@ const ttl = value => Math.min(720, Math.max(1, Number.parseInt(value, 10) || 72)
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 
 async function syncCourseIfLms(course, dataId) {
-  if (mode(course.deliveryMode) === 'telegram') {
+  const deliveryMode = mode(course.deliveryMode);
+  if (deliveryMode === 'telegram') {
     const result = { lms: 'SKIPPED_TELEGRAM', portal: 'SKIPPED_TELEGRAM', error: null };
     await supabase.from('courses').update({ sync_lms_status: result.lms, sync_portal_status: result.portal, sync_error: null }).eq('id', dataId);
     return result;
   }
+
+  if (deliveryMode === 'v4') {
+    const result = await syncV4CourseToLms(course);
+    await supabase.from('courses').update({ sync_lms_status: result.lms, sync_portal_status: result.portal, sync_error: result.error }).eq('id', dataId);
+    return result;
+  }
+
   const { syncCourseToExternalSystems } = await import('../utils/sync-helpers.js');
   const result = await syncCourseToExternalSystems({ slug: course.slug, courseName: course.courseName, price: course.price, imageUrl: course.imageUrl, expected_start_date: course.expected_start_date, active: course.active, teacher_name: course.teacher_name });
   await supabase.from('courses').update({ sync_lms_status: result.lms, sync_portal_status: result.portal, sync_error: result.error }).eq('id', dataId);
   return result;
+}
+
+async function validateV4ReadySource(courseSlug) {
+  const { data: mapping, error: mappingError } = await supabase
+    .from('lms_v4_telegram_course_sources')
+    .select('source_id,enabled')
+    .eq('course_slug', courseSlug)
+    .maybeSingle();
+  if (mappingError) throw mappingError;
+  if (!mapping || mapping.enabled !== true || !mapping.source_id) {
+    return { ok: false, error: 'Khóa V4 chưa được gắn nguồn nội dung Telegram. Hãy chọn Nguồn nội dung V4 trước khi chuyển Sẵn sàng.' };
+  }
+
+  const { data: source, error: sourceError } = await supabase
+    .from('tgcloner_sources')
+    .select('id,title,username,indexed_message_count,indexed_at')
+    .eq('id', mapping.source_id)
+    .maybeSingle();
+  if (sourceError) throw sourceError;
+  if (!source) return { ok: false, error: 'Nguồn Telegram của khóa V4 không còn tồn tại.' };
+  if (Number(source.indexed_message_count || 0) < 1) {
+    return { ok: false, error: 'Nguồn Telegram chưa có bài nào được index. Hãy đưa nội dung vào nguồn V4 và kiểm tra index trước khi chuyển Sẵn sàng.' };
+  }
+  return { ok: true, source };
 }
 
 export default async function handler(req, res) {
@@ -69,6 +102,9 @@ export default async function handler(req, res) {
 
       let data;
       if (req.method === 'POST') {
+        if (deliveryMode === 'v4' && base.is_published === true) {
+          return res.status(409).json({ error: 'Khóa V4 mới phải tạo ở trạng thái Chờ lên bài, sau đó gắn nguồn nội dung rồi mới chuyển Sẵn sàng.' });
+        }
         base.id = id || crypto.randomUUID();
         const result = await supabase.from('courses').insert(base).select().single();
         if (result.error) throw result.error;
@@ -100,6 +136,11 @@ export default async function handler(req, res) {
           base.telegram_chat_title = null;
         }
 
+        if (deliveryMode === 'v4' && base.is_published === true) {
+          const readyCheck = await validateV4ReadySource(slug);
+          if (!readyCheck.ok) return res.status(409).json({ error: readyCheck.error });
+        }
+
         const result = await supabase.from('courses').update(base).eq('id', id).select().single();
         if (result.error) throw result.error;
         data = result.data;
@@ -113,6 +154,12 @@ export default async function handler(req, res) {
     if (req.method === 'DELETE') {
       const { id } = req.body || req.query;
       if (!id) return res.status(400).json({ error: 'Thiếu ID khóa học để xóa' });
+      const { data: course, error: courseErr } = await supabase.from('courses').select('slug').eq('id', id).maybeSingle();
+      if (courseErr) throw courseErr;
+      if (course?.slug) {
+        const { error: mappingErr } = await supabase.from('lms_v4_telegram_course_sources').delete().eq('course_slug', course.slug);
+        if (mappingErr) throw mappingErr;
+      }
       const { error } = await supabase.from('courses').delete().eq('id', id);
       if (error) throw error;
       return res.status(200).json({ success: true, message: 'Đã xóa khóa học thành công' });
