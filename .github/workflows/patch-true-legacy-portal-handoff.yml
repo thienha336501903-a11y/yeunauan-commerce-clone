@@ -1,0 +1,42 @@
+name: Patch true legacy portal handoff
+
+on:
+  push:
+    branches:
+      - fix/true-legacy-portal-handoff
+    paths:
+      - .github/workflows/patch-true-legacy-portal-handoff.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/true-legacy-portal-handoff
+          fetch-depth: 0
+      - name: Restore exact legacy LMS checkout redirect
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('index.html')
+          s = p.read_text()
+          old = """          }else{\n            console.log('[Checkout] redirecting to clone LMS portal');\n            window.location.href = targetLmsUrl;\n          }\n"""
+          new = """          }else{\n            console.log('[Checkout] redirecting to original student portal');\n            window.location.href = 'https://yeunauan.live/my-courses';\n          }\n"""
+          if s.count(old) != 1:
+              raise SystemExit(f'Expected exactly one legacy redirect block, found {s.count(old)}')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          git diff --check
+          grep -F "window.location.href = 'https://yeunauan.live/my-courses';" index.html
+      - name: Commit patch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add index.html
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: restore original LMS checkout portal redirect"
+          git push origin HEAD:fix/true-legacy-portal-handoff
