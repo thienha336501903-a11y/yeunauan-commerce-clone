@@ -1,0 +1,44 @@
+name: V4 self-service Preview
+
+on:
+  push:
+    branches:
+      - feat/v4-self-service-course-flow
+    paths:
+      - .github/workflows/preview-v4-self-service.yml
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: team_cAthcmyw4079BDgelX0YjG9i
+      VERCEL_PROJECT_ID: prj_9LIdNafm4JYpYCNA6ujbIlQs2Bh9
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/v4-self-service-course-flow
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Validate branch
+        run: |
+          node --check api/courses.js
+          node --check api/orders.js
+          node --check api/register.js
+          node --check api/v4-sources.js
+          node --check utils/v4-sync-helpers.js
+          node --test tests/*.test.js
+          git diff --check
+      - name: Deploy Preview only
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          test -n "$VERCEL_TOKEN"
+          npm install --global vercel@latest >/dev/null 2>&1
+          mkdir -p .vercel
+          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
+          vercel pull --yes --environment=preview --token="$VERCEL_TOKEN" >/dev/null
+          vercel deploy --yes --token="$VERCEL_TOKEN"
