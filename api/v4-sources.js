@@ -13,6 +13,15 @@ function requireAdmin(req, res) {
   return true;
 }
 
+async function actualIndexedCount(sourceId) {
+  const { count, error } = await supabase
+    .from('tgcloner_source_messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('source_id', sourceId);
+  if (error) throw error;
+  return Number(count || 0);
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
@@ -46,16 +55,22 @@ export default async function handler(req, res) {
         mappedCoursesBySource.set(row.source_id, list);
       }
 
+      const countedSources = await Promise.all((sources || []).map(async source => {
+        const indexedMessageCount = await actualIndexedCount(source.id);
+        return {
+          ...source,
+          indexed_message_count: indexedMessageCount,
+          mappedCourses: mappedCoursesBySource.get(source.id) || [],
+          ready: indexedMessageCount > 0
+        };
+      }));
+
       const current = courseSlug ? (mappings || []).find(row => row.course_slug === courseSlug) || null : null;
       return res.status(200).json({
         success: true,
         courseSlug: courseSlug || null,
         mapping: current,
-        sources: (sources || []).map(source => ({
-          ...source,
-          mappedCourses: mappedCoursesBySource.get(source.id) || [],
-          ready: Number(source.indexed_message_count || 0) > 0
-        }))
+        sources: countedSources
       });
     }
 
@@ -89,7 +104,12 @@ export default async function handler(req, res) {
         .single();
       if (error) throw error;
 
-      return res.status(200).json({ success: true, mapping, source: { ...source, ready: Number(source.indexed_message_count || 0) > 0 } });
+      const indexedMessageCount = await actualIndexedCount(sourceId);
+      return res.status(200).json({
+        success: true,
+        mapping,
+        source: { ...source, indexed_message_count: indexedMessageCount, ready: indexedMessageCount > 0 }
+      });
     }
 
     if (req.method === 'DELETE') {
