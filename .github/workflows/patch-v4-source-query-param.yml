@@ -1,0 +1,51 @@
+name: Patch V4 source query separator
+
+on:
+  push:
+    branches:
+      - fix/v4-source-query-param
+    paths:
+      - .github/workflows/patch-v4-source-query-param.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/v4-source-query-param
+          fetch-depth: 0
+
+      - name: Patch admin source query and add regression check
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('admin.html')
+          s = p.read_text()
+          old = "const query = courseSlug ? ('?courseSlug=' + encodeURIComponent(courseSlug)) : '';"
+          new = "const query = courseSlug ? ('&courseSlug=' + encodeURIComponent(courseSlug)) : '';"
+          if s.count(old) != 1:
+              raise SystemExit(f'expected exactly one old query expression, found {s.count(old)}')
+          p.write_text(s.replace(old, new, 1))
+
+          t = Path('test/v4-source-query-param.test.js')
+          t.parent.mkdir(parents=True, exist_ok=True)
+          t.write_text("""import assert from 'node:assert/strict';\nimport fs from 'node:fs';\nconst html = fs.readFileSync(new URL('../admin.html', import.meta.url), 'utf8');\nassert.match(html, /action=v4-sources' \\+ query/);\nassert.match(html, /courseSlug \\? \\('&courseSlug=' \\+ encodeURIComponent\\(courseSlug\\)\\) : ''/);\nassert.doesNotMatch(html, /courseSlug \\? \\('\\?courseSlug='/);\nconsole.log('V4 source query parameter separator checks passed');\n""")
+
+          wf = Path('.github/workflows/patch-v4-source-query-param.yml')
+          wf.unlink()
+          PY
+
+          node test/v4-source-query-param.test.js
+          git diff --check
+
+      - name: Commit patch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add admin.html test/v4-source-query-param.test.js .github/workflows/patch-v4-source-query-param.yml
+          git commit -m "fix: load V4 sources with course slug"
+          git push origin HEAD:fix/v4-source-query-param
