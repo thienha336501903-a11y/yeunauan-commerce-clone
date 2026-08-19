@@ -1,5 +1,6 @@
 name: V4 self-service Preview
 
+# one-time Preview trigger; remove after QA
 on:
   push:
     branches:
