@@ -1,0 +1,42 @@
+name: Patch V4 self-service UI
+
+on:
+  push:
+    branches:
+      - feat/v4-self-service-course-flow
+    paths:
+      - scripts/patch-v4-self-service.mjs
+      - .github/workflows/patch-v4-self-service.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/v4-self-service-course-flow
+          fetch-depth: 0
+      - name: Apply deterministic UI patch
+        run: node scripts/patch-v4-self-service.mjs
+      - name: Validate server JavaScript
+        run: |
+          node --check api/courses.js
+          node --check api/orders.js
+          node --check api/register.js
+          node --check api/v4-sources.js
+          node --check utils/v4-sync-helpers.js
+          git diff --check
+      - name: Commit patched UI files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add admin.html index.html
+          if git diff --cached --quiet; then
+            echo "No UI changes to commit"
+            exit 0
+          fi
+          git commit -m "feat: add self-service V4 course setup UI"
+          git push origin HEAD:feat/v4-self-service-course-flow
