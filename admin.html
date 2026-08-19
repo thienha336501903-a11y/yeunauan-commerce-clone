@@ -927,7 +927,7 @@
         select.innerHTML = '<option value="">Đang tải nguồn Telegram...</option>';
       }
       try {
-        const query = courseSlug ? ('?courseSlug=' + encodeURIComponent(courseSlug)) : '';
+        const query = courseSlug ? ('&courseSlug=' + encodeURIComponent(courseSlug)) : '';
         const response = await fetch('/api/courses?action=v4-sources' + query, {
           cache: 'no-store',
           headers: { 'X-Admin-Password': currentAdminPassword }
