@@ -1,0 +1,35 @@
+name: Patch V4 source query
+
+on:
+  push:
+    branches:
+      - fix/v4-source-query-params
+    paths:
+      - scripts/patch-v4-source-query.mjs
+      - .github/workflows/patch-v4-source-query.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/v4-source-query-params
+      - name: Patch query separator
+        run: node scripts/patch-v4-source-query.mjs
+      - name: Validate
+        run: |
+          grep -q "'&courseSlug='" admin.html
+          node --test tests/*.test.js
+          git diff --check
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add admin.html
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "fix: build V4 source query with ampersand"
+          git push origin HEAD:fix/v4-source-query-params
