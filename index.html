@@ -353,9 +353,10 @@ document.getElementById('regForm').addEventListener('submit',async(e)=>{
         }else{
           const targetLmsUrl = (window.LMS_PUBLIC_URL || 'https://yeunauan-lms-clone.vercel.app').replace(/\/$/, '');
           if(data.deliveryMode==='v4'){
-            console.log('[Checkout] redirecting to V4 Web entry');
+            console.log('[Checkout] redirecting to V4 course manager');
             const courseSlug=data.course||new URLSearchParams(window.location.search).get('course')||'';
-            window.location.href=targetLmsUrl+'/v4-entry.html?course='+encodeURIComponent(courseSlug);
+            const managerPath=data.managerPath||('/my-courses.html?registered=1&course='+encodeURIComponent(courseSlug));
+            window.location.href=managerPath.startsWith('http')?managerPath:(targetLmsUrl+managerPath);
           }else{
             console.log('[Checkout] redirecting to original student portal');
             window.location.href = 'https://yeunauan.live/my-courses';
