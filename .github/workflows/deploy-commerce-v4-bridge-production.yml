@@ -1,0 +1,49 @@
+name: Deploy merged Commerce V4 bridge to Production
+
+on:
+  push:
+    branches:
+      - feat/commerce-v4-three-mode-hardening-20260823
+    paths:
+      - .github/workflows/deploy-commerce-v4-bridge-production.yml
+
+permissions:
+  contents: read
+
+jobs:
+  production:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: team_cAthcmyw4079BDgelX0YjG9i
+      VERCEL_PROJECT_ID: prj_9LIdNafm4JYpYCNA6ujbIlQs2Bh9
+      MERGED_MAIN_SHA: 0f39716d4bbb1b10555e023ff8529e72e134894c
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.MERGED_MAIN_SHA }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Validate merged main
+        run: |
+          test "$(git rev-parse HEAD)" = "$MERGED_MAIN_SHA"
+          node --check api/courses.js
+          node --check api/orders.js
+          node --check api/register.js
+          node --check api/approve-all.js
+          node --check api/config.js
+          node --check utils/delivery-policy.js
+          node --check utils/v4-sync-helpers.js
+          node --test tests/*.test.js
+          git diff --check
+      - name: Deploy merged main to Production
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          test -n "$VERCEL_TOKEN"
+          npm install --global vercel@59.3.0 >/dev/null 2>&1
+          mkdir -p .vercel
+          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
+          vercel pull --yes --environment=production --token="$VERCEL_TOKEN" >/dev/null
+          vercel build --prod --token="$VERCEL_TOKEN"
+          vercel deploy --prebuilt --prod --yes --token="$VERCEL_TOKEN"
