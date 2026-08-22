@@ -29,9 +29,11 @@ assert.match(orders, /delivery_mode \|\| ''\)\.toLowerCase\(\) === 'v4'/);
 
 const admin = read('admin.html');
 assert.match(admin, /id="v4SourceInput"/);
-assert.match(admin, /Nguồn nội dung V4/);
+assert.match(admin, /Nguồn V4 đã có/);
 assert.match(admin, /\/api\/courses\?action=v4-sources/);
 assert.doesNotMatch(admin, /\/api\/v4-sources/);
-assert.match(admin, /deliveryMode === 'v4' && !v4SourceId/);
+assert.match(admin, /id="v4TelegramPostLinkInput"/);
+assert.match(admin, /continueV4Setup/);
+assert.doesNotMatch(admin, /deliveryMode === 'v4' && !v4SourceId/);
 
 console.log('V4 self-service Commerce flow checks passed');

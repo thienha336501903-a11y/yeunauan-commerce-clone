@@ -1,4 +1,5 @@
 import { supabase } from "../utils/supabase.js";
+import { syncV4EnrollmentToLms } from "../utils/v4-sync-helpers.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -20,30 +21,44 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Thiếu course slug" });
     }
 
-    // Cập nhật tất cả các đơn hàng của khóa học từ "Chờ duyệt" thành "Đã duyệt"
-    // và lấy về danh sách thông tin đơn hàng của học viên vừa được duyệt
-    const { data: updatedOrders, error } = await supabase
+    // Telegram-direct must only be decided by the bot so invite/join state stays
+    // authoritative. Bulk approval is limited to enrollment-based modes.
+    const { data: pendingOrders, error: pendingError } = await supabase
       .from("orders")
-      .update({
-        status: "Đã duyệt",
-        updated_at: new Date().toISOString()
-      })
+      .select("id, customer_email, course_slug, course_title, delivery_mode, status")
       .eq("course_slug", course)
-      .eq("status", "Chờ duyệt")
-      .select("id, customer_email, course_slug");
+      .eq("status", "Chờ duyệt");
 
-    if (error) throw error;
+    if (pendingError) throw pendingError;
+    const enrollmentOrders = (pendingOrders || []).filter(order => order.delivery_mode !== "telegram");
+    const skippedTelegram = (pendingOrders || []).length - enrollmentOrders.length;
+
+    let updatedOrders = [];
+    if (enrollmentOrders.length) {
+      const { data, error } = await supabase
+        .from("orders")
+        .update({ status: "Đã duyệt", updated_at: new Date().toISOString() })
+        .in("id", enrollmentOrders.map(order => order.id))
+        .eq("status", "Chờ duyệt")
+        .select("id, customer_email, course_slug, course_title, delivery_mode");
+      if (error) throw error;
+      updatedOrders = data || [];
+    }
 
     const gmails = (updatedOrders || []).map((o) => o.customer_email).filter(Boolean);
 
     // Đồng bộ quyền học viên sang các hệ thống ngoại vi
     if (updatedOrders && updatedOrders.length > 0) {
       try {
-        const { syncEnrollmentToExternalSystems } = await import("../utils/sync-helpers.js");
         for (const order of updatedOrders) {
           if (!order.customer_email) continue;
-          
-          const syncResults = await syncEnrollmentToExternalSystems(order, "create");
+          let syncResults;
+          if (String(order.delivery_mode || '').toLowerCase() === 'v4') {
+            syncResults = await syncV4EnrollmentToLms(order, "create");
+          } else {
+            const { syncEnrollmentToExternalSystems } = await import("../utils/sync-helpers.js");
+            syncResults = await syncEnrollmentToExternalSystems(order, "create");
+          }
           
           await supabase
             .from("orders")
@@ -62,7 +77,8 @@ export default async function handler(req, res) {
     return res.status(200).json({
       success: true,
       count: gmails.length,
-      gmails
+      gmails,
+      skippedTelegram
     });
   } catch (error) {
     console.error("APPROVE_ALL_ERROR:", error);

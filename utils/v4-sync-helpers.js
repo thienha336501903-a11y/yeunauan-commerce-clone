@@ -47,6 +47,7 @@ async function callLms(payload) {
 export async function syncV4CourseToLms(courseData) {
   return callLms({
     action: 'syncCourse',
+    deliveryMode: 'v4',
     slug: String(courseData.slug || '').trim(),
     title: String(courseData.courseName || courseData.title || '').trim(),
     subtitle: String(courseData.subtitle || '').trim(),
@@ -65,6 +66,8 @@ export async function syncV4EnrollmentToLms(orderData, actionType) {
   return callLms({
     action: actionType === 'create' ? 'syncEnrollment' : 'revokeEnrollment',
     email,
-    courseSlug
+    courseSlug,
+    orderId: String(orderData.id || orderData.source_order_id || '').trim() || null,
+    deliveryMode: 'v4'
   });
 }
