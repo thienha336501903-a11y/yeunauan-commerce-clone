@@ -1,4 +1,5 @@
 import { supabase } from '../utils/supabase.js';
+import { normalizeDeliveryMode } from '../utils/delivery-policy.js';
 
 export default async function handler(req, res) {
   try {
@@ -16,8 +17,10 @@ export default async function handler(req, res) {
 
     const rawData = course.raw_data || {};
     const courseImage = course.image_url || rawData.imageUrl || rawData.posterUrl || rawData.posterImageUrl || rawData.thumbnail || rawData.heroUrl || rawData.heroImageUrl || rawData.coverUrl || '';
-    const normalizedDeliveryMode = String(course.delivery_mode || '').trim().toLowerCase();
-    const deliveryMode = ['lms', 'v4', 'telegram'].includes(normalizedDeliveryMode) ? normalizedDeliveryMode : 'lms';
+    const deliveryMode = normalizeDeliveryMode(course.delivery_mode);
+    if (deliveryMode === 'v4' && course.is_published !== true && rawData.v4SellBeforePublishAcknowledged !== true) {
+      return res.status(404).json({ error: `Khóa học V4 chưa sẵn sàng với slug: ${courseSlug}` });
+    }
 
     return res.status(200).json({
       course: course.slug,

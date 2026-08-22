@@ -201,7 +201,7 @@
               <label class="relative inline-flex items-center cursor-pointer">
                 <input type="checkbox" id="courseActiveInput" checked class="sr-only peer">
                 <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-600"></div>
-                <span class="ml-3 text-sm font-medium text-slate-600">Cho phép học viên đăng ký</span>
+                <span class="ml-3 text-sm font-medium text-slate-600">Đang bán trên Storefront</span>
               </label>
             </div>
           </div>
@@ -226,17 +226,26 @@
         <div class="border-t border-slate-100 pt-6">
           <h4 class="text-lg font-bold text-slate-900 mb-4">Hình thức học</h4>
           <select id="courseDeliveryModeInput" onchange="toggleTelegramFields()" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-pink-500 transition text-sm">
-            <option value="lms">Học trên hệ thống LMS</option>
-            <option value="v4">Học trên V4 Web</option>
-            <option value="telegram">Học trên Telegram</option>
+            <option value="lms">Học trên LMS cũ</option>
+            <option value="telegram">Nhận bài qua Telegram</option>
+            <option value="v4">Học trên LMS V4</option>
           </select>
 
           <div id="v4CourseFields" class="hidden mt-4 space-y-3">
             <div class="rounded-2xl border border-violet-200 bg-violet-50 p-4">
+              <label class="block text-xs uppercase font-extrabold text-violet-700 tracking-wider">Link một bài trong kênh Telegram</label>
+              <p class="text-[11px] text-slate-500 mt-1 mb-2">Chỉ cần dán link bài. Cloner sẽ tự nhận kênh; không cần nhập Chat ID.</p>
+              <div class="flex flex-col sm:flex-row gap-2">
+                <input id="v4TelegramPostLinkInput" type="url" placeholder="https://t.me/c/.../123 hoặc https://t.me/tenkenh/123" class="flex-1 w-full px-4 py-3 bg-white border border-violet-200 rounded-xl outline-none focus:border-violet-500 transition text-sm">
+                <button type="button" onclick="continueV4Setup()" class="px-4 py-3 bg-violet-600 text-white rounded-xl text-sm font-black hover:bg-violet-700 transition">Tự nhận kênh / Thiết lập V4</button>
+              </div>
+              <p id="v4SetupHelp" class="text-[11px] text-violet-700 mt-2">Khóa sẽ được lưu Draft và Tắt bán trước khi chuyển sang V4 Wizard.</p>
+            </div>
+            <div class="rounded-2xl border border-violet-200 bg-violet-50 p-4">
               <div class="flex items-center justify-between gap-3 mb-2">
                 <div>
-                  <label class="block text-xs uppercase font-extrabold text-violet-700 tracking-wider">Nguồn nội dung V4</label>
-                  <p class="text-[11px] text-slate-500 mt-1">Chọn kênh Telegram đã đăng ký/index. Mỗi khóa V4 có thể dùng một nguồn riêng.</p>
+                  <label class="block text-xs uppercase font-extrabold text-violet-700 tracking-wider">Nguồn V4 đã có (tùy chọn nâng cao)</label>
+                  <p class="text-[11px] text-slate-500 mt-1">Có thể chọn lại nguồn đã đăng ký thay vì dán link bài mới.</p>
                 </div>
                 <button type="button" onclick="loadV4Sources(true)" class="shrink-0 px-3 py-2 bg-white border border-violet-200 text-violet-700 rounded-xl text-[11px] font-black hover:bg-violet-100 transition">Làm mới</button>
               </div>
@@ -245,7 +254,7 @@
               </select>
               <p id="v4SourceHelp" class="text-[11px] text-slate-500 mt-2">Nguồn phải có ít nhất 1 bài đã index trước khi chuyển khóa sang Sẵn sàng.</p>
               <div class="mt-3 flex flex-wrap gap-2">
-                <a href="https://telegram-channel-cloner.vercel.app/" target="_blank" rel="noopener" class="inline-flex px-3 py-2 bg-violet-600 text-white rounded-xl text-[11px] font-black hover:bg-violet-700 transition">Mở quản trị nguồn Telegram</a>
+                <a href="https://telegram-channel-cloner.vercel.app/" target="_blank" rel="noopener" class="inline-flex px-3 py-2 bg-white border border-violet-200 text-violet-700 rounded-xl text-[11px] font-black hover:bg-violet-100 transition">Mở quản trị nguồn nâng cao</a>
                 <span class="text-[10px] text-slate-400 self-center">Kênh cũ vẫn tiếp tục index live dù không còn là MASTER.</span>
               </div>
             </div>
@@ -354,6 +363,40 @@
     let allCourses = [];
     let currentAdminPassword = "";
     let v4Sources = [];
+    let v4ContinueAfterSave = false;
+    let courseSlugTouched = false;
+    const LMS_V4_WIZARD_URL = 'https://yeunauan-lms-clone.vercel.app/v4-course-wizard.html';
+
+    function slugifyCourse(value) {
+      return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'd').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
+    }
+
+    function v4WizardUrl() {
+      const slug = document.getElementById('courseSlugInput')?.value.trim() || '';
+      const title = document.getElementById('courseTitleInput')?.value.trim() || '';
+      const sourceRef = document.getElementById('v4TelegramPostLinkInput')?.value.trim() || '';
+      const url = new URL(LMS_V4_WIZARD_URL);
+      url.searchParams.set('course', slug);
+      url.searchParams.set('title', title);
+      if (sourceRef) url.searchParams.set('sourceRef', sourceRef);
+      url.searchParams.set('returnTo', location.origin + '/admin.html?course=' + encodeURIComponent(slug));
+      return url.toString();
+    }
+
+    function continueV4Setup() {
+      if ((document.getElementById('courseDeliveryModeInput')?.value || '') !== 'v4') return;
+      const sourceRef = document.getElementById('v4TelegramPostLinkInput')?.value.trim() || '';
+      if (!sourceRef && !document.getElementById('v4SourceInput')?.value) {
+        alert('Hãy dán link một bài Telegram hoặc chọn nguồn V4 đã có.');
+        return;
+      }
+      if (!document.getElementById('courseId')?.value) {
+        v4ContinueAfterSave = true;
+        document.getElementById('courseForm').requestSubmit();
+        return;
+      }
+      location.href = v4WizardUrl();
+    }
 
     // 1. SHOW TOAST NOTIFICATION
     function showToast(text) {
@@ -534,7 +577,11 @@
                 <p class="text-slate-500 text-xs line-clamp-2 mt-1 mb-2">
                   ${course.description || "Chưa có mô tả ngắn."}
                 </p>
-                <div class="mb-4"><span class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${course.deliveryMode === 'v4' ? 'bg-violet-100 text-violet-700' : course.deliveryMode === 'telegram' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-600'}">${course.deliveryMode === 'v4' ? 'V4 WEB' : course.deliveryMode === 'telegram' ? 'TELEGRAM' : 'LMS'}</span></div>
+                <div class="mb-4 flex flex-wrap gap-2">
+                  <span class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${course.deliveryMode === 'v4' ? 'bg-violet-100 text-violet-700' : course.deliveryMode === 'telegram' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-600'}">${course.deliveryMode === 'v4' ? 'LMS V4' : course.deliveryMode === 'telegram' ? 'TELEGRAM' : 'LMS CŨ'}</span>
+                  ${course.deliveryMode === 'v4' ? `<span class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black ${isPublished ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">Nội dung: ${isPublished ? 'Đã Publish' : 'Draft'}</span>` : ''}
+                  <span class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black ${active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'}">Bán: ${active ? 'Đang bán' : 'Đã tắt'}</span>
+                </div>
 
                 <!-- Trạng thái đồng bộ -->
                 <div class="mb-4 flex flex-wrap gap-2 text-[9px] uppercase font-black tracking-wider">
@@ -1019,6 +1066,9 @@
       if (chatId) chatId.required = false;
       updateTelegramConnectUi();
       if (mode === 'v4') loadV4Sources(false);
+      if (mode === 'v4' && !document.getElementById('courseId')?.value) {
+        document.getElementById('courseActiveInput').checked = false;
+      }
     }
 
     let telegramConnectPollTimer = null;
@@ -1121,6 +1171,8 @@
         document.getElementById("telegramChatIdInput").value = course.telegramChatId || "";
         document.getElementById("telegramChatTitleInput").value = course.telegramChatTitle || "";
         document.getElementById("telegramInviteTtlInput").value = course.telegramInviteTtlHours || 72;
+        document.getElementById("v4TelegramPostLinkInput").value = "";
+        courseSlugTouched = true;
         toggleTelegramFields();
         updateTelegramConnectUi();
         
@@ -1142,6 +1194,8 @@
         document.getElementById("telegramChatIdInput").value = "";
         document.getElementById("telegramChatTitleInput").value = "";
         document.getElementById("telegramInviteTtlInput").value = 72;
+        document.getElementById("v4TelegramPostLinkInput").value = "";
+        courseSlugTouched = false;
         toggleTelegramFields();
         updateTelegramConnectUi();
 
@@ -1196,9 +1250,11 @@
       const transferNote = document.getElementById("transferNoteInput").value.trim();
       const qrImageUrl = document.getElementById("qrImageUrlInput").value.trim();
 
-      if (deliveryMode === 'v4' && !v4SourceId) {
-        alert('Vui lòng chọn Nguồn nội dung V4 trước khi lưu khóa học. Nếu chưa có nguồn, mở trang quản trị Telegram để đăng ký/index kênh trước.');
-        return;
+      const currentCourse = allCourses.find(course => course.id === id);
+      let allowSellingUnpublishedV4 = false;
+      if (deliveryMode === 'v4' && active && currentCourse?.is_published !== true) {
+        allowSellingUnpublishedV4 = confirm('Nội dung V4 chưa Publish. Bạn có chủ đích vẫn bật bán khóa này không?\nKhuyến nghị chọn Hủy và chỉ bật bán sau khi V4 báo Sẵn sàng.');
+        if (!allowSellingUnpublishedV4) return;
       }
 
       const payload = {
@@ -1220,7 +1276,8 @@
         bankAccount,
         bankOwner,
         transferNote,
-        qrImageUrl
+        qrImageUrl,
+        allowSellingUnpublishedV4
       };
 
       const method = id ? "PUT" : "POST";
@@ -1242,7 +1299,7 @@
           const savedCourseId = data?.data?.id || id;
           if (savedCourseId) document.getElementById("courseId").value = savedCourseId;
 
-          if (deliveryMode === 'v4') {
+          if (deliveryMode === 'v4' && v4SourceId) {
             const mappingResponse = await fetch('/api/courses?action=v4-sources', {
               method: 'POST',
               headers: {
@@ -1258,7 +1315,7 @@
               await loadV4Sources(true);
               return;
             }
-          } else if (id) {
+          } else if (deliveryMode !== 'v4' && id) {
             fetch('/api/courses?action=v4-sources', {
               method: 'DELETE',
               headers: {
@@ -1269,7 +1326,10 @@
             }).catch(() => {});
           }
 
-          if (deliveryMode === 'telegram' && !telegramChatId && savedCourseId) {
+          if (deliveryMode === 'v4' && (v4ContinueAfterSave || document.getElementById('v4TelegramPostLinkInput')?.value.trim())) {
+            v4ContinueAfterSave = false;
+            location.href = v4WizardUrl();
+          } else if (deliveryMode === 'telegram' && !telegramChatId && savedCourseId) {
             showToast(id ? "Đã cập nhật khóa. Bây giờ hãy kết nối Telegram." : "Đã tạo khóa. Bây giờ hãy kết nối Telegram.");
             updateTelegramConnectUi();
             await loadCourses();
@@ -1292,6 +1352,11 @@
     async function toggleCourseActive(id, currentStatus) {
       const course = allCourses.find(c => c.id === id);
       if (!course) return;
+      let allowSellingUnpublishedV4 = false;
+      if (!currentStatus && course.deliveryMode === 'v4' && course.is_published !== true) {
+        allowSellingUnpublishedV4 = confirm('Nội dung V4 chưa Publish. Bạn có chủ đích vẫn bật bán khóa này không?');
+        if (!allowSellingUnpublishedV4) return;
+      }
 
       const payload = {
         id: course.id,
@@ -1313,7 +1378,8 @@
         bankAccount: course.bankAccount,
         bankOwner: course.bankOwner,
         transferNote: course.transferNote,
-        qrImageUrl: course.qrImageUrl
+        qrImageUrl: course.qrImageUrl,
+        allowSellingUnpublishedV4
       };
 
       showLoader("Đang cập nhật trạng thái hoạt động...");
@@ -1550,6 +1616,18 @@
     if (priceInput) {
       priceInput.addEventListener("blur", function() {
         this.value = formatCurrencyVN(this.value);
+      });
+    }
+
+    const titleInput = document.getElementById('courseTitleInput');
+    const slugInput = document.getElementById('courseSlugInput');
+    if (titleInput && slugInput) {
+      titleInput.addEventListener('input', () => {
+        if (!courseSlugTouched) slugInput.value = slugifyCourse(titleInput.value);
+      });
+      slugInput.addEventListener('input', () => {
+        courseSlugTouched = true;
+        slugInput.value = slugifyCourse(slugInput.value);
       });
     }
   </script>

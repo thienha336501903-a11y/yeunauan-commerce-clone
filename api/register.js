@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { v2 as cloudinary } from 'cloudinary';
 import { supabase } from '../utils/supabase.js';
 import { createOrderInvite } from '../utils/telegram.js';
+import { deliveryPolicy, normalizeDeliveryMode } from '../utils/delivery-policy.js';
 
 const MAX_BILL_BYTES = 5 * 1024 * 1024;
 const ALLOWED_BILL_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -33,23 +34,26 @@ export default async function handler(req, res) {
 
     const { data: courseRec, error: courseError } = await supabase
       .from('courses')
-      .select('id, image_url, title, active, delivery_mode, telegram_chat_id, telegram_invite_ttl_hours')
+      .select('id, image_url, title, active, is_published, raw_data, delivery_mode, telegram_chat_id, telegram_invite_ttl_hours')
       .eq('slug', courseSlug)
       .maybeSingle();
     if (courseError) throw courseError;
     if (!courseRec || courseRec.active === false) return res.status(404).json({ error: 'Khóa học không tồn tại hoặc chưa mở đăng ký' });
 
-    const normalizedDeliveryMode = String(courseRec.delivery_mode || '').trim().toLowerCase();
-    const deliveryMode = ['lms', 'v4', 'telegram'].includes(normalizedDeliveryMode) ? normalizedDeliveryMode : 'lms';
+    const deliveryMode = normalizeDeliveryMode(courseRec.delivery_mode);
+    const policy = deliveryPolicy(deliveryMode);
+    if (deliveryMode === 'v4' && courseRec.is_published !== true && courseRec.raw_data?.v4SellBeforePublishAcknowledged !== true) {
+      return res.status(409).json({ error: 'Khóa học V4 chưa sẵn sàng nội dung nên chưa thể nhận đăng ký.' });
+    }
     const telegramChatId = deliveryMode === 'telegram' ? String(courseRec.telegram_chat_id || '').trim() : '';
     if (deliveryMode === 'telegram' && !telegramChatId) {
       return res.status(409).json({ error: 'Khóa học Telegram đang chờ Admin kết nối group/channel. Vui lòng thử lại sau.' });
     }
 
-    if (deliveryMode === 'telegram') {
+    if (policy.requiresTelegramUsername) {
       if (!cleanTelegramNick) return res.status(400).json({ error: 'Vui lòng nhập nick Telegram của bạn' });
       if (!isValidTelegramNick(cleanTelegramNick)) return res.status(400).json({ error: 'Nick Telegram phải từ 2 đến 64 ký tự' });
-    } else {
+    } else if (policy.requiresEmail) {
       if (!cleanEmail) return res.status(400).json({ error: 'Vui lòng nhập Gmail của bạn' });
       if (!isValidEmail(cleanEmail)) return res.status(400).json({ error: 'Địa chỉ email không hợp lệ' });
     }

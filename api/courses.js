@@ -1,12 +1,13 @@
 import crypto from 'crypto';
 import { supabase } from '../utils/supabase.js';
 import { syncV4CourseToLms } from '../utils/v4-sync-helpers.js';
+import { normalizeDeliveryMode } from '../utils/delivery-policy.js';
 
 const normalizeExpectedStartDate = value => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim()) ? String(value).trim() : null;
 const validDateInput = value => String(value || '').trim() === '' || /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
 const validSlug = value => /^[a-z0-9_-]+$/.test(String(value || '').trim());
 const validUuid = value => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '').trim());
-const mode = value => { const normalized = String(value || '').trim().toLowerCase(); return ['lms', 'v4', 'telegram'].includes(normalized) ? normalized : 'lms'; };
+const mode = normalizeDeliveryMode;
 const ttl = value => Math.min(720, Math.max(1, Number.parseInt(value, 10) || 72));
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 
@@ -64,15 +65,20 @@ async function handleV4Sources(req, res) {
     if (!validSlug(courseSlug)) return res.status(400).json({ error: 'Slug khóa học không hợp lệ' });
     if (!validUuid(sourceId)) return res.status(400).json({ error: 'Nguồn Telegram không hợp lệ' });
 
-    const [{ data: course, error: courseError }, { data: source, error: sourceError }] = await Promise.all([
-      supabase.from('courses').select('id,slug,title,delivery_mode').eq('slug', courseSlug).maybeSingle(),
+    const [{ data: course, error: courseError }, { data: source, error: sourceError }, { data: currentMapping, error: currentMappingError }] = await Promise.all([
+      supabase.from('courses').select('id,slug,title,delivery_mode,is_published').eq('slug', courseSlug).maybeSingle(),
       supabase.from('tgcloner_sources').select('id,chat_id,title,username,active,indexed_at,indexed_message_count').eq('id', sourceId).maybeSingle()
+      ,supabase.from('lms_v4_telegram_course_sources').select('source_id').eq('course_slug', courseSlug).maybeSingle()
     ]);
     if (courseError) throw courseError;
     if (sourceError) throw sourceError;
+    if (currentMappingError) throw currentMappingError;
     if (!course) return res.status(404).json({ error: 'Không tìm thấy khóa học' });
     if (String(course.delivery_mode || '').toLowerCase() !== 'v4') return res.status(409).json({ error: 'Chỉ khóa Học trên V4 Web mới được gắn nguồn V4' });
     if (!source) return res.status(404).json({ error: 'Không tìm thấy nguồn Telegram đã đăng ký' });
+    if (course.is_published === true && currentMapping?.source_id !== sourceId) {
+      return res.status(409).json({ error: 'Hãy chuyển khóa V4 về Draft trước khi đổi nguồn nội dung.' });
+    }
 
     const { data: mapping, error } = await supabase
       .from('lms_v4_telegram_course_sources')
@@ -88,6 +94,17 @@ async function handleV4Sources(req, res) {
   if (req.method === 'DELETE') {
     const courseSlug = String(req.body?.courseSlug || req.query?.courseSlug || '').trim();
     if (!validSlug(courseSlug)) return res.status(400).json({ error: 'Slug khóa học không hợp lệ' });
+    const [{ data: course, error: courseError }, { count: orderCount, error: orderError }, { count: enrollmentCount, error: enrollmentError }] = await Promise.all([
+      supabase.from('courses').select('is_published').eq('slug', courseSlug).maybeSingle(),
+      supabase.from('orders').select('id', { count: 'exact', head: true }).eq('course_slug', courseSlug),
+      supabase.from('student_enrollments').select('id', { count: 'exact', head: true }).eq('course_slug', courseSlug)
+    ]);
+    if (courseError) throw courseError;
+    if (orderError) throw orderError;
+    if (enrollmentError) throw enrollmentError;
+    if (course?.is_published === true || Number(orderCount || 0) > 0 || Number(enrollmentCount || 0) > 0) {
+      return res.status(409).json({ error: 'Không thể tháo nguồn khi khóa đã Publish hoặc đang có đơn/enrollment.' });
+    }
     const { error } = await supabase.from('lms_v4_telegram_course_sources').delete().eq('course_slug', courseSlug);
     if (error) throw error;
     return res.status(200).json({ success: true });
@@ -182,6 +199,10 @@ export default async function handler(req, res) {
       let deliveryMode = mode(body.deliveryMode || body.delivery_mode);
       const telegramChatId = String(body.telegramChatId || body.telegram_chat_id || '').trim();
 
+      const rawDataPatch = {};
+      for (const key of ['bankName', 'bankAccount', 'bankOwner', 'transferNote', 'qrImageUrl']) {
+        if (hasOwn(body, key)) rawDataPatch[key] = String(body[key] || '').trim();
+      }
       const base = {
         slug, title: courseName, price: body.price, image_url: String(body.imageUrl || '').trim(), expected_start_date: normalizeExpectedStartDate(body.expected_start_date),
         active: body.active !== undefined ? body.active : true, sort_order: body.sort_order !== undefined ? Number.parseInt(body.sort_order, 10) || 0 : 0,
@@ -189,7 +210,7 @@ export default async function handler(req, res) {
         telegram_chat_id: deliveryMode === 'telegram' ? telegramChatId || null : null,
         telegram_chat_title: deliveryMode === 'telegram' ? String(body.telegramChatTitle || body.telegram_chat_title || '').trim() || null : null,
         telegram_invite_ttl_hours: ttl(body.telegramInviteTtlHours || body.telegram_invite_ttl_hours),
-        raw_data: { bankName: body.bankName || '', bankAccount: body.bankAccount || '', bankOwner: body.bankOwner || '', transferNote: body.transferNote || '', qrImageUrl: body.qrImageUrl || '' }
+        raw_data: rawDataPatch
       };
       if (body.is_published !== undefined) base.is_published = body.is_published === true;
 
@@ -197,6 +218,12 @@ export default async function handler(req, res) {
       if (req.method === 'POST') {
         if (deliveryMode === 'v4' && base.is_published === true) {
           return res.status(409).json({ error: 'Khóa V4 mới phải tạo ở trạng thái Chờ lên bài, sau đó gắn nguồn nội dung rồi mới chuyển Sẵn sàng.' });
+        }
+        if (deliveryMode === 'v4' && base.active === true && body.allowSellingUnpublishedV4 !== true) {
+          return res.status(409).json({ error: 'Khóa V4 mới phải để Tắt bán cho đến khi nội dung đã Publish.' });
+        }
+        if (deliveryMode === 'v4') {
+          base.raw_data.v4SellBeforePublishAcknowledged = base.active === true && body.allowSellingUnpublishedV4 === true;
         }
         base.id = id || crypto.randomUUID();
         const result = await supabase.from('courses').insert(base).select().single();
@@ -206,7 +233,7 @@ export default async function handler(req, res) {
         if (!id) return res.status(400).json({ error: 'Thiếu ID khóa học để cập nhật' });
         const { data: existing, error: existingErr } = await supabase
           .from('courses')
-          .select('image_url, raw_data, expected_start_date, delivery_mode, telegram_chat_id, telegram_chat_title, telegram_invite_ttl_hours')
+          .select('slug,image_url,raw_data,expected_start_date,delivery_mode,telegram_chat_id,telegram_chat_title,telegram_invite_ttl_hours,is_published,active')
           .eq('id', id)
           .maybeSingle();
         if (existingErr) throw existingErr;
@@ -216,6 +243,23 @@ export default async function handler(req, res) {
           deliveryMode = mode(existing.delivery_mode);
           base.delivery_mode = deliveryMode;
         }
+
+        const slugChanged = existing.slug !== slug;
+        const modeChanged = mode(existing.delivery_mode) !== deliveryMode;
+        if (slugChanged || modeChanged) {
+          const [{ count: orderCount, error: orderError }, { count: enrollmentCount, error: enrollmentError }, { count: mappingCount, error: mappingError }] = await Promise.all([
+            supabase.from('orders').select('id', { count: 'exact', head: true }).eq('course_slug', existing.slug),
+            supabase.from('student_enrollments').select('id', { count: 'exact', head: true }).eq('course_slug', existing.slug),
+            supabase.from('lms_v4_telegram_course_sources').select('source_id', { count: 'exact', head: true }).eq('course_slug', existing.slug)
+          ]);
+          if (orderError) throw orderError;
+          if (enrollmentError) throw enrollmentError;
+          if (mappingError) throw mappingError;
+          if (existing.is_published === true || Number(orderCount || 0) || Number(enrollmentCount || 0) || Number(mappingCount || 0)) {
+            return res.status(409).json({ error: 'Không thể đổi slug/hình thức học khi khóa đã Publish hoặc đang có đơn, enrollment hay nguồn V4.' });
+          }
+        }
+
         base.image_url = base.image_url || existing.image_url || '';
         base.raw_data = { ...(existing.raw_data || {}), ...base.raw_data };
         if (!hasOwn(body, 'expected_start_date')) delete base.expected_start_date;
@@ -233,6 +277,15 @@ export default async function handler(req, res) {
           const readyCheck = await validateV4ReadySource(slug);
           if (!readyCheck.ok) return res.status(409).json({ error: readyCheck.error });
         }
+        const effectivePublished = hasOwn(base, 'is_published') ? base.is_published : existing.is_published === true;
+        if (deliveryMode === 'v4' && base.active === true && !effectivePublished && body.allowSellingUnpublishedV4 !== true) {
+          return res.status(409).json({ error: 'Không thể bật bán khóa V4 khi nội dung chưa Publish.' });
+        }
+        if (deliveryMode === 'v4') {
+          base.raw_data.v4SellBeforePublishAcknowledged = base.active === true && !effectivePublished && body.allowSellingUnpublishedV4 === true;
+        } else {
+          delete base.raw_data.v4SellBeforePublishAcknowledged;
+        }
 
         const result = await supabase.from('courses').update(base).eq('id', id).select().single();
         if (result.error) throw result.error;
@@ -247,11 +300,21 @@ export default async function handler(req, res) {
     if (req.method === 'DELETE') {
       const { id } = req.body || req.query;
       if (!id) return res.status(400).json({ error: 'Thiếu ID khóa học để xóa' });
-      const { data: course, error: courseErr } = await supabase.from('courses').select('slug').eq('id', id).maybeSingle();
+      const { data: course, error: courseErr } = await supabase.from('courses').select('slug,delivery_mode').eq('id', id).maybeSingle();
       if (courseErr) throw courseErr;
-      if (course?.slug) {
-        const { error: mappingErr } = await supabase.from('lms_v4_telegram_course_sources').delete().eq('course_slug', course.slug);
-        if (mappingErr) throw mappingErr;
+      if (!course) return res.status(404).json({ error: 'Không tìm thấy khóa học' });
+      const [{ count: orderCount, error: orderErr }, { count: enrollmentCount, error: enrollmentErr }, { count: mappingCount, error: mappingErr }] = await Promise.all([
+        supabase.from('orders').select('id', { count: 'exact', head: true }).eq('course_slug', course.slug),
+        supabase.from('student_enrollments').select('id', { count: 'exact', head: true }).eq('course_slug', course.slug),
+        supabase.from('lms_v4_telegram_course_sources').select('source_id', { count: 'exact', head: true }).eq('course_slug', course.slug)
+      ]);
+      if (orderErr) throw orderErr;
+      if (enrollmentErr) throw enrollmentErr;
+      if (mappingErr) throw mappingErr;
+      if (Number(orderCount || 0) || Number(enrollmentCount || 0) || Number(mappingCount || 0)) {
+        return res.status(409).json({
+          error: `Không thể xóa khóa đang có liên kết dữ liệu (đơn: ${Number(orderCount || 0)}, enrollment: ${Number(enrollmentCount || 0)}, nguồn V4: ${Number(mappingCount || 0)}).`
+        });
       }
       const { error } = await supabase.from('courses').delete().eq('id', id);
       if (error) throw error;

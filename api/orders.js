@@ -1,6 +1,8 @@
 import { supabase } from '../utils/supabase.js';
 import { syncV4EnrollmentToLms } from '../utils/v4-sync-helpers.js';
 
+const VALID_ORDER_STATUSES = new Set(['Chờ duyệt', 'Đã duyệt', 'Từ chối']);
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, OPTIONS');
@@ -36,6 +38,9 @@ export default async function handler(req, res) {
       const { data: existingOrder, error: fetchErr } = await supabase.from('orders').select('*').eq('id', id).maybeSingle();
       if (fetchErr) throw fetchErr;
       if (!existingOrder) return res.status(404).json({ error: 'Không tìm thấy đơn hàng' });
+      if (status !== undefined && !VALID_ORDER_STATUSES.has(status)) {
+        return res.status(400).json({ error: 'Trạng thái đơn hàng không hợp lệ' });
+      }
 
       if (action === 'resync') {
         if (existingOrder.delivery_mode === 'telegram') {
