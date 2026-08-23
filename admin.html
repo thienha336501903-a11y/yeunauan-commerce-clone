@@ -278,9 +278,9 @@
                 <button type="button" onclick="refreshV4WorkflowStatus()" class="shrink-0 px-3 py-2 bg-white border border-emerald-200 text-emerald-800 rounded-xl text-[11px] font-black hover:bg-emerald-100 transition">Kiểm tra lại</button>
               </div>
               <div class="grid sm:grid-cols-3 gap-2 mt-3 text-[11px]">
-                <div id="v4WorkflowSource" class="rounded-xl bg-white border border-emerald-100 p-3"><b>1. Nguồn</b><br>Chưa đăng ký</div>
-                <div id="v4WorkflowReader" class="rounded-xl bg-white border border-emerald-100 p-3"><b>2. Nội dung</b><br>Chưa import</div>
-                <div id="v4WorkflowPreflight" class="rounded-xl bg-white border border-emerald-100 p-3"><b>3. Phát hành</b><br>Chưa kiểm tra</div>
+                <div id="v4WorkflowSource" class="rounded-xl bg-white border border-emerald-100 p-3"><b>Nguồn Telegram</b><br>Chưa đăng ký</div>
+                <div id="v4WorkflowReader" class="rounded-xl bg-white border border-emerald-100 p-3"><b>Nội dung Reader</b><br>Chưa import</div>
+                <div id="v4WorkflowPreflight" class="rounded-xl bg-white border border-emerald-100 p-3"><b>Trạng thái Publish</b><br>Chưa kiểm tra</div>
               </div>
               <div class="flex flex-col sm:flex-row gap-2 mt-3">
                 <button type="button" id="v4PreflightButton" onclick="runUnifiedV4Preflight()" class="flex-1 px-4 py-3 bg-white border border-emerald-300 text-emerald-800 rounded-xl text-sm font-black hover:bg-emerald-100 transition">Kiểm tra trước phát hành</button>
@@ -496,7 +496,7 @@
       const preflightReady = Boolean(published || v4LastPreflight?.ready);
       const selling = Boolean(published && document.getElementById('courseActiveInput')?.checked);
 
-      paintV4Step(1, informationComplete ? 'complete' : 'active', informationComplete ? 'Đã lưu Draft' : fieldsReady ? 'Hãy lưu Draft' : 'Nhập đủ thông tin');
+      paintV4Step(1, informationComplete ? 'complete' : 'active', informationComplete ? 'Đã lưu thông tin' : fieldsReady ? 'Hãy lưu Draft' : 'Nhập đủ thông tin');
       paintV4Step(2, contentReady ? 'complete' : informationComplete ? 'active' : 'pending', contentReady ? messageCount + ' bài sẵn sàng' : informationComplete ? 'Dán link Telegram' : 'Chờ bước 1');
       paintV4Step(3, published ? 'complete' : contentReady ? 'active' : 'pending', published ? 'Đã Publish' : preflightReady ? 'Sẵn sàng Publish' : contentReady ? 'Chạy Preflight' : 'Chờ nội dung');
       paintV4Step(4, selling ? 'complete' : published ? 'active' : 'pending', selling ? 'Đang bán' : published ? 'Có thể bật bán' : 'Chờ Publish');
@@ -1165,9 +1165,9 @@
       const details = document.getElementById('v4PreflightDetails');
       const publish = document.getElementById('v4PublishButton');
       if (status) status.innerText = message;
-      if (source) source.innerHTML = '<b>1. Nguồn</b><br>Chưa đăng ký';
-      if (reader) reader.innerHTML = '<b>2. Nội dung</b><br>Chưa import';
-      if (preflight) preflight.innerHTML = '<b>3. Phát hành</b><br>Chưa kiểm tra';
+      if (source) source.innerHTML = '<b>Nguồn Telegram</b><br>Chưa đăng ký';
+      if (reader) reader.innerHTML = '<b>Nội dung Reader</b><br>Chưa import';
+      if (preflight) preflight.innerHTML = '<b>Trạng thái Publish</b><br>Chưa kiểm tra';
       if (details) {
         details.classList.add('hidden');
         details.innerHTML = '';
@@ -1185,7 +1185,7 @@
       const source = data?.source || null;
       const reader = data?.readerJob || null;
       const count = Number(source?.actualMessageCount || 0);
-      if (sourceBox) sourceBox.innerHTML = '<b>1. Nguồn</b><br>' + (source
+      if (sourceBox) sourceBox.innerHTML = '<b>Nguồn Telegram</b><br>' + (source
         ? '✓ ' + escapeAttr(source.title || source.username || 'Telegram')
         : '⚠ Chưa gắn nguồn');
       if (readerBox) {
@@ -1194,9 +1194,9 @@
           : reader?.status
             ? 'Đang xử lý: ' + escapeAttr(reader.status)
             : 'Chờ Reader import';
-        readerBox.innerHTML = '<b>2. Nội dung</b><br>' + readerText;
+        readerBox.innerHTML = '<b>Nội dung Reader</b><br>' + readerText;
       }
-      if (publishBox) publishBox.innerHTML = '<b>3. Phát hành</b><br>' + (data?.course?.is_published ? '✓ Đã Publish' : 'Draft · chưa Publish');
+      if (publishBox) publishBox.innerHTML = '<b>Trạng thái Publish</b><br>' + (data?.course?.is_published ? '✓ Đã Publish' : 'Draft · chưa Publish');
       if (status) {
         status.innerText = data?.course?.is_published
           ? 'Nội dung V4 đã Publish. Có thể bật bán và lưu khóa.'
@@ -1232,7 +1232,7 @@
       const checks = Array.isArray(data?.checks) ? data.checks : [];
       const blockers = Number(data?.summary?.blockers || 0);
       const warnings = Number(data?.summary?.warnings || 0);
-      if (box) box.innerHTML = '<b>3. Phát hành</b><br>' + (data?.ready ? '✓ Sẵn sàng' : '⚠ ' + blockers + ' mục chặn');
+      if (box) box.innerHTML = '<b>Trạng thái Publish</b><br>' + (data?.ready ? '✓ Sẵn sàng' : '⚠ ' + blockers + ' mục chặn');
       if (publish) publish.disabled = !data?.ready;
       if (details) {
         details.classList.remove('hidden');
