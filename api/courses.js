@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { supabase } from '../utils/supabase.js';
 import { syncV4CourseToLms } from '../utils/v4-sync-helpers.js';
 import { normalizeDeliveryMode } from '../utils/delivery-policy.js';
+import { handleV4Workflow } from '../utils/v4-workflow.js';
 
 const normalizeExpectedStartDate = value => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim()) ? String(value).trim() : null;
 const validDateInput = value => String(value || '').trim() === '' || /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
@@ -170,6 +171,7 @@ export default async function handler(req, res) {
   try {
     const requestAction = String(req.query?.action || '').trim().toLowerCase();
     if (requestAction === 'v4-sources') return await handleV4Sources(req, res);
+    if (requestAction === 'v4-workflow') return await handleV4Workflow(req, res);
 
     if (req.method === 'GET') {
       const { data: courses, error } = await supabase.from('courses').select('*').order('sort_order', { ascending: true }).order('created_at', { ascending: false });
