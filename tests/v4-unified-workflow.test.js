@@ -46,3 +46,22 @@ test('Commerce admin keeps the complete V4 setup in one modal', () => {
   assert.doesNotMatch(admin, /v4-course-wizard\.html/);
   assert.doesNotMatch(admin, /location\.href\s*=\s*v4WizardUrl/);
 });
+
+test('Commerce admin explains the V4 workflow as four numbered steps', () => {
+  const admin = read('admin.html');
+  assert.match(admin, /id="v4StepGuide"/);
+  assert.match(admin, /Quy trình tạo khóa V4/);
+  assert.match(admin, /Thông tin khóa học/);
+  assert.match(admin, /Nhập nội dung Telegram/);
+  assert.match(admin, /Bước 3 · Kiểm tra và Publish/);
+  assert.match(admin, /Bật bán khóa học/);
+  assert.match(admin, /scrollToV4Step/);
+  assert.match(admin, /updateV4StepGuide/);
+  assert.match(admin, /Lưu thông tin & sang bước 2/);
+  assert.match(admin, /Bật bán & lưu/);
+  assert.match(admin, /Nguồn Telegram/);
+  assert.match(admin, /Nội dung Reader/);
+  assert.match(admin, /Trạng thái Publish/);
+  assert.doesNotMatch(admin, /<b>1\. Nguồn<\/b>/);
+});
+
