@@ -237,14 +237,34 @@
               <p class="text-[11px] text-slate-500 mt-1 mb-2">Chỉ cần dán link bài. Cloner sẽ tự nhận kênh; không cần nhập Chat ID.</p>
               <div class="flex flex-col sm:flex-row gap-2">
                 <input id="v4TelegramPostLinkInput" type="url" placeholder="https://t.me/c/.../123 hoặc https://t.me/tenkenh/123" class="flex-1 w-full px-4 py-3 bg-white border border-violet-200 rounded-xl outline-none focus:border-violet-500 transition text-sm">
-                <button type="button" onclick="continueV4Setup()" class="px-4 py-3 bg-violet-600 text-white rounded-xl text-sm font-black hover:bg-violet-700 transition">Tự nhận kênh / Thiết lập V4</button>
+                <button type="button" id="v4RegisterButton" onclick="continueV4Setup()" class="px-4 py-3 bg-violet-600 text-white rounded-xl text-sm font-black hover:bg-violet-700 transition">Lưu nháp & nhập nội dung</button>
               </div>
-              <p id="v4SetupHelp" class="text-[11px] text-violet-700 mt-2">Khóa sẽ được lưu Draft và Tắt bán trước khi chuyển sang V4 Wizard.</p>
+              <p id="v4SetupHelp" class="text-[11px] text-violet-700 mt-2">Mọi bước V4 được thực hiện ngay tại cửa sổ này. Khóa luôn lưu Draft và Tắt bán trước khi nhập nội dung.</p>
             </div>
-            <div class="rounded-2xl border border-violet-200 bg-violet-50 p-4">
+            <div id="v4WorkflowPanel" class="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+              <div class="flex items-center justify-between gap-3">
+                <div>
+                  <p class="text-xs uppercase font-extrabold text-emerald-800 tracking-wider">Tiến độ nội dung V4</p>
+                  <p id="v4WorkflowStatus" class="text-sm font-bold text-slate-800 mt-1">Lưu khóa Draft để bắt đầu.</p>
+                </div>
+                <button type="button" onclick="refreshV4WorkflowStatus()" class="shrink-0 px-3 py-2 bg-white border border-emerald-200 text-emerald-800 rounded-xl text-[11px] font-black hover:bg-emerald-100 transition">Kiểm tra lại</button>
+              </div>
+              <div class="grid sm:grid-cols-3 gap-2 mt-3 text-[11px]">
+                <div id="v4WorkflowSource" class="rounded-xl bg-white border border-emerald-100 p-3"><b>1. Nguồn</b><br>Chưa đăng ký</div>
+                <div id="v4WorkflowReader" class="rounded-xl bg-white border border-emerald-100 p-3"><b>2. Nội dung</b><br>Chưa import</div>
+                <div id="v4WorkflowPreflight" class="rounded-xl bg-white border border-emerald-100 p-3"><b>3. Phát hành</b><br>Chưa kiểm tra</div>
+              </div>
+              <div class="flex flex-col sm:flex-row gap-2 mt-3">
+                <button type="button" id="v4PreflightButton" onclick="runUnifiedV4Preflight()" class="flex-1 px-4 py-3 bg-white border border-emerald-300 text-emerald-800 rounded-xl text-sm font-black hover:bg-emerald-100 transition">Kiểm tra trước phát hành</button>
+                <button type="button" id="v4PublishButton" onclick="publishUnifiedV4()" disabled class="flex-1 px-4 py-3 bg-emerald-700 text-white rounded-xl text-sm font-black hover:bg-emerald-800 transition disabled:opacity-40 disabled:cursor-not-allowed">Publish nội dung V4</button>
+              </div>
+              <div id="v4PreflightDetails" class="hidden mt-3 rounded-xl bg-white border border-emerald-100 p-3 text-[11px] text-slate-600"></div>
+            </div>
+            <details class="rounded-2xl border border-violet-200 bg-violet-50 p-4">
+              <summary class="cursor-pointer text-xs uppercase font-extrabold text-violet-700 tracking-wider">Nguồn V4 đã có (tùy chọn nâng cao)</summary>
+              <div class="mt-3">
               <div class="flex items-center justify-between gap-3 mb-2">
                 <div>
-                  <label class="block text-xs uppercase font-extrabold text-violet-700 tracking-wider">Nguồn V4 đã có (tùy chọn nâng cao)</label>
                   <p class="text-[11px] text-slate-500 mt-1">Có thể chọn lại nguồn đã đăng ký thay vì dán link bài mới.</p>
                 </div>
                 <button type="button" onclick="loadV4Sources(true)" class="shrink-0 px-3 py-2 bg-white border border-violet-200 text-violet-700 rounded-xl text-[11px] font-black hover:bg-violet-100 transition">Làm mới</button>
@@ -257,7 +277,8 @@
                 <a href="https://telegram-channel-cloner.vercel.app/" target="_blank" rel="noopener" class="inline-flex px-3 py-2 bg-white border border-violet-200 text-violet-700 rounded-xl text-[11px] font-black hover:bg-violet-100 transition">Mở quản trị nguồn nâng cao</a>
                 <span class="text-[10px] text-slate-400 self-center">Kênh cũ vẫn tiếp tục index live dù không còn là MASTER.</span>
               </div>
-            </div>
+              </div>
+            </details>
           </div>
 
           <div id="telegramCourseFields" class="hidden mt-4 space-y-4">
@@ -364,23 +385,11 @@
     let currentAdminPassword = "";
     let v4Sources = [];
     let v4ContinueAfterSave = false;
+    let v4LastPreflight = null;
     let courseSlugTouched = false;
-    const LMS_V4_WIZARD_URL = 'https://yeunauan-lms-clone.vercel.app/v4-course-wizard.html';
 
     function slugifyCourse(value) {
       return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'd').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
-    }
-
-    function v4WizardUrl() {
-      const slug = document.getElementById('courseSlugInput')?.value.trim() || '';
-      const title = document.getElementById('courseTitleInput')?.value.trim() || '';
-      const sourceRef = document.getElementById('v4TelegramPostLinkInput')?.value.trim() || '';
-      const url = new URL(LMS_V4_WIZARD_URL);
-      url.searchParams.set('course', slug);
-      url.searchParams.set('title', title);
-      if (sourceRef) url.searchParams.set('sourceRef', sourceRef);
-      url.searchParams.set('returnTo', location.origin + '/admin.html?course=' + encodeURIComponent(slug));
-      return url.toString();
     }
 
     function continueV4Setup() {
@@ -390,12 +399,8 @@
         alert('Hãy dán link một bài Telegram hoặc chọn nguồn V4 đã có.');
         return;
       }
-      if (!document.getElementById('courseId')?.value) {
-        v4ContinueAfterSave = true;
-        document.getElementById('courseForm').requestSubmit();
-        return;
-      }
-      location.href = v4WizardUrl();
+      v4ContinueAfterSave = true;
+      document.getElementById('courseForm').requestSubmit();
     }
 
     // 1. SHOW TOAST NOTIFICATION
@@ -1019,6 +1024,166 @@
       help.innerText = (count > 0 ? '✓ ' : '⚠ ') + count + ' bài đã index' + (source.active ? ' · MASTER hiện tại' : ' · nguồn đã đăng ký') + courses;
     }
 
+    async function v4WorkflowRequest(workflowAction, payload = {}) {
+      const response = await fetch('/api/courses?action=v4-workflow', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Password': currentAdminPassword
+        },
+        body: JSON.stringify({ workflowAction, ...payload })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = new Error(data.error || 'Thao tác V4 thất bại');
+        error.preflight = data.preflight || null;
+        throw error;
+      }
+      return data;
+    }
+
+    function resetV4WorkflowUi(message = 'Lưu khóa Draft để bắt đầu.') {
+      v4LastPreflight = null;
+      const status = document.getElementById('v4WorkflowStatus');
+      const source = document.getElementById('v4WorkflowSource');
+      const reader = document.getElementById('v4WorkflowReader');
+      const preflight = document.getElementById('v4WorkflowPreflight');
+      const details = document.getElementById('v4PreflightDetails');
+      const publish = document.getElementById('v4PublishButton');
+      if (status) status.innerText = message;
+      if (source) source.innerHTML = '<b>1. Nguồn</b><br>Chưa đăng ký';
+      if (reader) reader.innerHTML = '<b>2. Nội dung</b><br>Chưa import';
+      if (preflight) preflight.innerHTML = '<b>3. Phát hành</b><br>Chưa kiểm tra';
+      if (details) {
+        details.classList.add('hidden');
+        details.innerHTML = '';
+      }
+      if (publish) publish.disabled = true;
+    }
+
+    function renderV4WorkflowStatus(data) {
+      const status = document.getElementById('v4WorkflowStatus');
+      const sourceBox = document.getElementById('v4WorkflowSource');
+      const readerBox = document.getElementById('v4WorkflowReader');
+      const publishBox = document.getElementById('v4WorkflowPreflight');
+      const source = data?.source || null;
+      const reader = data?.readerJob || null;
+      const count = Number(source?.actualMessageCount || 0);
+      if (sourceBox) sourceBox.innerHTML = '<b>1. Nguồn</b><br>' + (source
+        ? '✓ ' + escapeAttr(source.title || source.username || 'Telegram')
+        : '⚠ Chưa gắn nguồn');
+      if (readerBox) {
+        const readerText = count > 0
+          ? '✓ ' + count + ' bài đã sẵn sàng'
+          : reader?.status
+            ? 'Đang xử lý: ' + escapeAttr(reader.status)
+            : 'Chờ Reader import';
+        readerBox.innerHTML = '<b>2. Nội dung</b><br>' + readerText;
+      }
+      if (publishBox) publishBox.innerHTML = '<b>3. Phát hành</b><br>' + (data?.course?.is_published ? '✓ Đã Publish' : 'Draft · chưa Publish');
+      if (status) {
+        status.innerText = data?.course?.is_published
+          ? 'Nội dung V4 đã Publish. Có thể bật bán và lưu khóa.'
+          : data?.readyForPreflight
+            ? 'Nội dung đã có. Hãy kiểm tra trước phát hành.'
+            : source ? 'Nguồn đã gắn; Reader đang nhập lịch sử. Bấm Kiểm tra lại sau ít phút.' : 'Hãy dán link một bài Telegram để đăng ký nguồn.';
+      }
+    }
+
+    async function refreshV4WorkflowStatus() {
+      const slug = document.getElementById('courseSlugInput')?.value.trim() || '';
+      if (!document.getElementById('courseId')?.value || !slug) {
+        resetV4WorkflowUi();
+        return null;
+      }
+      try {
+        const data = await v4WorkflowRequest('status', { courseSlug: slug });
+        renderV4WorkflowStatus(data);
+        return data;
+      } catch (error) {
+        const status = document.getElementById('v4WorkflowStatus');
+        if (status) status.innerText = error.message;
+        return null;
+      }
+    }
+
+    function renderV4Preflight(data) {
+      v4LastPreflight = data || null;
+      const details = document.getElementById('v4PreflightDetails');
+      const box = document.getElementById('v4WorkflowPreflight');
+      const publish = document.getElementById('v4PublishButton');
+      const checks = Array.isArray(data?.checks) ? data.checks : [];
+      const blockers = Number(data?.summary?.blockers || 0);
+      const warnings = Number(data?.summary?.warnings || 0);
+      if (box) box.innerHTML = '<b>3. Phát hành</b><br>' + (data?.ready ? '✓ Sẵn sàng' : '⚠ ' + blockers + ' mục chặn');
+      if (publish) publish.disabled = !data?.ready;
+      if (details) {
+        details.classList.remove('hidden');
+        details.innerHTML = '<b>Kết quả: ' + blockers + ' chặn · ' + warnings + ' cảnh báo</b>' + checks.map(item => {
+          const icon = item.status === 'pass' ? '✓' : item.status === 'warn' ? '⚠' : '✕';
+          return '<div class="mt-2"><b>' + icon + ' ' + escapeAttr(item.label) + '</b><br>' + escapeAttr(item.detail) + '</div>';
+        }).join('');
+      }
+    }
+
+    async function registerUnifiedV4Source(courseSlug, sourceRef) {
+      const button = document.getElementById('v4RegisterButton');
+      if (button) {
+        button.disabled = true;
+        button.innerText = 'Đang nhận kênh...';
+      }
+      try {
+        await v4WorkflowRequest('registerSource', { courseSlug, sourceRef });
+        document.getElementById('v4TelegramPostLinkInput').value = '';
+        showToast('Đã nhận kênh và xếp hàng nhập nội dung.');
+        await Promise.all([refreshV4WorkflowStatus(), loadV4Sources(true)]);
+      } finally {
+        if (button) {
+          button.disabled = false;
+          button.innerText = 'Lưu nháp & nhập nội dung';
+        }
+      }
+    }
+
+    async function runUnifiedV4Preflight() {
+      const slug = document.getElementById('courseSlugInput')?.value.trim() || '';
+      if (!document.getElementById('courseId')?.value || !slug) {
+        showToast('Hãy lưu khóa V4 trước.');
+        return;
+      }
+      const button = document.getElementById('v4PreflightButton');
+      if (button) button.disabled = true;
+      try {
+        const data = await v4WorkflowRequest('preflight', { courseSlug: slug });
+        renderV4Preflight(data);
+        showToast(data.ready ? 'V4 đã sẵn sàng Publish.' : 'Preflight còn mục cần xử lý.');
+      } catch (error) {
+        if (error.preflight) renderV4Preflight(error.preflight);
+        alert(error.message);
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
+
+    async function publishUnifiedV4() {
+      const slug = document.getElementById('courseSlugInput')?.value.trim() || '';
+      if (!v4LastPreflight?.ready || !slug) return;
+      if (!confirm('Publish nội dung V4 cho khóa này? Sau đó bạn có thể bật bán và lưu ngay trong cửa sổ.')) return;
+      const button = document.getElementById('v4PublishButton');
+      if (button) button.disabled = true;
+      try {
+        await v4WorkflowRequest('publish', { courseSlug: slug });
+        showToast('Đã Publish nội dung V4.');
+        await loadCourses();
+        await refreshV4WorkflowStatus();
+      } catch (error) {
+        if (error.preflight) renderV4Preflight(error.preflight);
+        alert(error.message);
+      } finally {
+        if (button && !v4LastPreflight?.ready) button.disabled = true;
+      }
+    }
+
     function updateTelegramConnectUi() {
       const mode = document.getElementById('courseDeliveryModeInput')?.value || 'lms';
       const courseId = document.getElementById('courseId')?.value || '';
@@ -1065,7 +1230,11 @@
       const chatId = document.getElementById('telegramChatIdInput');
       if (chatId) chatId.required = false;
       updateTelegramConnectUi();
-      if (mode === 'v4') loadV4Sources(false);
+      if (mode === 'v4') {
+        loadV4Sources(false);
+        if (document.getElementById('courseId')?.value) refreshV4WorkflowStatus();
+        else resetV4WorkflowUi();
+      }
       if (mode === 'v4' && !document.getElementById('courseId')?.value) {
         document.getElementById('courseActiveInput').checked = false;
       }
@@ -1242,6 +1411,7 @@
       const telegramChatTitle = document.getElementById("telegramChatTitleInput").value.trim();
       const telegramInviteTtlHours = parseInt(document.getElementById("telegramInviteTtlInput").value, 10) || 72;
       const v4SourceId = document.getElementById("v4SourceInput")?.value || "";
+      const v4SourceRef = document.getElementById('v4TelegramPostLinkInput')?.value.trim() || '';
       
       // Bank configurations
       const bankName = document.getElementById("bankNameInput").value.trim();
@@ -1299,7 +1469,7 @@
           const savedCourseId = data?.data?.id || id;
           if (savedCourseId) document.getElementById("courseId").value = savedCourseId;
 
-          if (deliveryMode === 'v4' && v4SourceId) {
+          if (deliveryMode === 'v4' && v4SourceId && !v4SourceRef) {
             const mappingResponse = await fetch('/api/courses?action=v4-sources', {
               method: 'POST',
               headers: {
@@ -1326,9 +1496,19 @@
             }).catch(() => {});
           }
 
-          if (deliveryMode === 'v4' && (v4ContinueAfterSave || document.getElementById('v4TelegramPostLinkInput')?.value.trim())) {
+          if (deliveryMode === 'v4' && v4SourceRef) {
             v4ContinueAfterSave = false;
-            location.href = v4WizardUrl();
+            try {
+              await registerUnifiedV4Source(slug, v4SourceRef);
+              await loadCourses();
+            } catch (error) {
+              alert('Khóa Draft đã lưu nhưng chưa nhận được kênh: ' + (error.message || error));
+            }
+          } else if (deliveryMode === 'v4' && (v4ContinueAfterSave || v4SourceId)) {
+            v4ContinueAfterSave = false;
+            showToast('Khóa V4 đã lưu Draft trong cửa sổ này.');
+            await loadCourses();
+            await refreshV4WorkflowStatus();
           } else if (deliveryMode === 'telegram' && !telegramChatId && savedCourseId) {
             showToast(id ? "Đã cập nhật khóa. Bây giờ hãy kết nối Telegram." : "Đã tạo khóa. Bây giờ hãy kết nối Telegram.");
             updateTelegramConnectUi();
