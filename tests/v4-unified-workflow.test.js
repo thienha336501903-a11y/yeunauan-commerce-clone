@@ -59,4 +59,9 @@ test('Commerce admin explains the V4 workflow as four numbered steps', () => {
   assert.match(admin, /updateV4StepGuide/);
   assert.match(admin, /Lưu thông tin & sang bước 2/);
   assert.match(admin, /Bật bán & lưu/);
+  assert.match(admin, /Nguồn Telegram/);
+  assert.match(admin, /Nội dung Reader/);
+  assert.match(admin, /Trạng thái Publish/);
+  assert.doesNotMatch(admin, /<b>1\. Nguồn<\/b>/);
 });
+
