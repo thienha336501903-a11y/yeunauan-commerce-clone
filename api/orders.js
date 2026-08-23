@@ -1,11 +1,17 @@
+import { v2 as cloudinary } from 'cloudinary';
 import { supabase } from '../utils/supabase.js';
+import { extractCloudinaryBillPublicId } from '../utils/cloudinary-public-id.js';
 import { syncV4EnrollmentToLms } from '../utils/v4-sync-helpers.js';
 
 const VALID_ORDER_STATUSES = new Set(['Chờ duyệt', 'Đã duyệt', 'Từ chối']);
+const TEST_TITLE_PREFIX = '__clone_factory_test';
+const TEST_SLUG_PATTERN = /^clone-factory-test(?:-|$)/;
+const TEST_DELETE_CONFIRMATION = 'DELETE_CLONE_FACTORY_TEST';
+const isUuid = value => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Admin-Password');
   if (req.method === 'OPTIONS') return res.status(200).end();
   const adminPassword = req.headers['x-admin-password'];
@@ -104,6 +110,55 @@ export default async function handler(req, res) {
         syncResults = { lms: 'SKIPPED_TELEGRAM', portal: 'SKIPPED_TELEGRAM', error: null };
       }
       return res.status(200).json({ success: true, data: { ...updatedData, syncResults } });
+    }
+    if (req.method === 'DELETE') {
+      const { id, confirmation } = req.body || {};
+      if (!isUuid(id) || confirmation !== TEST_DELETE_CONFIRMATION) {
+        return res.status(400).json({ error: 'Yêu cầu cleanup test không hợp lệ' });
+      }
+
+      const { data: order, error: orderError } = await supabase.from('orders').select('*').eq('id', id).maybeSingle();
+      if (orderError) throw orderError;
+      if (!order) return res.status(404).json({ error: 'Không tìm thấy order test' });
+
+      const courseSlug = String(order.course_slug || '').trim();
+      const billName = String(order.raw_data?.billName || '').trim();
+      const { data: course, error: courseError } = await supabase.from('courses').select('id,title,slug').eq('slug', courseSlug).maybeSingle();
+      if (courseError) throw courseError;
+
+      const safeTestOrder =
+        String(order.delivery_mode || '').toLowerCase() === 'v4' &&
+        TEST_SLUG_PATTERN.test(courseSlug) &&
+        billName.startsWith(TEST_TITLE_PREFIX) &&
+        String(order.course_title || '').startsWith(TEST_TITLE_PREFIX) &&
+        String(course?.title || '').startsWith(TEST_TITLE_PREFIX) &&
+        String(course?.slug || '') === courseSlug;
+      if (!safeTestOrder) return res.status(409).json({ error: 'Cleanup bị chặn: dữ liệu không phải clone factory test hợp lệ' });
+
+      const publicId = String(order.raw_data?.billPublicId || '').trim() || extractCloudinaryBillPublicId(order.proof_image_url, courseSlug);
+      if (!publicId || !publicId.startsWith(`bill-chuyen-khoan/${courseSlug}/`)) {
+        return res.status(409).json({ error: 'Không xác định được Cloudinary public ID an toàn' });
+      }
+
+      const missingCloudinaryEnv = ['CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET'].filter(name => !process.env[name]);
+      if (missingCloudinaryEnv.length) return res.status(500).json({ error: 'Thiếu cấu hình Cloudinary cleanup' });
+      cloudinary.config({ cloud_name: process.env.CLOUDINARY_CLOUD_NAME, api_key: process.env.CLOUDINARY_API_KEY, api_secret: process.env.CLOUDINARY_API_SECRET });
+      const cloudinaryResult = await cloudinary.uploader.destroy(publicId, { resource_type: 'image', invalidate: true });
+      if (!['ok', 'not found'].includes(String(cloudinaryResult?.result || '').toLowerCase())) {
+        throw new Error('Cloudinary không xác nhận xóa bill test');
+      }
+
+      const { data: removedEnrollments, error: enrollmentError } = await supabase
+        .from('student_enrollments')
+        .delete()
+        .eq('course_slug', courseSlug)
+        .eq('source_order_id', id)
+        .select('id');
+      if (enrollmentError) throw enrollmentError;
+
+      const { error: deleteOrderError } = await supabase.from('orders').delete().eq('id', id);
+      if (deleteOrderError) throw deleteOrderError;
+      return res.status(200).json({ success: true, deletedOrderId: id, deletedEnrollmentCount: removedEnrollments?.length || 0, cloudinaryResult: cloudinaryResult.result });
     }
     return res.status(405).json({ error: 'Method not allowed' });
   } catch (error) {
