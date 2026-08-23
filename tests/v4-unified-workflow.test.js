@@ -65,3 +65,9 @@ test('Commerce admin explains the V4 workflow as four numbered steps', () => {
   assert.doesNotMatch(admin, /<b>1\. Nguồn<\/b>/);
 });
 
+test('Reader pairing remains one-field setup and carries the selected V4 server', () => {
+  const admin = read('admin.html');
+  assert.match(admin, /pairing\.connection_code \|\| pairing\.code/);
+  assert.match(admin, /Mã kết nối một lần/);
+  assert.match(admin, /Ứng dụng tự chọn đúng máy chủ V4/);
+});

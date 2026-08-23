@@ -1244,7 +1244,8 @@
         const box = document.getElementById('readerPairingResult');
         if (box && pairing) {
           box.classList.remove('hidden');
-          box.innerHTML = '<b>Mã ghép máy: <span class="text-xl tracking-widest">' + escapeAttr(pairing.code) + '</span></b><br><span class="text-[11px]">Mở ứng dụng Reader Manager → Ghép máy → nhập mã này. Mã chỉ dùng một lần và hết hạn sau 10 phút.</span>';
+          const connectionCode = pairing.connection_code || pairing.code;
+          box.innerHTML = '<b>Mã kết nối một lần:</b><br><code class="block mt-2 p-2 bg-white border rounded-lg text-xs break-all select-all">' + escapeAttr(connectionCode) + '</code><span class="text-[11px]">Sao chép toàn bộ mã trên vào Reader Manager. Ứng dụng tự chọn đúng máy chủ V4. Mã chỉ dùng một lần và hết hạn sau 10 phút.</span>';
         }
       } catch (error) { alert(error.message); }
     }
