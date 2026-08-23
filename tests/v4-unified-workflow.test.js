@@ -1,0 +1,48 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+
+const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
+
+test('Commerce keeps unified V4 orchestration inside the existing courses function', () => {
+  const courses = read('api/courses.js');
+  assert.match(courses, /handleV4Workflow/);
+  assert.match(courses, /requestAction === 'v4-workflow'/);
+});
+
+test('new Telegram source registration is server-to-server and fail-closed', () => {
+  const workflow = read('utils/v4-workflow.js');
+  assert.match(workflow, /process\.env\.INTERNAL_SYNC_SECRET/);
+  assert.match(workflow, /X-Sync-Secret/);
+  assert.match(workflow, /api\/admin\?action=v4-source/);
+  assert.match(workflow, /if \(!secret\)/);
+  assert.match(workflow, /delivery_mode/);
+  assert.match(workflow, /is_published/);
+  assert.match(workflow, /onConflict: 'course_slug'/);
+});
+
+test('full preflight and publish reuse the LMS internal bridge', () => {
+  const workflow = read('utils/v4-workflow.js');
+  assert.match(workflow, /lmsAction\('v4Preflight'/);
+  assert.match(workflow, /lmsAction\('setV4Published'/);
+  assert.match(workflow, /published === true/);
+});
+
+test('workflow status reads Reader state without mutating real data', () => {
+  const workflow = read('utils/v4-workflow.js');
+  assert.match(workflow, /tgcloner_reader_jobs/);
+  assert.match(workflow, /actualMessageCount/);
+  assert.match(workflow, /readyForPreflight/);
+  assert.doesNotMatch(workflow, /delete\(\).*tgcloner_reader_jobs/);
+});
+
+test('Commerce admin keeps the complete V4 setup in one modal', () => {
+  const admin = read('admin.html');
+  assert.match(admin, /Lưu nháp & nhập nội dung/);
+  assert.match(admin, /v4WorkflowStatus/);
+  assert.match(admin, /runUnifiedV4Preflight/);
+  assert.match(admin, /publishUnifiedV4/);
+  assert.match(admin, /registerUnifiedV4Source/);
+  assert.doesNotMatch(admin, /v4-course-wizard\.html/);
+  assert.doesNotMatch(admin, /location\.href\s*=\s*v4WizardUrl/);
+});
