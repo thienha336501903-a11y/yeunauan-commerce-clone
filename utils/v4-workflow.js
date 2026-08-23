@@ -51,6 +51,27 @@ async function internalPost(url, secret, body) {
   }
 }
 
+async function internalGet(url, secret) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'X-Sync-Secret': secret },
+      signal: controller.signal
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(data.error || `Dịch vụ nội bộ trả HTTP ${response.status}`);
+      error.statusCode = response.status;
+      throw error;
+    }
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function requireDraftV4Course(courseSlug) {
   const slug = clean(courseSlug);
   if (!validSlug(slug)) {
@@ -77,7 +98,7 @@ async function requireDraftV4Course(courseSlug) {
   return data;
 }
 
-async function registerSource({ courseSlug, sourceRef }) {
+async function registerSource({ courseSlug, sourceRef, readerProfileId }) {
   const course = await requireDraftV4Course(courseSlug);
   const ref = clean(sourceRef);
   if (!/^https:\/\/t\.me\//i.test(ref)) {
@@ -86,7 +107,10 @@ async function registerSource({ courseSlug, sourceRef }) {
     throw error;
   }
   const { secret, clonerUrl } = internalConfig();
-  const registered = await internalPost(`${clonerUrl}/api/admin?action=v4-source`, secret, { source_ref: ref });
+  const registered = await internalPost(`${clonerUrl}/api/admin?action=v4-source`, secret, {
+    source_ref: ref,
+    ...(clean(readerProfileId) ? { reader_profile_id: clean(readerProfileId) } : {})
+  });
   const sourceId = clean(registered?.source?.id);
   if (!sourceId) {
     const error = new Error('Cloner chưa trả về nguồn Telegram hợp lệ');
@@ -144,7 +168,7 @@ async function status(courseSlug) {
       supabase.from('tgcloner_source_messages')
         .select('id', { count: 'exact', head: true }).eq('source_id', mapping.source_id),
       supabase.from('tgcloner_reader_jobs')
-        .select('id,status,job_type,requested_at,heartbeat_at,completed_at,message_count,last_error,updated_at')
+        .select('*')
         .eq('source_id', mapping.source_id).order('created_at', { ascending: false }).limit(1).maybeSingle()
     ]);
     if (sourceResult.error) throw sourceResult.error;
@@ -161,6 +185,16 @@ async function status(courseSlug) {
     readerJob,
     readyForPreflight: Boolean(mapping?.enabled && source && actualMessageCount > 0)
   };
+}
+
+async function readerManagerState() {
+  const { secret, clonerUrl } = internalConfig();
+  return internalGet(`${clonerUrl}/api/admin?action=reader-manager`, secret);
+}
+
+async function readerManagerAction(body) {
+  const { secret, clonerUrl } = internalConfig();
+  return internalPost(`${clonerUrl}/api/admin?action=reader-manager`, secret, body);
 }
 
 async function lmsAction(action, courseSlug, published) {
@@ -187,6 +221,26 @@ export async function handleV4Workflow(req, res) {
     }
     if (action === 'status') {
       return res.status(200).json({ success: true, ...(await status(req.body?.courseSlug)) });
+    }
+    if (action === 'readerState') {
+      return res.status(200).json({ success: true, ...(await readerManagerState()) });
+    }
+    if (action === 'createReaderPairing') {
+      return res.status(200).json({ success: true, ...(await readerManagerAction({
+        operation: 'create_pairing',
+        display_name: clean(req.body?.displayName) || 'Máy Reader'
+      })) });
+    }
+    if (action === 'readerAdmin') {
+      const operation = clean(req.body?.operation);
+      if (!['pause_profile', 'resume_profile', 'revoke_profile', 'revoke_agent'].includes(operation)) {
+        return res.status(400).json({ success: false, error: 'Thao tác Reader không hợp lệ' });
+      }
+      return res.status(200).json({ success: true, ...(await readerManagerAction({
+        operation,
+        profileId: clean(req.body?.profileId),
+        agentId: clean(req.body?.agentId)
+      })) });
     }
     if (action === 'preflight') {
       return res.status(200).json(await lmsAction('v4Preflight', req.body?.courseSlug));
