@@ -79,7 +79,7 @@ export default async function handler(req, res) {
       status: 'Chờ duyệt',
       delivery_mode: deliveryMode,
       telegram_chat_id: deliveryMode === 'telegram' ? telegramChatId : null,
-      raw_data: { billName: String(billName).slice(0, 120), billType: cleanBillType, contactType: deliveryMode === 'telegram' ? 'telegram' : 'email', ...(deliveryMode === 'telegram' ? { telegramClaimedUsername: cleanTelegramNick } : {}) }
+      raw_data: { billName: String(billName).slice(0, 120), billType: cleanBillType, billPublicId: uploadResult.public_id || null, contactType: deliveryMode === 'telegram' ? 'telegram' : 'email', ...(deliveryMode === 'telegram' ? { telegramClaimedUsername: cleanTelegramNick } : {}) }
     };
 
     if (deliveryMode === 'telegram') {

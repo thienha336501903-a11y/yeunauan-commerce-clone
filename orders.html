@@ -606,6 +606,7 @@
               const note = order.note || "";
               const status = order.status || "Chờ duyệt";
               const bill = order.billLink || "";
+              const isCloneFactoryTest = /^clone-factory-test(?:-|$)/.test(String(course)) && String(order.billName || '').startsWith('__clone_factory_test');
 
               let badgeStyle = "bg-amber-100 text-amber-800";
               if (status === "Đã duyệt") badgeStyle = "bg-green-100 text-green-800";
@@ -748,6 +749,9 @@
                       <option value="Đã duyệt" class="bg-white text-green-800 font-bold" ${status === 'Đã duyệt' ? 'selected' : ''}>Đã duyệt</option>
                       <option value="Từ chối" class="bg-white text-rose-800 font-bold" ${status === 'Từ chối' ? 'selected' : ''}>Từ chối</option>
                     </select>
+                    ${isCloneFactoryTest ? `
+                      <button type="button" onclick="cleanupCloneFactoryTestOrder('${order.id}')" class="block mx-auto mt-2 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[9px] font-black text-rose-700 hover:bg-rose-100">Xóa dữ liệu test</button>
+                    ` : ''}
                   </td>
                 </tr>
               `;
@@ -1298,6 +1302,36 @@
         }
       } catch (err) {
         alert("Lỗi kết nối");
+      } finally {
+        hideLoader();
+      }
+    }
+
+    async function cleanupCloneFactoryTestOrder(orderId) {
+      const order = allOrders.find(o => o.id === orderId);
+      const safeTestOrder = order && /^clone-factory-test(?:-|$)/.test(String(order.course || '')) && String(order.billName || '').startsWith('__clone_factory_test');
+      if (!safeTestOrder) {
+        alert('Cleanup bị chặn: đây không phải order clone factory test.');
+        return;
+      }
+      if (!confirm(`Xóa vĩnh viễn order test, enrollment test và ảnh bill Cloudinary của khóa ${order.course}?`)) return;
+
+      showLoader('Đang xóa order, enrollment và bill test...');
+      try {
+        const response = await fetch('/api/orders', {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Password': currentAdminPassword
+          },
+          body: JSON.stringify({ id: orderId, confirmation: 'DELETE_CLONE_FACTORY_TEST' })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'Không thể cleanup order test');
+        showToast('Đã xóa order, enrollment và bill test.');
+        await loadOrders();
+      } catch (error) {
+        alert(error.message || 'Cleanup order test thất bại');
       } finally {
         hideLoader();
       }
