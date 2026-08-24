@@ -695,6 +695,7 @@
         const link = `${origin}/?course=${encodeURIComponent(slug)}`;
         const active = course.active;
         const isPublished = course.is_published === true;
+        const originalLessonEntryVisible = course.originalLessonEntryVisible !== false;
         const sortOrder = course.sort_order || 0;
 
         return `
@@ -782,6 +783,27 @@
                       class="text-[11px] font-black px-3 py-2 rounded-xl transition ${isPublished ? 'bg-white text-orange-700 border border-orange-200 hover:bg-orange-100' : 'bg-white text-green-700 border border-green-200 hover:bg-green-100'}"
                     >
                       ${isPublished ? 'Chuyển chờ lên bài' : 'Chuyển sẵn sàng'}
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Lối vào bài học gốc -->
+                <div class="mb-4 rounded-2xl border ${originalLessonEntryVisible ? 'border-green-200 bg-green-50' : 'border-orange-200 bg-orange-50'} p-3">
+                  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div>
+                      <p class="text-[10px] uppercase font-black tracking-wider ${originalLessonEntryVisible ? 'text-green-700' : 'text-orange-700'}">
+                        Bài học gốc
+                      </p>
+                      <p class="text-sm font-black ${originalLessonEntryVisible ? 'text-green-700' : 'text-orange-700'}">
+                        ${originalLessonEntryVisible ? '🟢 Đang hiển thị' : '🟠 Đang ẩn'}
+                      </p>
+                      ${originalLessonEntryVisible ? '' : '<p class="mt-1 text-[10px] font-semibold text-orange-700">Học viên vẫn xem được Công thức &amp; Hướng dẫn nhưng chưa thể mở LMS.</p>'}
+                    </div>
+                    <button
+                      onclick="toggleOriginalLessonEntry('${id}', ${originalLessonEntryVisible})"
+                      class="text-[11px] font-black px-3 py-2 rounded-xl transition ${originalLessonEntryVisible ? 'bg-white text-orange-700 border border-orange-200 hover:bg-orange-100' : 'bg-white text-green-700 border border-green-200 hover:bg-green-100'}"
+                    >
+                      ${originalLessonEntryVisible ? 'Ẩn bài học gốc' : 'Hiện bài học gốc'}
                     </button>
                   </div>
                 </div>
@@ -2031,6 +2053,67 @@
         }
       } catch (err) {
         alert("Lỗi kết nối khi cập nhật trạng thái nội dung");
+      } finally {
+        hideLoader();
+      }
+    }
+
+    // 8.2. TOGGLE ORIGINAL LESSON ENTRY
+    async function toggleOriginalLessonEntry(id, currentVisible) {
+      const course = allCourses.find(c => c.id === id);
+      if (!course) return;
+
+      const nextVisible = !currentVisible;
+      const courseName = course.courseName || course.slug;
+      const message = nextVisible
+        ? `Hiện lại nút bài học gốc cho khóa "${courseName}"?\nHọc viên có quyền sẽ có thể tạo phiên vào LMS.`
+        : `Ẩn nút bài học gốc của khóa "${courseName}"?\nHọc viên vẫn xem được Công thức & Hướng dẫn nhưng sẽ chưa thể tạo phiên mới vào LMS.`;
+      if (!confirm(message)) return;
+
+      const payload = {
+        id: course.id,
+        slug: course.slug,
+        courseName: course.courseName,
+        price: course.price,
+        sort_order: course.sort_order,
+        teacher_name: course.teacher_name,
+        expected_start_date: course.expected_start_date || "",
+        description: course.description,
+        imageUrl: course.imageUrl,
+        active: course.active,
+        is_published: course.is_published === true,
+        deliveryMode: course.deliveryMode || 'lms',
+        telegramChatId: course.telegramChatId || '',
+        telegramChatTitle: course.telegramChatTitle || '',
+        telegramInviteTtlHours: course.telegramInviteTtlHours || 72,
+        bankName: course.bankName,
+        bankAccount: course.bankAccount,
+        bankOwner: course.bankOwner,
+        transferNote: course.transferNote,
+        qrImageUrl: course.qrImageUrl,
+        originalLessonEntryVisible: nextVisible,
+        allowSellingUnpublishedV4: course.v4SellBeforePublishAcknowledged === true
+      };
+
+      showLoader(nextVisible ? "Đang hiện lại bài học gốc..." : "Đang ẩn bài học gốc...");
+      try {
+        const response = await fetch("/api/courses", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Admin-Password": currentAdminPassword
+          },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          alert(data.error || "Không thể cập nhật lối vào bài học gốc");
+          return;
+        }
+        showToast(nextVisible ? "Đã hiện lại bài học gốc" : "Đã ẩn bài học gốc");
+        await loadCourses();
+      } catch (error) {
+        alert("Lỗi kết nối khi cập nhật lối vào bài học gốc");
       } finally {
         hideLoader();
       }
