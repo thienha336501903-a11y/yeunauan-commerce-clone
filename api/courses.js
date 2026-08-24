@@ -205,6 +205,12 @@ export default async function handler(req, res) {
       for (const key of ['bankName', 'bankAccount', 'bankOwner', 'transferNote', 'qrImageUrl']) {
         if (hasOwn(body, key)) rawDataPatch[key] = String(body[key] || '').trim();
       }
+      if (hasOwn(body, 'originalLessonEntryVisible')) {
+        if (typeof body.originalLessonEntryVisible !== 'boolean') {
+          return res.status(400).json({ error: 'Trạng thái hiển thị bài học gốc không hợp lệ.' });
+        }
+        rawDataPatch.originalLessonEntryVisible = body.originalLessonEntryVisible;
+      }
       const base = {
         slug, title: courseName, price: body.price, image_url: String(body.imageUrl || '').trim(), expected_start_date: normalizeExpectedStartDate(body.expected_start_date),
         active: body.active !== undefined ? body.active : true, sort_order: body.sort_order !== undefined ? Number.parseInt(body.sort_order, 10) || 0 : 0,
