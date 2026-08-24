@@ -1224,7 +1224,11 @@
         return data;
       } catch (error) {
         const help = document.getElementById('v4ReaderSelectionHelp');
+        const list = document.getElementById('readerProfileList');
         if (help) help.innerText = error.message;
+        if (list) {
+          list.innerHTML = '<div class="rounded-xl border border-red-200 bg-red-50 p-4 text-red-700">' + escapeAttr(error.message) + '<br><button type="button" onclick="loadReaderManagerState()" class="mt-2 px-3 py-2 border border-red-200 bg-white rounded-lg text-[11px] font-black">Thử lại</button></div>';
+        }
         return null;
       }
     }
