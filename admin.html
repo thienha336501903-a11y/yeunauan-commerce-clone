@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 30717)
-Total output lines: 2289
-
 <!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -989,7 +986,74 @@ Total output lines: 2289
           throw new Error("Ảnh GIF quá lớn để upload qua Vercel. Vui lòng dùng JPG/PNG/WEBP hoặc chọn file nhỏ hơn 2.8 MB.");
         }
         return {
-          fileData: o…717 tokens truncated…          fileType: preparedFile.fileType,
+          fileData: originalBase64,
+          fileType: file.type,
+          fileName: file.name
+        };
+      }
+
+      const img = await loadImageForCompression(originalDataUrl);
+      const scale = Math.min(1, ADMIN_UPLOAD_MAX_DIMENSION / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height));
+      const width = Math.max(1, Math.round((img.naturalWidth || img.width) * scale));
+      const height = Math.max(1, Math.round((img.naturalHeight || img.height) * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(img, 0, 0, width, height);
+
+      let quality = 0.86;
+      let dataUrl = canvas.toDataURL("image/jpeg", quality);
+      let base64Data = dataUrl.split(",")[1] || "";
+      while (Math.ceil(base64Data.length * 0.75) > ADMIN_UPLOAD_MAX_REQUEST_BYTES && quality > 0.48) {
+        quality -= 0.08;
+        dataUrl = canvas.toDataURL("image/jpeg", quality);
+        base64Data = dataUrl.split(",")[1] || "";
+      }
+
+      if (Math.ceil(base64Data.length * 0.75) > ADMIN_UPLOAD_MAX_REQUEST_BYTES) {
+        throw new Error("Ảnh vẫn quá lớn sau khi nén. Vui lòng chọn ảnh nhỏ hơn hoặc crop lại trước khi tải.");
+      }
+
+      if (statusElement && originalBytes > Math.ceil(base64Data.length * 0.75)) {
+        statusElement.innerText = `Đã nén ảnh còn ${(Math.ceil(base64Data.length * 0.75) / 1024 / 1024).toFixed(1)} MB, đang upload...`;
+      }
+
+      return {
+        fileData: base64Data,
+        fileType: "image/jpeg",
+        fileName: file.name.replace(/\.[^.]+$/, "") + ".jpg"
+      };
+    }
+
+    async function uploadImageFileToInput(inputElement, file, statusElement, folder = "course-images") {
+      return new Promise((resolve) => {
+        const originalValue = inputElement.value;
+        const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+        if (!file) return resolve(false);
+        if (!allowedTypes.includes(file.type)) {
+          showToast("Chỉ nhận ảnh JPG, PNG, WEBP hoặc GIF.");
+          return resolve(false);
+        }
+
+        inputElement.disabled = true;
+        inputElement.value = "Đang tải ảnh...";
+        if (statusElement) statusElement.innerText = `Đang tải ${file.name}...`;
+
+        (async () => {
+          try {
+            const preparedFile = await prepareImageForUpload(file, statusElement);
+            const response = await fetch("/api/upload", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Admin-Password": currentAdminPassword
+              },
+              body: JSON.stringify({
+                fileData: preparedFile.fileData,
+                fileType: preparedFile.fileType,
                 fileName: preparedFile.fileName,
                 folder
               })
