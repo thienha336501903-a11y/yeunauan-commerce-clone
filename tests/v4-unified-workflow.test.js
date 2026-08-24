@@ -23,9 +23,10 @@ test('new Telegram source registration is server-to-server and fail-closed', () 
 
 test('full preflight and publish reuse the LMS internal bridge', () => {
   const workflow = read('utils/v4-workflow.js');
-  assert.match(workflow, /lmsAction\('v4Preflight'/);
+  assert.match(workflow, /lmsAction\('v4PrepareRelease'/);
+  assert.match(workflow, /testEmail/);
   assert.match(workflow, /lmsAction\('setV4Published'/);
-  assert.match(workflow, /published === true/);
+  assert.match(workflow, /published:\s*true/);
 });
 
 test('workflow status reads Reader state without mutating real data', () => {
@@ -65,3 +66,9 @@ test('Commerce admin explains the V4 workflow as four numbered steps', () => {
   assert.doesNotMatch(admin, /<b>1\. Nguồn<\/b>/);
 });
 
+test('Reader pairing remains one-field setup and carries the selected V4 server', () => {
+  const admin = read('admin.html');
+  assert.match(admin, /pairing\.connection_code \|\| pairing\.code/);
+  assert.match(admin, /Mã kết nối một lần/);
+  assert.match(admin, /Ứng dụng tự chọn đúng máy chủ V4/);
+});
