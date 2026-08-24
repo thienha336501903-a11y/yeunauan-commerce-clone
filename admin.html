@@ -260,21 +260,12 @@
           </select>
 
           <div id="v4CourseFields" class="hidden mt-4 space-y-3">
-            <div class="rounded-2xl border border-violet-200 bg-violet-50 p-4">
-              <label class="block text-xs uppercase font-extrabold text-violet-700 tracking-wider">Link một bài trong kênh Telegram</label>
-              <p class="text-[11px] text-slate-500 mt-1 mb-2">Chỉ cần dán link bài. Cloner sẽ tự nhận kênh; không cần nhập Chat ID.</p>
-              <div class="flex flex-col sm:flex-row gap-2">
-                <input id="v4TelegramPostLinkInput" type="url" placeholder="https://t.me/c/.../123 hoặc https://t.me/tenkenh/123" class="flex-1 w-full px-4 py-3 bg-white border border-violet-200 rounded-xl outline-none focus:border-violet-500 transition text-sm">
-                <button type="button" id="v4RegisterButton" onclick="continueV4Setup()" class="px-4 py-3 bg-violet-600 text-white rounded-xl text-sm font-black hover:bg-violet-700 transition">Lưu nháp & nhập nội dung</button>
-              </div>
-              <p id="v4SetupHelp" class="text-[11px] text-violet-700 mt-2">Mọi bước V4 được thực hiện ngay tại cửa sổ này. Khóa luôn lưu Draft và Tắt bán trước khi nhập nội dung.</p>
-            </div>
             <div class="rounded-2xl border border-sky-200 bg-sky-50 p-4">
               <div class="flex flex-col sm:flex-row sm:items-end gap-3">
                 <div class="flex-1">
                   <label class="block text-xs uppercase font-extrabold text-sky-800 tracking-wider">Tài khoản Reader</label>
                   <p class="text-[11px] text-slate-500 mt-1 mb-2">Để Tự động để hệ thống chọn tài khoản đang sẵn sàng, hoặc chọn một tài khoản cụ thể.</p>
-                  <select id="v4ReaderProfileInput" class="w-full px-4 py-3 bg-white border border-sky-200 rounded-xl outline-none focus:border-sky-500 transition text-sm">
+                  <select id="v4ReaderProfileInput" onchange="invalidateUnifiedV4Preflight()" class="w-full px-4 py-3 bg-white border border-sky-200 rounded-xl outline-none focus:border-sky-500 transition text-sm">
                     <option value="">Tự động chọn Reader phù hợp</option>
                   </select>
                 </div>
@@ -282,7 +273,8 @@
               </div>
               <p id="v4ReaderSelectionHelp" class="text-[11px] text-sky-700 mt-2">Đang tải trạng thái các tài khoản Reader...</p>
               <div id="readerManagerPanel" class="hidden mt-4 rounded-xl bg-white border border-sky-200 p-4">
-                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <button id="readerAddMachineButton" type="button" onclick="document.getElementById('readerPairingSetup')?.classList.toggle('hidden')" class="hidden mb-3 px-3 py-2 border border-sky-200 text-sky-800 rounded-lg text-[11px] font-black">+ Ghép thêm máy Reader</button>
+                <div id="readerPairingSetup" class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                   <div><p class="font-black text-slate-800">Đăng ký máy Reader lần đầu</p><p class="text-[11px] text-slate-500">Cài ứng dụng một lần, ghép máy bằng mã rồi thêm tài khoản Telegram ngay trên máy.</p></div>
                   <div class="flex gap-2">
                     <a id="readerManagerDownload" href="#" target="_blank" rel="noopener" class="hidden px-3 py-2 border border-sky-200 text-sky-800 rounded-lg text-[11px] font-black">Tải ứng dụng Windows</a>
@@ -293,24 +285,43 @@
                 <div id="readerProfileList" class="mt-3 space-y-2 text-sm">Đang tải...</div>
               </div>
             </div>
+            <div class="rounded-2xl border border-violet-200 bg-violet-50 p-4">
+              <label class="block text-xs uppercase font-extrabold text-violet-700 tracking-wider">Link một bài trong kênh Telegram</label>
+              <p class="text-[11px] text-slate-500 mt-1 mb-2">Chỉ cần dán link bài. Cloner sẽ tự nhận kênh; không cần nhập Chat ID.</p>
+              <div class="flex flex-col sm:flex-row gap-2">
+                <input id="v4TelegramPostLinkInput" oninput="invalidateUnifiedV4Preflight()" type="url" placeholder="https://t.me/c/.../123 hoặc https://t.me/tenkenh/123" class="flex-1 w-full px-4 py-3 bg-white border border-violet-200 rounded-xl outline-none focus:border-violet-500 transition text-sm">
+                <button type="button" id="v4RegisterButton" onclick="continueV4Setup()" class="px-4 py-3 bg-violet-600 text-white rounded-xl text-sm font-black hover:bg-violet-700 transition">Lưu nháp & nhập nội dung</button>
+              </div>
+              <p id="v4SetupHelp" class="text-[11px] text-violet-700 mt-2">Mọi bước V4 được thực hiện ngay tại cửa sổ này. Khóa luôn lưu Draft và Tắt bán trước khi nhập nội dung.</p>
+              <div id="v4ImportProgress" class="hidden mt-3 rounded-xl border border-violet-200 bg-white p-3">
+                <div class="flex items-center justify-between gap-3 text-xs"><b id="v4ImportStage">Đang chuẩn bị Reader</b><span id="v4ImportPercent">Đang chờ</span></div>
+                <div class="h-2 rounded-full bg-violet-100 overflow-hidden mt-2"><div id="v4ImportProgressBar" class="h-full bg-violet-600 transition-all duration-500" style="width:0%"></div></div>
+                <p id="v4ImportDetail" class="text-[11px] text-slate-500 mt-2">Hệ thống sẽ tự cập nhật tiến trình tại đây.</p>
+              </div>
+            </div>
             <div id="v4WorkflowPanel" class="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
               <div class="flex items-center justify-between gap-3">
                 <div>
                   <p class="text-xs uppercase font-extrabold text-emerald-800 tracking-wider">Bước 3 · Kiểm tra và Publish</p>
                   <p id="v4WorkflowStatus" class="text-sm font-bold text-slate-800 mt-1">Lưu khóa Draft để bắt đầu.</p>
                 </div>
-                <button type="button" onclick="refreshV4WorkflowStatus()" class="shrink-0 px-3 py-2 bg-white border border-emerald-200 text-emerald-800 rounded-xl text-[11px] font-black hover:bg-emerald-100 transition">Kiểm tra lại</button>
               </div>
               <div class="grid sm:grid-cols-3 gap-2 mt-3 text-[11px]">
                 <div id="v4WorkflowSource" class="rounded-xl bg-white border border-emerald-100 p-3"><b>Nguồn Telegram</b><br>Chưa đăng ký</div>
                 <div id="v4WorkflowReader" class="rounded-xl bg-white border border-emerald-100 p-3"><b>Nội dung Reader</b><br>Chưa import</div>
                 <div id="v4WorkflowPreflight" class="rounded-xl bg-white border border-emerald-100 p-3"><b>Trạng thái Publish</b><br>Chưa kiểm tra</div>
               </div>
+              <div class="mt-3 rounded-xl bg-white border border-emerald-100 p-3">
+                <label for="v4TestEmailInput" class="block text-xs font-black text-emerald-900">Gmail dùng để kiểm thử khóa học</label>
+                <p class="text-[11px] text-slate-500 mt-1">Quyền test được cấp khi bấm Kiểm tra trước phát hành. Nếu đổi Gmail, quyền test cũ do quy trình này tạo sẽ được thu hồi an toàn.</p>
+                <input id="v4TestEmailInput" oninput="invalidateUnifiedV4Preflight()" type="email" autocomplete="email" placeholder="vidu@gmail.com" class="mt-2 w-full px-4 py-3 bg-slate-50 border border-emerald-200 rounded-xl outline-none focus:border-emerald-500 transition text-sm">
+              </div>
               <div class="flex flex-col sm:flex-row gap-2 mt-3">
                 <button type="button" id="v4PreflightButton" onclick="runUnifiedV4Preflight()" class="flex-1 px-4 py-3 bg-white border border-emerald-300 text-emerald-800 rounded-xl text-sm font-black hover:bg-emerald-100 transition">Kiểm tra trước phát hành</button>
                 <button type="button" id="v4PublishButton" onclick="publishUnifiedV4()" disabled class="flex-1 px-4 py-3 bg-emerald-700 text-white rounded-xl text-sm font-black hover:bg-emerald-800 transition disabled:opacity-40 disabled:cursor-not-allowed">Publish nội dung V4</button>
               </div>
               <div id="v4PreflightDetails" class="hidden mt-3 rounded-xl bg-white border border-emerald-100 p-3 text-[11px] text-slate-600"></div>
+              <div id="v4StudentLinkResult" class="hidden mt-3 rounded-xl border border-emerald-300 bg-white p-3 text-sm"></div>
             </div>
             <details class="rounded-2xl border border-violet-200 bg-violet-50 p-4">
               <summary class="cursor-pointer text-xs uppercase font-extrabold text-violet-700 tracking-wider">Nguồn V4 đã có (tùy chọn nâng cao)</summary>
@@ -455,8 +466,10 @@
     let v4Sources = [];
     let v4ContinueAfterSave = false;
     let v4LastPreflight = null;
+    let v4TestAccess = null;
     let v4CurrentStatus = null;
     let readerManagerState = null;
+    let v4WorkflowPollTimer = null;
     let courseSlugTouched = false;
 
     function slugifyCourse(value) {
@@ -1185,6 +1198,21 @@
       return labels[profile?.status] || profile?.status || 'Chưa rõ';
     }
 
+    function readerStatusDot(status) {
+      const colors = { ready: 'bg-emerald-500', busy: 'bg-amber-500', cooldown: 'bg-orange-400', reauth: 'bg-red-500', paused: 'bg-slate-400', offline: 'bg-slate-300', revoked: 'bg-red-700' };
+      return '<span class="inline-block w-2.5 h-2.5 rounded-full ' + (colors[status] || 'bg-slate-300') + '"></span>';
+    }
+
+    function relativeTime(value) {
+      const time = Date.parse(value || '');
+      if (!Number.isFinite(time)) return 'Chưa sử dụng';
+      const seconds = Math.max(0, Math.round((Date.now() - time) / 1000));
+      if (seconds < 60) return 'vừa xong';
+      if (seconds < 3600) return Math.floor(seconds / 60) + ' phút trước';
+      if (seconds < 86400) return Math.floor(seconds / 3600) + ' giờ trước';
+      return Math.floor(seconds / 86400) + ' ngày trước';
+    }
+
     function renderReaderManager(data) {
       readerManagerState = data || { profiles: [], agents: [] };
       const select = document.getElementById('v4ReaderProfileInput');
@@ -1206,14 +1234,34 @@
         download.href = data.download_url;
         download.classList.remove('hidden');
       }
+      const pairingSetup = document.getElementById('readerPairingSetup');
+      const pairingResult = document.getElementById('readerPairingResult');
+      const addMachine = document.getElementById('readerAddMachineButton');
+      if (pairingSetup) pairingSetup.classList.toggle('hidden', profiles.length > 0);
+      if (addMachine) addMachine.classList.toggle('hidden', profiles.length === 0);
+      if (pairingResult && profiles.length > 0) {
+        pairingResult.classList.add('hidden');
+        pairingResult.innerHTML = '';
+      }
       const list = document.getElementById('readerProfileList');
       if (list) list.innerHTML = profiles.length ? profiles.map(profile => {
         const agent = agentById[profile.agent_id];
         const canResume = ['paused', 'cooldown', 'offline'].includes(profile.status);
-        return '<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 rounded-xl border border-slate-100 p-3">' +
-          '<div><b>' + escapeAttr(profile.display_name) + '</b><br><span class="text-[11px] text-slate-500">' + escapeAttr(profile.masked_phone || '') + ' · ' + escapeAttr(readerStatusLabel({ status: profile.effective_status || profile.status })) + ' · ' + escapeAttr(agent?.display_name || 'Máy Reader') + '</span></div>' +
-          '<div class="flex gap-2"><button type="button" onclick="readerAdminAction(\'' + profile.id + '\', \'' + (canResume ? 'resume_profile' : 'pause_profile') + '\')" class="px-3 py-2 border rounded-lg text-[11px] font-black">' + (canResume ? 'Tiếp tục' : 'Tạm dừng') + '</button>' +
-          '<button type="button" onclick="readerAdminAction(\'' + profile.id + '\', \'revoke_profile\')" class="px-3 py-2 border border-red-200 text-red-700 rounded-lg text-[11px] font-black">Thu hồi</button></div></div>';
+        const effective = profile.effective_status || profile.status;
+        const usage = profile.usage_today || {};
+        const channels = Array.isArray(profile.recent_sources) ? profile.recent_sources : [];
+        return '<details class="rounded-xl border border-slate-100 p-3 group">' +
+          '<summary class="list-none cursor-pointer flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">' +
+          '<div><span class="inline-flex items-center gap-2"><b>' + escapeAttr(profile.display_name) + '</b>' + readerStatusDot(effective) + '<span class="text-[11px] font-bold">' + escapeAttr(readerStatusLabel({ status: effective })) + '</span></span><br><span class="text-[11px] text-slate-500">' + escapeAttr(profile.masked_phone || '') + ' · ' + escapeAttr(agent?.display_name || 'Máy Reader') + ' · dùng gần nhất ' + escapeAttr(relativeTime(profile.last_used_at)) + '</span></div>' +
+          '<span class="text-[11px] font-black text-sky-700">Chi tiết ▾</span></summary>' +
+          '<div class="mt-3 border-t border-slate-100 pt-3"><div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">' +
+          '<div class="rounded-lg bg-sky-50 p-2"><b>' + Number(usage.jobs || 0) + '</b><br>Lần dùng hôm nay</div>' +
+          '<div class="rounded-lg bg-emerald-50 p-2"><b>' + Number(usage.succeeded || 0) + '</b><br>Hoàn tất</div>' +
+          '<div class="rounded-lg bg-red-50 p-2"><b>' + Number(usage.failed || 0) + '</b><br>Lỗi</div>' +
+          '<div class="rounded-lg bg-violet-50 p-2"><b>' + Number(usage.messages || 0) + '</b><br>Bài đã đọc</div></div>' +
+          '<div class="mt-3 text-[11px]"><b>Kênh gần đây</b>' + (channels.length ? channels.map(channel => '<div class="mt-1 text-slate-500">• ' + escapeAttr(channel.title || 'Kênh Telegram') + ' · ' + escapeAttr(relativeTime(channel.last_used_at)) + '</div>').join('') : '<div class="mt-1 text-slate-400">Chưa có kênh nào.</div>') + '</div>' +
+          '<div class="flex gap-2 mt-3"><button type="button" onclick="readerAdminAction(\'' + profile.id + '\', \'' + (canResume ? 'resume_profile' : 'pause_profile') + '\')" class="px-3 py-2 border rounded-lg text-[11px] font-black">' + (canResume ? 'Tiếp tục' : 'Tạm dừng') + '</button>' +
+          '<button type="button" onclick="readerAdminAction(\'' + profile.id + '\', \'revoke_profile\')" class="px-3 py-2 border border-red-200 text-red-700 rounded-lg text-[11px] font-black">Thu hồi</button></div></div></details>';
       }).join('') : '<div class="rounded-xl border border-dashed border-slate-200 p-4 text-slate-500">Chưa có tài khoản Reader. Tạo mã ghép máy để bắt đầu.</div>';
     }
 
@@ -1221,6 +1269,7 @@
       try {
         const data = await v4WorkflowRequest('readerState');
         renderReaderManager(data);
+        if (v4CurrentStatus) renderV4WorkflowStatus(v4CurrentStatus);
         return data;
       } catch (error) {
         const help = document.getElementById('v4ReaderSelectionHelp');
@@ -1264,13 +1313,18 @@
 
     function resetV4WorkflowUi(message = 'Lưu khóa Draft để bắt đầu.') {
       v4LastPreflight = null;
+      v4TestAccess = null;
       v4CurrentStatus = null;
+      if (v4WorkflowPollTimer) clearTimeout(v4WorkflowPollTimer);
+      v4WorkflowPollTimer = null;
       const status = document.getElementById('v4WorkflowStatus');
       const source = document.getElementById('v4WorkflowSource');
       const reader = document.getElementById('v4WorkflowReader');
       const preflight = document.getElementById('v4WorkflowPreflight');
       const details = document.getElementById('v4PreflightDetails');
       const publish = document.getElementById('v4PublishButton');
+      const importProgress = document.getElementById('v4ImportProgress');
+      const studentLink = document.getElementById('v4StudentLinkResult');
       if (status) status.innerText = message;
       if (source) source.innerHTML = '<b>Nguồn Telegram</b><br>Chưa đăng ký';
       if (reader) reader.innerHTML = '<b>Nội dung Reader</b><br>Chưa import';
@@ -1280,7 +1334,70 @@
         details.innerHTML = '';
       }
       if (publish) publish.disabled = true;
+      importProgress?.classList.add('hidden');
+      studentLink?.classList.add('hidden');
       updateV4StepGuide();
+    }
+
+    function invalidateUnifiedV4Preflight() {
+      v4LastPreflight = null;
+      v4TestAccess = null;
+      const publish = document.getElementById('v4PublishButton');
+      const box = document.getElementById('v4WorkflowPreflight');
+      const details = document.getElementById('v4PreflightDetails');
+      if (publish) publish.disabled = true;
+      if (box) box.innerHTML = '<b>Trạng thái Publish</b><br>Thông tin đã đổi · cần kiểm tra lại';
+      if (details) {
+        details.classList.add('hidden');
+        details.innerHTML = '';
+      }
+      updateV4StepGuide();
+    }
+
+    function renderV4ImportProgress(reader, count) {
+      const panel = document.getElementById('v4ImportProgress');
+      const stage = document.getElementById('v4ImportStage');
+      const percent = document.getElementById('v4ImportPercent');
+      const bar = document.getElementById('v4ImportProgressBar');
+      const detail = document.getElementById('v4ImportDetail');
+      if (!panel || !stage || !percent || !bar || !detail) return;
+      const status = String(reader?.status || '');
+      if (!reader && count <= 0) {
+        panel.classList.add('hidden');
+        return;
+      }
+      panel.classList.remove('hidden');
+      const labels = {
+        claimed: 'Reader đã nhận công việc',
+        verifying_source: 'Đang kiểm tra quyền kênh',
+        reading_history: 'Đang đọc lịch sử Telegram',
+        processing_media: 'Đang xử lý media',
+        reconciling: 'Đang đối chiếu nội dung',
+        completed: 'Nhập nội dung hoàn tất',
+        failed: 'Nhập nội dung gặp lỗi'
+      };
+      const current = Math.max(0, Number(reader?.progress_current) || 0);
+      const total = Math.max(0, Number(reader?.progress_total) || 0);
+      const active = ['queued', 'processing'].includes(status);
+      const completed = status === 'done' || (count > 0 && !active);
+      const failed = status === 'failed';
+      const value = completed ? 100 : total > 0 ? Math.max(0, Math.min(99, Math.round(current * 100 / total))) : 12;
+      stage.innerText = completed ? 'Nhập nội dung hoàn tất' : failed ? 'Nhập nội dung gặp lỗi' : (labels[reader?.progress_stage] || 'Reader đang xử lý');
+      percent.innerText = completed ? count + ' bài · 100%' : failed ? 'Cần xử lý' : total > 0 ? current + '/' + total + ' · ' + value + '%' : current > 0 ? 'Đã đọc ' + current + ' bài' : 'Đang chuẩn bị';
+      bar.style.width = value + '%';
+      bar.className = 'h-full transition-all duration-500 ' + (failed ? 'bg-red-500' : completed ? 'bg-emerald-600' : 'bg-violet-600');
+      detail.innerText = completed ? 'Reader đã hoàn tất. Bạn có thể chuyển sang Bước 3.' : failed ? (reader?.last_error || reader?.progress_detail || 'Reader không hoàn tất công việc. Hãy kiểm tra tài khoản và thử lại.') : (reader?.progress_detail || 'Tiến trình tự cập nhật; bạn không cần bấm làm mới.');
+    }
+
+    function scheduleV4StatusPolling(data) {
+      if (v4WorkflowPollTimer) clearTimeout(v4WorkflowPollTimer);
+      v4WorkflowPollTimer = null;
+      const jobStatus = String(data?.readerJob?.status || '');
+      const count = Number(data?.source?.actualMessageCount || 0);
+      if (['done', 'failed', 'cancelled'].includes(jobStatus) || !['queued', 'processing'].includes(jobStatus)) return;
+      v4WorkflowPollTimer = setTimeout(async () => {
+        await refreshV4WorkflowStatus();
+      }, 3000);
     }
 
     function renderV4WorkflowStatus(data) {
@@ -1292,6 +1409,8 @@
       const source = data?.source || null;
       const reader = data?.readerJob || null;
       const count = Number(source?.actualMessageCount || 0);
+      const testEmail = document.getElementById('v4TestEmailInput');
+      if (testEmail && !testEmail.value && data?.course?.raw_data?.v4TestEmail) testEmail.value = data.course.raw_data.v4TestEmail;
       if (sourceBox) sourceBox.innerHTML = '<b>Nguồn Telegram</b><br>' + (source
         ? '✓ ' + escapeAttr(source.title || source.username || 'Telegram')
         : '⚠ Chưa gắn nguồn');
@@ -1303,21 +1422,28 @@
             ? ' · ' + Number(reader.progress_current) + '/' + Number(reader.progress_total)
             : ' · đã đọc ' + Number(reader.progress_current) + ' bài'
           : '';
-        const readerText = count > 0
-          ? '✓ ' + count + ' bài đã sẵn sàng'
-          : reader?.status
-            ? (profile ? escapeAttr(profile.display_name) + ' · ' : '') + 'Đang xử lý: ' + escapeAttr(reader.status) + progress
+        const readerActive = ['queued', 'processing'].includes(String(reader?.status || ''));
+        const readerText = readerActive
+          ? (profile ? readerStatusDot(profile.effective_status || profile.status) + ' ' + escapeAttr(profile.display_name) + ' · ' : '') + 'Đang xử lý: ' + escapeAttr(reader.progress_stage || reader.status) + progress
+          : count > 0
+            ? (profile ? readerStatusDot(profile.effective_status || profile.status) + ' ' + escapeAttr(profile.display_name) + ' · ' : '✓ ') + count + ' bài đã sẵn sàng'
             : 'Chờ Reader import';
         readerBox.innerHTML = '<b>Nội dung Reader</b><br>' + readerText;
+        if (profile) {
+          const help = document.getElementById('v4ReaderSelectionHelp');
+          if (help) help.innerHTML = 'Đang dùng ' + readerStatusDot(profile.effective_status || profile.status) + ' <b>' + escapeAttr(profile.display_name) + '</b> · ' + escapeAttr(readerStatusLabel({ status: profile.effective_status || profile.status }));
+        }
       }
+      renderV4ImportProgress(reader, count);
       if (publishBox) publishBox.innerHTML = '<b>Trạng thái Publish</b><br>' + (data?.course?.is_published ? '✓ Đã Publish' : 'Draft · chưa Publish');
       if (status) {
         status.innerText = data?.course?.is_published
           ? 'Nội dung V4 đã Publish. Có thể bật bán và lưu khóa.'
           : data?.readyForPreflight
             ? 'Nội dung đã có. Hãy kiểm tra trước phát hành.'
-            : source ? 'Nguồn đã gắn; Reader đang nhập lịch sử. Bấm Kiểm tra lại sau ít phút.' : 'Hãy dán link một bài Telegram để đăng ký nguồn.';
+            : source ? 'Nguồn đã gắn; Reader đang nhập lịch sử và màn hình sẽ tự cập nhật.' : 'Hãy dán link một bài Telegram để đăng ký nguồn.';
       }
+      scheduleV4StatusPolling(data);
       updateV4StepGuide();
     }
 
@@ -1365,11 +1491,12 @@
         button.innerText = 'Đang nhận kênh...';
       }
       try {
+        invalidateUnifiedV4Preflight();
         const readerProfileId = document.getElementById('v4ReaderProfileInput')?.value || '';
         await v4WorkflowRequest('registerSource', { courseSlug, sourceRef, readerProfileId });
         document.getElementById('v4TelegramPostLinkInput').value = '';
         showToast('Đã nhận kênh và xếp hàng nhập nội dung.');
-        await Promise.all([refreshV4WorkflowStatus(), loadV4Sources(true)]);
+        await Promise.all([refreshV4WorkflowStatus(), loadV4Sources(true), loadReaderManagerState()]);
       } finally {
         if (button) {
           button.disabled = false;
@@ -1384,17 +1511,36 @@
         showToast('Hãy lưu khóa V4 trước.');
         return;
       }
+      const testEmail = document.getElementById('v4TestEmailInput')?.value.trim().toLowerCase() || '';
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(testEmail)) {
+        alert('Hãy nhập Gmail hợp lệ để cấp quyền kiểm thử trước khi phát hành.');
+        document.getElementById('v4TestEmailInput')?.focus();
+        return;
+      }
       const button = document.getElementById('v4PreflightButton');
-      if (button) button.disabled = true;
+      const workflowStatus = document.getElementById('v4WorkflowStatus');
+      if (button) {
+        button.disabled = true;
+        button.innerText = '1/3 · Đang cập nhật trạng thái...';
+      }
       try {
-        const data = await v4WorkflowRequest('preflight', { courseSlug: slug });
-        renderV4Preflight(data);
-        showToast(data.ready ? 'V4 đã sẵn sàng Publish.' : 'Preflight còn mục cần xử lý.');
+        await refreshV4WorkflowStatus();
+        if (button) button.innerText = '2/3 · Đang cấp quyền Gmail test...';
+        if (workflowStatus) workflowStatus.innerText = 'Đang cấp quyền kiểm thử và chạy toàn bộ Preflight...';
+        const data = await v4WorkflowRequest('preflight', { courseSlug: slug, testEmail });
+        v4TestAccess = data.testAccess || null;
+        if (button) button.innerText = '3/3 · Đang tổng hợp kết quả...';
+        renderV4Preflight(data.preflight || data);
+        if (workflowStatus) workflowStatus.innerText = data.preflight?.ready ? 'Gmail test đã được cấp quyền. Nội dung sẵn sàng Publish.' : 'Đã kiểm tra xong; còn mục cần xử lý.';
+        showToast(data.preflight?.ready ? 'V4 đã sẵn sàng Publish.' : 'Preflight còn mục cần xử lý.');
       } catch (error) {
         if (error.preflight) renderV4Preflight(error.preflight);
         alert(error.message);
       } finally {
-        if (button) button.disabled = false;
+        if (button) {
+          button.disabled = false;
+          button.innerText = 'Kiểm tra trước phát hành';
+        }
       }
     }
 
@@ -1405,8 +1551,13 @@
       const button = document.getElementById('v4PublishButton');
       if (button) button.disabled = true;
       try {
-        await v4WorkflowRequest('publish', { courseSlug: slug });
+        const data = await v4WorkflowRequest('publish', { courseSlug: slug });
         showToast('Đã Publish nội dung V4.');
+        const result = document.getElementById('v4StudentLinkResult');
+        if (result && data.studentUrl) {
+          result.classList.remove('hidden');
+          result.innerHTML = '<b>✓ Khóa V4 đã sẵn sàng kiểm thử</b><br><span class="text-[11px] text-slate-500">Đăng nhập bằng ' + escapeAttr(data.testEmail || document.getElementById('v4TestEmailInput')?.value || 'Gmail đã cấp quyền') + '.</span><br><a class="inline-flex mt-2 px-3 py-2 rounded-lg bg-emerald-700 text-white text-xs font-black" href="' + escapeAttr(data.studentUrl) + '" target="_blank" rel="noopener">Mở khóa học V4 để test ↗</a>';
+        }
         await loadCourses();
         await refreshV4WorkflowStatus();
       } catch (error) {

@@ -141,7 +141,7 @@ async function status(courseSlug) {
   }
   const { data: course, error: courseError } = await supabase
     .from('courses')
-    .select('id,slug,title,delivery_mode,is_published,active,sync_lms_status,sync_error')
+    .select('id,slug,title,delivery_mode,is_published,active,sync_lms_status,sync_error,raw_data')
     .eq('slug', slug)
     .maybeSingle();
   if (courseError) throw courseError;
@@ -197,7 +197,7 @@ async function readerManagerAction(body) {
   return internalPost(`${clonerUrl}/api/admin?action=reader-manager`, secret, body);
 }
 
-async function lmsAction(action, courseSlug, published) {
+async function lmsAction(action, courseSlug, options = {}) {
   const slug = clean(courseSlug);
   if (!validSlug(slug)) {
     const error = new Error('Slug khóa học không hợp lệ');
@@ -208,7 +208,8 @@ async function lmsAction(action, courseSlug, published) {
   return internalPost(`${lmsUrl}/api/sync`, secret, {
     action,
     courseSlug: slug,
-    ...(published === undefined ? {} : { published: published === true })
+    ...(options.published === undefined ? {} : { published: options.published === true }),
+    ...(clean(options.testEmail) ? { testEmail: clean(options.testEmail) } : {})
   });
 }
 
@@ -243,13 +244,15 @@ export async function handleV4Workflow(req, res) {
       })) });
     }
     if (action === 'preflight') {
-      return res.status(200).json(await lmsAction('v4Preflight', req.body?.courseSlug));
+      return res.status(200).json(await lmsAction('v4PrepareRelease', req.body?.courseSlug, {
+        testEmail: req.body?.testEmail
+      }));
     }
     if (action === 'publish') {
-      return res.status(200).json(await lmsAction('setV4Published', req.body?.courseSlug, true));
+      return res.status(200).json(await lmsAction('setV4Published', req.body?.courseSlug, { published: true }));
     }
     if (action === 'unpublish') {
-      return res.status(200).json(await lmsAction('setV4Published', req.body?.courseSlug, false));
+      return res.status(200).json(await lmsAction('setV4Published', req.body?.courseSlug, { published: false }));
     }
     return res.status(400).json({ success: false, error: 'Thao tác V4 không hợp lệ' });
   } catch (error) {

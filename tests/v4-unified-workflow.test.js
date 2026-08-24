@@ -23,9 +23,10 @@ test('new Telegram source registration is server-to-server and fail-closed', () 
 
 test('full preflight and publish reuse the LMS internal bridge', () => {
   const workflow = read('utils/v4-workflow.js');
-  assert.match(workflow, /lmsAction\('v4Preflight'/);
+  assert.match(workflow, /lmsAction\('v4PrepareRelease'/);
+  assert.match(workflow, /testEmail/);
   assert.match(workflow, /lmsAction\('setV4Published'/);
-  assert.match(workflow, /published === true/);
+  assert.match(workflow, /published:\s*true/);
 });
 
 test('workflow status reads Reader state without mutating real data', () => {
