@@ -4,6 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Admin - Quản trị Khóa học</title>
+  <script>
+    window.cloneRuntimeConfigPromise=fetch('/api/config?runtime=1',{cache:'no-store'}).then(response=>{
+      if(!response.ok)throw new Error('clone_runtime_config_unavailable');
+      return response.json();
+    }).then(config=>{
+      window.CLONE_RUNTIME_CONFIG=config;
+      const apply=()=>{const link=document.getElementById('v4ClonerAdminLink');if(link)link.href=new URL('/',config.telegramClonerUrl).toString()};
+      if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',apply,{once:true});else apply();
+      return config;
+    });
+  </script>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
@@ -337,7 +348,7 @@
               </select>
               <p id="v4SourceHelp" class="text-[11px] text-slate-500 mt-2">Nguồn phải có ít nhất 1 bài đã index trước khi chuyển khóa sang Sẵn sàng.</p>
               <div class="mt-3 flex flex-wrap gap-2">
-                <a href="https://reader.yeubep.shop/" target="_blank" rel="noopener" class="inline-flex px-3 py-2 bg-white border border-violet-200 text-violet-700 rounded-xl text-[11px] font-black hover:bg-violet-100 transition">Mở quản trị nguồn nâng cao</a>
+                <a id="v4ClonerAdminLink" href="#" target="_blank" rel="noopener" class="inline-flex px-3 py-2 bg-white border border-violet-200 text-violet-700 rounded-xl text-[11px] font-black hover:bg-violet-100 transition">Mở quản trị nguồn nâng cao</a>
                 <span class="text-[10px] text-slate-400 self-center">Kênh cũ vẫn tiếp tục index live dù không còn là MASTER.</span>
               </div>
               </div>

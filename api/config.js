@@ -1,8 +1,14 @@
 import { supabase } from '../utils/supabase.js';
 import { normalizeDeliveryMode } from '../utils/delivery-policy.js';
+import { cloneConfig } from '../utils/clone-config.js';
 
 export default async function handler(req, res) {
   try {
+    const runtime = cloneConfig();
+    if (String(req.query?.runtime || '') === '1') {
+      res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=60');
+      return res.status(200).json(runtime);
+    }
     const courseSlug = req.query.course || 'donut';
     const { data: course, error } = await supabase
       .from('courses')
@@ -33,7 +39,11 @@ export default async function handler(req, res) {
       transferNote: rawData.transferNote || '',
       qrImageUrl: rawData.qrImageUrl || '',
       deliveryMode,
-      lmsPublicUrl: String(process.env.LMS_PUBLIC_URL || 'https://hoc.yeubep.shop').trim().replace(/\/+$/, ''),
+      lmsPublicUrl: runtime.lmsPublicUrl,
+      commercePublicUrl: runtime.commercePublicUrl,
+      v4PublicUrl: runtime.v4PublicUrl,
+      telegramClonerUrl: runtime.telegramClonerUrl,
+      legacyPortalPublicUrl: runtime.legacyPortalPublicUrl,
       telegramReady: deliveryMode !== 'telegram' || Boolean(String(course.telegram_chat_id || '').trim())
     });
   } catch (error) {

@@ -1,13 +1,15 @@
 import { supabase } from './supabase.js';
+import { cloneConfig } from './clone-config.js';
 
 const clean = value => String(value || '').trim();
 const normalizeBase = value => clean(value).replace(/\/$/, '');
 const validSlug = value => /^[a-z0-9_-]+$/.test(clean(value));
 
 function internalConfig() {
+  const runtime = cloneConfig();
   const secret = clean(process.env.INTERNAL_SYNC_SECRET);
-  const lmsUrl = normalizeBase(process.env.SYSTEM3_URL || process.env.LMS_PUBLIC_URL);
-  const clonerUrl = normalizeBase(process.env.TELEGRAM_CLONER_URL || 'https://reader.yeubep.shop');
+  const lmsUrl = normalizeBase(runtime.lmsPublicUrl);
+  const clonerUrl = normalizeBase(runtime.telegramClonerUrl);
   if (!secret) {
     const error = new Error('Thiếu INTERNAL_SYNC_SECRET cho quy trình V4');
     error.statusCode = 503;
