@@ -27,4 +27,6 @@ jobs:
           node --check utils/delivery-policy.js
           node --check utils/v4-sync-helpers.js
       - name: Regression tests
-        run: node --test tests/*.test.js
+        run: npm test
+      - name: Clone configuration isolation
+        run: npm run check:clone

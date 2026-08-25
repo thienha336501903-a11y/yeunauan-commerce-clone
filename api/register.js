@@ -3,6 +3,7 @@ import { v2 as cloudinary } from 'cloudinary';
 import { supabase } from '../utils/supabase.js';
 import { createOrderInvite } from '../utils/telegram.js';
 import { deliveryPolicy, normalizeDeliveryMode } from '../utils/delivery-policy.js';
+import { cloneConfig } from '../utils/clone-config.js';
 
 const MAX_BILL_BYTES = 5 * 1024 * 1024;
 const ALLOWED_BILL_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -17,6 +18,7 @@ const isValidBase64 = value => value.length > 0 && value.length % 4 === 0 && /^[
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   try {
+    const runtime = cloneConfig();
     const { gmail, telegramNick, billName, billType, billData, course } = req.body || {};
     const cleanEmail = normalizeEmail(gmail);
     const cleanTelegramNick = normalizeTelegramNick(telegramNick);
@@ -128,7 +130,7 @@ export default async function handler(req, res) {
 
     const managerPath = deliveryMode === 'v4'
       ? '/my-courses.html?registered=1&course=' + encodeURIComponent(courseSlug)
-      : 'https://yeunauan.live/my-courses';
+      : runtime.legacyPortalPublicUrl + '/my-courses';
     return res.status(200).json({ success: true, file: billLink, course: courseSlug, courseName: finalCourseName, orderId, deliveryMode, managerPath });
   } catch (error) {
     console.error('REGISTER_ERROR:', error);
