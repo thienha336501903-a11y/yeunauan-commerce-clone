@@ -3,6 +3,7 @@ import { v2 as cloudinary } from 'cloudinary';
 import { supabase } from '../utils/supabase.js';
 import { createOrderInvite } from '../utils/telegram.js';
 import { deliveryPolicy, normalizeDeliveryMode } from '../utils/delivery-policy.js';
+import { publicUrl } from '../utils/public-urls.js';
 
 const MAX_BILL_BYTES = 5 * 1024 * 1024;
 const ALLOWED_BILL_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -126,10 +127,9 @@ export default async function handler(req, res) {
       }
     }
 
-    const managerPath = deliveryMode === 'v4'
-      ? '/my-courses.html?registered=1&course=' + encodeURIComponent(courseSlug)
-      : 'https://yeunauan.live/my-courses';
-    return res.status(200).json({ success: true, file: billLink, course: courseSlug, courseName: finalCourseName, orderId, deliveryMode, managerPath });
+    const lmsPublicUrl = publicUrl('LMS_PUBLIC_URL');
+    const managerPath = '/my-courses.html?registered=1&course=' + encodeURIComponent(courseSlug);
+    return res.status(200).json({ success: true, file: billLink, course: courseSlug, courseName: finalCourseName, orderId, deliveryMode, managerPath, lmsPublicUrl });
   } catch (error) {
     console.error('REGISTER_ERROR:', error);
     return res.status(500).json({ error: 'Không thể ghi nhận đăng ký. Vui lòng thử lại' });

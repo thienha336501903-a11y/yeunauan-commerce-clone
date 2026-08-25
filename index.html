@@ -5,12 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Pinterest Food Studio — Đăng ký khóa học</title>
 <script>
-(()=>{
-  const host=String(location.hostname||'').toLowerCase();
+(async()=>{
   const params=new URLSearchParams(location.search);
-  if((host==='yeubep.shop'||host==='www.yeubep.shop')&&!params.has('course')){
-    location.replace('https://hoc.yeubep.shop/my-courses.html');
-  }
+  if(params.has('course'))return;
+  try{
+    const response=await fetch('/api/runtime-config',{cache:'no-store'});
+    if(!response.ok)return;
+    const config=await response.json();
+    if(location.origin===config.commercePublicUrl)location.replace(config.lmsPublicUrl+'/my-courses.html');
+  }catch{}
 })();
 </script>
 <link rel="preconnect" href="https://cdn.tailwindcss.com">
@@ -276,7 +279,7 @@ function applyDeliveryCopy(data){
     document.getElementById('transferNote').innerText=data.transferNote||'';
   }
 }
-async function loadConfig(){try{const params=new URLSearchParams(window.location.search);const course=params.get('course')||'banhmi4k';const res=await fetch(`/api/config?course=${encodeURIComponent(course)}`,{cache:'no-store'});const data=await res.json();window.LMS_PUBLIC_URL=data.lmsPublicUrl||'https://hoc.yeubep.shop';window.currentDeliveryMode=['telegram','v4'].includes(data.deliveryMode)?data.deliveryMode:'lms';window.currentCourseName=data.courseName||'';document.getElementById('courseName').innerText=window.currentCourseName;{const courseImg=document.getElementById('courseImage');const normalizedImage=normalizeImageUrl(data.imageUrl)||COURSE_IMAGE_PLACEHOLDER;courseImg.setAttribute('data-original-src',data.imageUrl||'');courseImg.src=normalizedImage;}document.getElementById('bankName').innerText=data.bankName||'';document.getElementById('bankAccount').innerText=data.bankAccount||'';document.getElementById('bankOwner').innerText=data.bankOwner||'';document.getElementById('price').innerText=data.price||'';document.getElementById('pricePayment').innerText=data.price||'';applyDeliveryCopy(data);if(data.qrImageUrl&&data.qrImageUrl.trim()!==''){document.getElementById('qrImage').src=data.qrImageUrl;document.getElementById('qrBox').classList.remove('hidden');document.getElementById('downloadQrBox').classList.remove('hidden');document.getElementById('qrEmpty').classList.add('hidden')}else{document.getElementById('qrBox').classList.add('hidden');document.getElementById('downloadQrBox').classList.add('hidden');document.getElementById('qrEmpty').classList.remove('hidden')}}catch(err){console.log('Không tải được cấu hình:',err)}}
+async function loadConfig(){try{const params=new URLSearchParams(window.location.search);const course=params.get('course')||'banhmi4k';const res=await fetch(`/api/config?course=${encodeURIComponent(course)}`,{cache:'no-store'});const data=await res.json();if(!res.ok)throw new Error(data.error||'Không tải được cấu hình');window.LMS_PUBLIC_URL=data.lmsPublicUrl;window.currentDeliveryMode=['telegram','v4'].includes(data.deliveryMode)?data.deliveryMode:'lms';window.currentCourseName=data.courseName||'';document.getElementById('courseName').innerText=window.currentCourseName;{const courseImg=document.getElementById('courseImage');const normalizedImage=normalizeImageUrl(data.imageUrl)||COURSE_IMAGE_PLACEHOLDER;courseImg.setAttribute('data-original-src',data.imageUrl||'');courseImg.src=normalizedImage;}document.getElementById('bankName').innerText=data.bankName||'';document.getElementById('bankAccount').innerText=data.bankAccount||'';document.getElementById('bankOwner').innerText=data.bankOwner||'';document.getElementById('price').innerText=data.price||'';document.getElementById('pricePayment').innerText=data.price||'';applyDeliveryCopy(data);if(data.qrImageUrl&&data.qrImageUrl.trim()!==''){document.getElementById('qrImage').src=data.qrImageUrl;document.getElementById('qrBox').classList.remove('hidden');document.getElementById('downloadQrBox').classList.remove('hidden');document.getElementById('qrEmpty').classList.add('hidden')}else{document.getElementById('qrBox').classList.add('hidden');document.getElementById('downloadQrBox').classList.add('hidden');document.getElementById('qrEmpty').classList.remove('hidden')}}catch(err){console.log('Không tải được cấu hình:',err)}}
 loadConfig();
 document.getElementById('bill').addEventListener('change',function(){const file=this.files[0];const preview=document.getElementById('billPreview');const uploadText=document.getElementById('uploadText');if(!file){preview.classList.add('hidden');preview.src='';uploadText.classList.remove('hidden');return}const allowedTypes=['image/jpeg','image/png','image/webp'];if(!allowedTypes.includes(file.type)){alert('Chỉ nhận file JPG, PNG hoặc WEBP.');this.value='';preview.classList.add('hidden');preview.src='';uploadText.classList.remove('hidden');return}if(file.size>5*1024*1024){alert('Ảnh bill quá lớn. Vui lòng chọn ảnh dưới 5MB.');this.value='';preview.classList.add('hidden');preview.src='';uploadText.classList.remove('hidden');return}preview.src=URL.createObjectURL(file);preview.classList.remove('hidden');uploadText.classList.add('hidden')});
 document.getElementById('regForm').addEventListener('submit',async(e)=>{
@@ -360,15 +363,17 @@ document.getElementById('regForm').addEventListener('submit',async(e)=>{
             btn.innerText='GỬI ĐĂNG KÝ';
           }
         }else{
-          const targetLmsUrl = (window.LMS_PUBLIC_URL || 'https://hoc.yeubep.shop').replace(/\/$/, '');
+          const targetLmsUrl = String(data.lmsPublicUrl||window.LMS_PUBLIC_URL||'').replace(/\/$/, '');
+          if(!targetLmsUrl)throw new Error('Thiếu LMS_PUBLIC_URL');
           if(data.deliveryMode==='v4'){
             console.log('[Checkout] redirecting to V4 course manager');
             const courseSlug=data.course||new URLSearchParams(window.location.search).get('course')||'';
             const managerPath=data.managerPath||('/my-courses.html?registered=1&course='+encodeURIComponent(courseSlug));
             window.location.href=managerPath.startsWith('http')?managerPath:(targetLmsUrl+managerPath);
           }else{
-            console.log('[Checkout] redirecting to original student portal');
-            window.location.href = 'https://yeunauan.live/my-courses';
+            console.log('[Checkout] redirecting to LMS course manager');
+            const managerPath=data.managerPath||'/my-courses.html';
+            window.location.href=managerPath.startsWith('http')?managerPath:(targetLmsUrl+managerPath);
           }
         }
       }else{

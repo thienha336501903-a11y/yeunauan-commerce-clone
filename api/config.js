@@ -1,5 +1,6 @@
 import { supabase } from '../utils/supabase.js';
 import { normalizeDeliveryMode } from '../utils/delivery-policy.js';
+import { publicUrl } from '../utils/public-urls.js';
 
 export default async function handler(req, res) {
   try {
@@ -33,7 +34,7 @@ export default async function handler(req, res) {
       transferNote: rawData.transferNote || '',
       qrImageUrl: rawData.qrImageUrl || '',
       deliveryMode,
-      lmsPublicUrl: String(process.env.LMS_PUBLIC_URL || 'https://hoc.yeubep.shop').trim().replace(/\/+$/, ''),
+      lmsPublicUrl: publicUrl('LMS_PUBLIC_URL'),
       telegramReady: deliveryMode !== 'telegram' || Boolean(String(course.telegram_chat_id || '').trim())
     });
   } catch (error) {

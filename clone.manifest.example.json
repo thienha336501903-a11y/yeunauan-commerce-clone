@@ -1,0 +1,11 @@
+{
+  "version": "CLONE_FACTORY_V1",
+  "systemId": "system-c",
+  "seedMode": "template",
+  "domains": {
+    "commerce": "https://shop.example.com",
+    "lms": "https://learn.example.com",
+    "reader": "https://reader.example.com"
+  },
+  "features": { "lms": true, "telegram": true, "v4": true }
+}

@@ -2,6 +2,10 @@
 "name": "landing-page",
 "version": "1.0.0",
 "type": "module",
+"scripts": {
+"test": "node --test",
+"clone:validate": "node scripts/verify-clone-config.mjs"
+},
 "dependencies": {
 "@supabase/supabase-js": "^2.39.8",
 "cloudinary": "^2.3.0"
