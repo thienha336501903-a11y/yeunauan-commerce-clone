@@ -33,6 +33,7 @@ export default async function handler(req, res) {
       transferNote: rawData.transferNote || '',
       qrImageUrl: rawData.qrImageUrl || '',
       deliveryMode,
+      lmsPublicUrl: String(process.env.LMS_PUBLIC_URL || 'https://hoc.yeubep.shop').trim().replace(/\/+$/, ''),
       telegramReady: deliveryMode !== 'telegram' || Boolean(String(course.telegram_chat_id || '').trim())
     });
   } catch (error) {
