@@ -9,7 +9,7 @@
   const params=new URLSearchParams(location.search);
   if(params.has('course'))return;
   try{
-    const response=await fetch('/api/runtime-config',{cache:'no-store'});
+    const response=await fetch('/api/config?runtime=1',{cache:'no-store'});
     if(!response.ok)return;
     const config=await response.json();
     if(location.origin===config.commercePublicUrl)location.replace(config.lmsPublicUrl+'/my-courses.html');

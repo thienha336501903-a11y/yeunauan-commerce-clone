@@ -1,9 +1,12 @@
 import { supabase } from '../utils/supabase.js';
 import { normalizeDeliveryMode } from '../utils/delivery-policy.js';
-import { publicUrl } from '../utils/public-urls.js';
+import { commerceRuntimeConfig, publicUrl } from '../utils/public-urls.js';
 
 export default async function handler(req, res) {
   try {
+    if (String(req.query.runtime || '') === '1') {
+      return res.status(200).json(commerceRuntimeConfig());
+    }
     const courseSlug = req.query.course || 'donut';
     const { data: course, error } = await supabase
       .from('courses')

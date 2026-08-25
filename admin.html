@@ -2256,7 +2256,7 @@
 
     async function loadRuntimeLinks() {
       try {
-        const response = await fetch('/api/runtime-config', { cache: 'no-store' });
+        const response = await fetch('/api/config?runtime=1', { cache: 'no-store' });
         if (!response.ok) return;
         const config = await response.json();
         const link = document.getElementById('readerAdminLink');
