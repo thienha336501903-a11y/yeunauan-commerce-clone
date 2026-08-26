@@ -1,6 +1,13 @@
 import { supabase } from "../utils/supabase.js";
 import { syncV4EnrollmentToLms } from "../utils/v4-sync-helpers.js";
 
+function syncFailed(syncResults) {
+  if (!syncResults) return true;
+  const lmsFailed = String(syncResults.lms || "").toUpperCase() === "FAILED";
+  const portalFailed = String(syncResults.portal || "").toUpperCase() === "FAILED";
+  return lmsFailed || portalFailed || Boolean(syncResults.error);
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -15,7 +22,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { course } = req.body;
+    const course = String(req.body?.course || "").trim();
 
     if (!course) {
       return res.status(400).json({ error: "Thiếu course slug" });
@@ -30,6 +37,7 @@ export default async function handler(req, res) {
       .eq("status", "Chờ duyệt");
 
     if (pendingError) throw pendingError;
+
     const enrollmentOrders = (pendingOrders || []).filter(order => order.delivery_mode !== "telegram");
     const skippedTelegram = (pendingOrders || []).length - enrollmentOrders.length;
 
@@ -45,40 +53,84 @@ export default async function handler(req, res) {
       updatedOrders = data || [];
     }
 
-    const gmails = (updatedOrders || []).map((o) => o.customer_email).filter(Boolean);
+    const gmails = updatedOrders.map(order => order.customer_email).filter(Boolean);
+    const results = [];
 
-    // Đồng bộ quyền học viên sang các hệ thống ngoại vi
-    if (updatedOrders && updatedOrders.length > 0) {
+    // Mỗi đơn sync độc lập. Một học viên lỗi không được làm dừng các học viên còn lại.
+    for (const order of updatedOrders) {
+      if (!order.customer_email) {
+        const syncResults = {
+          lms: "FAILED",
+          portal: String(order.delivery_mode || "").toLowerCase() === "v4" ? "SKIPPED_V4" : "FAILED",
+          error: "Missing customer email"
+        };
+        await supabase
+          .from("orders")
+          .update({
+            sync_lms_status: syncResults.lms,
+            sync_portal_status: syncResults.portal,
+            sync_error: syncResults.error
+          })
+          .eq("id", order.id);
+        results.push({ id: order.id, ok: false, sync: syncResults });
+        continue;
+      }
+
       try {
-        for (const order of updatedOrders) {
-          if (!order.customer_email) continue;
-          let syncResults;
-          if (String(order.delivery_mode || '').toLowerCase() === 'v4') {
-            syncResults = await syncV4EnrollmentToLms(order, "create");
-          } else {
-            const { syncEnrollmentToExternalSystems } = await import("../utils/sync-helpers.js");
-            syncResults = await syncEnrollmentToExternalSystems(order, "create");
-          }
-          
-          await supabase
-            .from("orders")
-            .update({
-              sync_lms_status: syncResults.lms,
-              sync_portal_status: syncResults.portal,
-              sync_error: syncResults.error
-            })
-            .eq("id", order.id);
+        let syncResults;
+        if (String(order.delivery_mode || "").toLowerCase() === "v4") {
+          syncResults = await syncV4EnrollmentToLms(order, "create");
+        } else {
+          const { syncEnrollmentToExternalSystems } = await import("../utils/sync-helpers.js");
+          syncResults = await syncEnrollmentToExternalSystems(order, "create");
         }
+
+        const failed = syncFailed(syncResults);
+        const { error: statusError } = await supabase
+          .from("orders")
+          .update({
+            sync_lms_status: syncResults.lms,
+            sync_portal_status: syncResults.portal,
+            sync_error: syncResults.error
+          })
+          .eq("id", order.id);
+        if (statusError) throw statusError;
+
+        results.push({ id: order.id, ok: !failed, sync: syncResults });
       } catch (syncErr) {
-        console.error("Bulk approve sync error:", syncErr);
+        const message = syncErr?.message || String(syncErr);
+        console.error("Bulk approve sync error:", order.id, message);
+        await supabase
+          .from("orders")
+          .update({
+            sync_lms_status: "FAILED",
+            sync_portal_status: String(order.delivery_mode || "").toLowerCase() === "v4" ? "SKIPPED_V4" : "FAILED",
+            sync_error: message
+          })
+          .eq("id", order.id);
+        results.push({
+          id: order.id,
+          ok: false,
+          sync: {
+            lms: "FAILED",
+            portal: String(order.delivery_mode || "").toLowerCase() === "v4" ? "SKIPPED_V4" : "FAILED",
+            error: message
+          }
+        });
       }
     }
 
+    const syncSucceeded = results.filter(result => result.ok).length;
+    const syncFailedCount = results.length - syncSucceeded;
+
     return res.status(200).json({
       success: true,
-      count: gmails.length,
+      count: updatedOrders.length,
       gmails,
-      skippedTelegram
+      skippedTelegram,
+      syncSucceeded,
+      syncFailed: syncFailedCount,
+      results
     });
   } catch (error) {
     console.error("APPROVE_ALL_ERROR:", error);
