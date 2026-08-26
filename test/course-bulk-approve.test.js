@@ -14,6 +14,7 @@ test('pending course cards expose a course-scoped bulk approve action', () => {
 
 test('bulk approval only touches pending orders from the selected course', () => {
   const source = read('api/approve-all.js');
+  assert.match(source, /String\(req\.body\?\.course \|\| ""\)\.trim\(\)/);
   assert.match(source, /\.eq\("course_slug", course\)/);
   assert.match(source, /\.eq\("status", "Chờ duyệt"\)/);
   assert.match(source, /filter\(order => order\.delivery_mode !== "telegram"\)/);
