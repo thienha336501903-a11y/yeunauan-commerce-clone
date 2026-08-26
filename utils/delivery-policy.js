@@ -1,4 +1,4 @@
-export const DELIVERY_MODES = Object.freeze(['lms', 'telegram', 'v4']);
+export const DELIVERY_MODES = Object.freeze(['lms', 'telegram', 'v4', 'v5']);
 
 export function normalizeDeliveryMode(value) {
   const normalized = String(value || '').trim().toLowerCase();
@@ -13,6 +13,6 @@ export function deliveryPolicy(value) {
     requiresTelegramUsername: mode === 'telegram',
     createsLmsEnrollment: mode !== 'telegram',
     createsTelegramInvite: mode === 'telegram',
-    learningTarget: mode === 'telegram' ? 'telegram' : (mode === 'v4' ? 'v4' : 'lms')
+    learningTarget: mode === 'telegram' ? 'telegram' : (mode === 'v4' ? 'v4' : (mode === 'v5' ? 'v5' : 'lms'))
   });
 }
