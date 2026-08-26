@@ -2,12 +2,21 @@ import { v2 as cloudinary } from 'cloudinary';
 import { supabase } from '../utils/supabase.js';
 import { extractCloudinaryBillPublicId } from '../utils/cloudinary-public-id.js';
 import { syncV4EnrollmentToLms } from '../utils/v4-sync-helpers.js';
+import { syncV5EnrollmentToLms } from '../utils/v5-sync-helpers.js';
 
 const VALID_ORDER_STATUSES = new Set(['Chờ duyệt', 'Đã duyệt', 'Từ chối']);
 const TEST_TITLE_PREFIX = '__clone_factory_test';
 const TEST_SLUG_PATTERN = /^clone-factory-test(?:-|$)/;
 const TEST_DELETE_CONFIRMATION = 'DELETE_CLONE_FACTORY_TEST';
 const isUuid = value => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+
+async function syncEnrollmentForOrder(order, actionType) {
+  const mode = String(order.delivery_mode || '').toLowerCase();
+  if (mode === 'v4') return syncV4EnrollmentToLms(order, actionType);
+  if (mode === 'v5') return syncV5EnrollmentToLms(order, actionType);
+  const { syncEnrollmentToExternalSystems } = await import('../utils/sync-helpers.js');
+  return syncEnrollmentToExternalSystems(order, actionType);
+}
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -25,8 +34,7 @@ export default async function handler(req, res) {
       return res.status(200).json(orders.map(o => {
         const timeFormatted = o.created_at ? new Date(o.created_at).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' }) : '';
         return {
-          ...(o.raw_data || {}),
-          id: o.id, created_at: o.created_at, 'Thời gian': timeFormatted, time: timeFormatted,
+          ...(o.raw_data || {}), id: o.id, created_at: o.created_at, 'Thời gian': timeFormatted, time: timeFormatted,
           'Course': o.course_slug, course: o.course_slug, 'Tên khóa học': o.course_title, courseName: o.course_title,
           'Gmail': o.customer_email || '', gmail: o.customer_email || '', 'Telegram khai báo': o.telegram_claimed_username || '', telegramClaimedUsername: o.telegram_claimed_username || '', 'Link bill': o.proof_image_url, billLink: o.proof_image_url,
           'Trạng thái': o.status, status: o.status, note: o.note || '', customer_phone: o.customer_phone || '', customer_name: o.customer_name || '',
@@ -40,44 +48,25 @@ export default async function handler(req, res) {
     if (req.method === 'PUT') {
       const { id, status, note, customer_name, customer_phone, gmail, action } = req.body || {};
       if (!id) return res.status(400).json({ error: 'Thiếu ID đơn hàng để cập nhật' });
-
       const { data: existingOrder, error: fetchErr } = await supabase.from('orders').select('*').eq('id', id).maybeSingle();
       if (fetchErr) throw fetchErr;
       if (!existingOrder) return res.status(404).json({ error: 'Không tìm thấy đơn hàng' });
-      if (status !== undefined && !VALID_ORDER_STATUSES.has(status)) {
-        return res.status(400).json({ error: 'Trạng thái đơn hàng không hợp lệ' });
-      }
+      if (status !== undefined && !VALID_ORDER_STATUSES.has(status)) return res.status(400).json({ error: 'Trạng thái đơn hàng không hợp lệ' });
 
       if (action === 'resync') {
         if (existingOrder.delivery_mode === 'telegram') {
           const syncResults = { lms: 'SKIPPED_TELEGRAM', portal: 'SKIPPED_TELEGRAM', error: null };
-          const { data: updatedOrder, error: updateErr } = await supabase
-            .from('orders')
-            .update({ sync_lms_status: syncResults.lms, sync_portal_status: syncResults.portal, sync_error: null })
-            .eq('id', id)
-            .select()
-            .single();
+          const { data: updatedOrder, error: updateErr } = await supabase.from('orders').update({ sync_lms_status: syncResults.lms, sync_portal_status: syncResults.portal, sync_error: null }).eq('id', id).select().single();
           if (updateErr) throw updateErr;
           return res.status(200).json({ success: true, data: { ...updatedOrder, syncResults } });
         }
-
-        const actionType = existingOrder.status === 'Đã duyệt' ? 'create' : 'revoke';
-        let syncResults;
-        if (String(existingOrder.delivery_mode || '').toLowerCase() === 'v4') {
-          syncResults = await syncV4EnrollmentToLms(existingOrder, actionType);
-        } else {
-          const { syncEnrollmentToExternalSystems } = await import('../utils/sync-helpers.js');
-          syncResults = await syncEnrollmentToExternalSystems(existingOrder, actionType);
-        }
+        const syncResults = await syncEnrollmentForOrder(existingOrder, existingOrder.status === 'Đã duyệt' ? 'create' : 'revoke');
         const { data: updatedOrder, error: updateErr } = await supabase.from('orders').update({ sync_lms_status: syncResults.lms, sync_portal_status: syncResults.portal, sync_error: syncResults.error }).eq('id', id).select().single();
         if (updateErr) throw updateErr;
         return res.status(200).json({ success: true, data: { ...updatedOrder, syncResults } });
       }
 
-      if (existingOrder.delivery_mode === 'telegram' && status !== undefined && status !== existingOrder.status) {
-        return res.status(409).json({ error: 'Đơn Telegram phải được duyệt hoặc từ chối trong bot Telegram để quyền gia nhập và trạng thái đơn luôn đồng bộ.' });
-      }
-
+      if (existingOrder.delivery_mode === 'telegram' && status !== undefined && status !== existingOrder.status) return res.status(409).json({ error: 'Đơn Telegram phải được duyệt hoặc từ chối trong bot Telegram để quyền gia nhập và trạng thái đơn luôn đồng bộ.' });
       const updateData = { updated_at: new Date().toISOString() };
       if (status !== undefined) updateData.status = status;
       if (note !== undefined) updateData.note = note;
@@ -88,74 +77,41 @@ export default async function handler(req, res) {
         if (!validatedGmail) return res.status(400).json({ error: 'Địa chỉ email không hợp lệ' });
         updateData.customer_email = validatedGmail;
       }
-
       const { data, error } = await supabase.from('orders').update(updateData).eq('id', id).select().single();
       if (error) throw error;
-
       let syncResults = null;
       let updatedData = { ...data };
       if (status !== undefined && data.delivery_mode !== 'telegram') {
         try {
-          const actionType = status === 'Đã duyệt' ? 'create' : 'revoke';
-          if (String(data.delivery_mode || '').toLowerCase() === 'v4') {
-            syncResults = await syncV4EnrollmentToLms(data, actionType);
-          } else {
-            const { syncEnrollmentToExternalSystems } = await import('../utils/sync-helpers.js');
-            syncResults = await syncEnrollmentToExternalSystems(data, actionType);
-          }
+          syncResults = await syncEnrollmentForOrder(data, status === 'Đã duyệt' ? 'create' : 'revoke');
           const { data: finalData } = await supabase.from('orders').update({ sync_lms_status: syncResults.lms, sync_portal_status: syncResults.portal, sync_error: syncResults.error }).eq('id', id).select().single();
           if (finalData) updatedData = finalData;
         } catch (syncErr) { console.error('Order sync trigger error:', syncErr); }
-      } else if (data.delivery_mode === 'telegram') {
-        syncResults = { lms: 'SKIPPED_TELEGRAM', portal: 'SKIPPED_TELEGRAM', error: null };
-      }
+      } else if (data.delivery_mode === 'telegram') syncResults = { lms: 'SKIPPED_TELEGRAM', portal: 'SKIPPED_TELEGRAM', error: null };
       return res.status(200).json({ success: true, data: { ...updatedData, syncResults } });
     }
+
     if (req.method === 'DELETE') {
       const { id, confirmation } = req.body || {};
-      if (!isUuid(id) || confirmation !== TEST_DELETE_CONFIRMATION) {
-        return res.status(400).json({ error: 'Yêu cầu cleanup test không hợp lệ' });
-      }
-
+      if (!isUuid(id) || confirmation !== TEST_DELETE_CONFIRMATION) return res.status(400).json({ error: 'Yêu cầu cleanup test không hợp lệ' });
       const { data: order, error: orderError } = await supabase.from('orders').select('*').eq('id', id).maybeSingle();
       if (orderError) throw orderError;
       if (!order) return res.status(404).json({ error: 'Không tìm thấy order test' });
-
       const courseSlug = String(order.course_slug || '').trim();
       const billName = String(order.raw_data?.billName || '').trim();
       const { data: course, error: courseError } = await supabase.from('courses').select('id,title,slug').eq('slug', courseSlug).maybeSingle();
       if (courseError) throw courseError;
-
-      const safeTestOrder =
-        String(order.delivery_mode || '').toLowerCase() === 'v4' &&
-        TEST_SLUG_PATTERN.test(courseSlug) &&
-        billName.startsWith(TEST_TITLE_PREFIX) &&
-        String(order.course_title || '').startsWith(TEST_TITLE_PREFIX) &&
-        String(course?.title || '').startsWith(TEST_TITLE_PREFIX) &&
-        String(course?.slug || '') === courseSlug;
+      const safeTestOrder = String(order.delivery_mode || '').toLowerCase() === 'v4' && TEST_SLUG_PATTERN.test(courseSlug) && billName.startsWith(TEST_TITLE_PREFIX) && String(order.course_title || '').startsWith(TEST_TITLE_PREFIX) && String(course?.title || '').startsWith(TEST_TITLE_PREFIX) && String(course?.slug || '') === courseSlug;
       if (!safeTestOrder) return res.status(409).json({ error: 'Cleanup bị chặn: dữ liệu không phải clone factory test hợp lệ' });
-
       const publicId = String(order.raw_data?.billPublicId || '').trim() || extractCloudinaryBillPublicId(order.proof_image_url, courseSlug);
-      if (!publicId || !publicId.startsWith(`bill-chuyen-khoan/${courseSlug}/`)) {
-        return res.status(409).json({ error: 'Không xác định được Cloudinary public ID an toàn' });
-      }
-
+      if (!publicId || !publicId.startsWith(`bill-chuyen-khoan/${courseSlug}/`)) return res.status(409).json({ error: 'Không xác định được Cloudinary public ID an toàn' });
       const missingCloudinaryEnv = ['CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET'].filter(name => !process.env[name]);
       if (missingCloudinaryEnv.length) return res.status(500).json({ error: 'Thiếu cấu hình Cloudinary cleanup' });
       cloudinary.config({ cloud_name: process.env.CLOUDINARY_CLOUD_NAME, api_key: process.env.CLOUDINARY_API_KEY, api_secret: process.env.CLOUDINARY_API_SECRET });
       const cloudinaryResult = await cloudinary.uploader.destroy(publicId, { resource_type: 'image', invalidate: true });
-      if (!['ok', 'not found'].includes(String(cloudinaryResult?.result || '').toLowerCase())) {
-        throw new Error('Cloudinary không xác nhận xóa bill test');
-      }
-
-      const { data: removedEnrollments, error: enrollmentError } = await supabase
-        .from('student_enrollments')
-        .delete()
-        .eq('course_slug', courseSlug)
-        .eq('source_order_id', id)
-        .select('id');
+      if (!['ok', 'not found'].includes(String(cloudinaryResult?.result || '').toLowerCase())) throw new Error('Cloudinary không xác nhận xóa bill test');
+      const { data: removedEnrollments, error: enrollmentError } = await supabase.from('student_enrollments').delete().eq('course_slug', courseSlug).eq('source_order_id', id).select('id');
       if (enrollmentError) throw enrollmentError;
-
       const { error: deleteOrderError } = await supabase.from('orders').delete().eq('id', id);
       if (deleteOrderError) throw deleteOrderError;
       return res.status(200).json({ success: true, deletedOrderId: id, deletedEnrollmentCount: removedEnrollments?.length || 0, cloudinaryResult: cloudinaryResult.result });
