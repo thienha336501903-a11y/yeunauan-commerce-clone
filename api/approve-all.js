@@ -137,6 +137,7 @@ async function runV5PreviewE2E() {
   };
 
   try {
+    // Temporary Preview-only cross-repo target; bypass secret comes from Vercel env.
     process.env.V5_LMS_SYNC_URL = V5_E2E_LMS_PREVIEW;
 
     const courseSync = await syncV5CourseToLms({
