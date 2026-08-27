@@ -13,6 +13,7 @@ test('delivery policy preserves V5 instead of degrading it to legacy LMS', () =>
 
 test('V5 sync helper uses isolated Preview and Production targets and never legacy Portal', () => {
   const helper = read('utils/v5-sync-helpers.js');
+  assert.match(helper, /process\.env\.V5_SYNC_SECRET \|\| process\.env\.INTERNAL_SYNC_SECRET/);
   assert.match(helper, /process\.env\.VERCEL_ENV === 'preview' \? process\.env\.V5_LMS_SYNC_URL : ''/);
   assert.match(helper, /process\.env\.V5_LMS_PUBLIC_URL/);
   assert.match(helper, /cloneConfig\(\)\.v4PublicUrl/);
@@ -25,8 +26,8 @@ test('V5 sync helper uses isolated Preview and Production targets and never lega
   assert.doesNotMatch(helper, /process\.env\.LMS_PUBLIC_URL/);
 });
 
-test('Production V5 runtime ignores stale LMS_PUBLIC_URL and calls canonical V4/V5 runtime', async t => {
-  const keys = ['VERCEL_ENV', 'INTERNAL_SYNC_SECRET', 'V4_PUBLIC_URL', 'LMS_PUBLIC_URL', 'V5_LMS_PUBLIC_URL', 'V5_LMS_SYNC_URL'];
+test('Production V5 runtime ignores stale LMS_PUBLIC_URL and prefers dedicated V5 secret', async t => {
+  const keys = ['VERCEL_ENV', 'V5_SYNC_SECRET', 'INTERNAL_SYNC_SECRET', 'V4_PUBLIC_URL', 'LMS_PUBLIC_URL', 'V5_LMS_PUBLIC_URL', 'V5_LMS_SYNC_URL'];
   const before = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   const originalFetch = global.fetch;
   t.after(() => {
@@ -38,15 +39,18 @@ test('Production V5 runtime ignores stale LMS_PUBLIC_URL and calls canonical V4/
   });
 
   process.env.VERCEL_ENV = 'production';
-  process.env.INTERNAL_SYNC_SECRET = 'test-sync-secret';
+  process.env.V5_SYNC_SECRET = 'v5-dedicated-secret';
+  process.env.INTERNAL_SYNC_SECRET = 'legacy-secret';
   process.env.V4_PUBLIC_URL = 'https://v4-runtime.example';
   process.env.LMS_PUBLIC_URL = 'https://stale-lms.example';
   delete process.env.V5_LMS_PUBLIC_URL;
   delete process.env.V5_LMS_SYNC_URL;
 
   let calledUrl = '';
-  global.fetch = async url => {
+  let sentSecret = '';
+  global.fetch = async (url, options = {}) => {
     calledUrl = String(url);
+    sentSecret = String(options.headers?.['X-Sync-Secret'] || '');
     return { ok: true, status: 200, headers: new Headers(), text: async () => '' };
   };
 
@@ -59,6 +63,7 @@ test('Production V5 runtime ignores stale LMS_PUBLIC_URL and calls canonical V4/
   assert.equal(result.lms, 'SUCCESS');
   assert.equal(result.portal, 'SKIPPED_V5');
   assert.equal(calledUrl, 'https://v4-runtime.example/api/v5-sync');
+  assert.equal(sentSecret, 'v5-dedicated-secret');
   assert.doesNotMatch(calledUrl, /stale-lms/);
 });
 
