@@ -10,7 +10,8 @@ function baseResult(lmsUrl) {
 
 async function callV5(payload) {
   const secret = String(process.env.INTERNAL_SYNC_SECRET || '').trim();
-  const lmsUrl = normalizeBase(process.env.V5_LMS_SYNC_URL || process.env.SYSTEM3_URL || process.env.LMS_PUBLIC_URL);
+  const previewOverride = process.env.VERCEL_ENV === 'preview' ? process.env.V5_LMS_SYNC_URL : '';
+  const lmsUrl = normalizeBase(previewOverride || process.env.LMS_PUBLIC_URL || process.env.SYSTEM3_URL);
   const result = baseResult(lmsUrl);
 
   if (!lmsUrl) return result;
