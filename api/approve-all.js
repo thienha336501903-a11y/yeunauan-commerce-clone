@@ -8,34 +8,31 @@ function syncFailed(syncResults) {
   return lmsFailed || portalFailed || Boolean(syncResults.error);
 }
 
-export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+function skippedPortalForMode(mode) {
+  const normalized = String(mode || "").toLowerCase();
+  if (normalized === "v4") return "SKIPPED_V4";
+  if (normalized === "v5") return "SKIPPED_V5";
+  return "FAILED";
+}
 
-  // Xác thực quyền Admin
+export default async function handler(req, res) {
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+
   const adminPassword = req.headers["x-admin-password"];
   const systemPassword = process.env.ADMIN_PASSWORD;
-
   if (!adminPassword || adminPassword !== systemPassword) {
     return res.status(401).json({ error: "Unauthorized: Mật khẩu Admin không chính xác." });
   }
 
   try {
     const course = String(req.body?.course || "").trim();
+    if (!course) return res.status(400).json({ error: "Thiếu course slug" });
 
-    if (!course) {
-      return res.status(400).json({ error: "Thiếu course slug" });
-    }
-
-    // Telegram-direct must only be decided by the bot so invite/join state stays
-    // authoritative. Bulk approval is limited to enrollment-based modes.
     const { data: pendingOrders, error: pendingError } = await supabase
       .from("orders")
       .select("id, customer_email, course_slug, course_title, delivery_mode, status")
       .eq("course_slug", course)
       .eq("status", "Chờ duyệt");
-
     if (pendingError) throw pendingError;
 
     const enrollmentOrders = (pendingOrders || []).filter(order => order.delivery_mode !== "telegram");
@@ -56,22 +53,18 @@ export default async function handler(req, res) {
     const gmails = updatedOrders.map(order => order.customer_email).filter(Boolean);
     const results = [];
 
-    // Mỗi đơn sync độc lập. Một học viên lỗi không được làm dừng các học viên còn lại.
     for (const order of updatedOrders) {
       if (!order.customer_email) {
         const syncResults = {
           lms: "FAILED",
-          portal: String(order.delivery_mode || "").toLowerCase() === "v4" ? "SKIPPED_V4" : "FAILED",
+          portal: skippedPortalForMode(order.delivery_mode),
           error: "Missing customer email"
         };
-        await supabase
-          .from("orders")
-          .update({
-            sync_lms_status: syncResults.lms,
-            sync_portal_status: syncResults.portal,
-            sync_error: syncResults.error
-          })
-          .eq("id", order.id);
+        await supabase.from("orders").update({
+          sync_lms_status: syncResults.lms,
+          sync_portal_status: syncResults.portal,
+          sync_error: syncResults.error
+        }).eq("id", order.id);
         results.push({ id: order.id, ok: false, sync: syncResults });
         continue;
       }
@@ -81,42 +74,30 @@ export default async function handler(req, res) {
         if (String(order.delivery_mode || "").toLowerCase() === "v4") {
           syncResults = await syncV4EnrollmentToLms(order, "create");
         } else {
+          // Generic helper now detects V5 and delegates to /api/v5-sync,
+          // while legacy LMS remains unchanged for delivery_mode=lms.
           const { syncEnrollmentToExternalSystems } = await import("../utils/sync-helpers.js");
           syncResults = await syncEnrollmentToExternalSystems(order, "create");
         }
 
         const failed = syncFailed(syncResults);
-        const { error: statusError } = await supabase
-          .from("orders")
-          .update({
-            sync_lms_status: syncResults.lms,
-            sync_portal_status: syncResults.portal,
-            sync_error: syncResults.error
-          })
-          .eq("id", order.id);
+        const { error: statusError } = await supabase.from("orders").update({
+          sync_lms_status: syncResults.lms,
+          sync_portal_status: syncResults.portal,
+          sync_error: syncResults.error
+        }).eq("id", order.id);
         if (statusError) throw statusError;
-
         results.push({ id: order.id, ok: !failed, sync: syncResults });
       } catch (syncErr) {
         const message = syncErr?.message || String(syncErr);
         console.error("Bulk approve sync error:", order.id, message);
-        await supabase
-          .from("orders")
-          .update({
-            sync_lms_status: "FAILED",
-            sync_portal_status: String(order.delivery_mode || "").toLowerCase() === "v4" ? "SKIPPED_V4" : "FAILED",
-            sync_error: message
-          })
-          .eq("id", order.id);
-        results.push({
-          id: order.id,
-          ok: false,
-          sync: {
-            lms: "FAILED",
-            portal: String(order.delivery_mode || "").toLowerCase() === "v4" ? "SKIPPED_V4" : "FAILED",
-            error: message
-          }
-        });
+        const portal = skippedPortalForMode(order.delivery_mode);
+        await supabase.from("orders").update({
+          sync_lms_status: "FAILED",
+          sync_portal_status: portal,
+          sync_error: message
+        }).eq("id", order.id);
+        results.push({ id: order.id, ok: false, sync: { lms: "FAILED", portal, error: message } });
       }
     }
 
@@ -134,8 +115,6 @@ export default async function handler(req, res) {
     });
   } catch (error) {
     console.error("APPROVE_ALL_ERROR:", error);
-    return res.status(500).json({
-      error: error.message
-    });
+    return res.status(500).json({ error: error.message });
   }
 }
