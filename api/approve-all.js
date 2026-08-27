@@ -109,25 +109,27 @@ async function approveCourse(course) {
     }
   }
 
+  const syncSucceeded = results.filter(result => result.ok).length;
+  const syncFailedCount = results.length - syncSucceeded;
+
   return {
     success: true,
     count: updatedOrders.length,
     gmails,
     skippedTelegram,
-    syncSucceeded: results.filter(result => result.ok).length,
-    syncFailed: results.filter(result => !result.ok).length,
+    syncSucceeded,
+    syncFailed: syncFailedCount,
     results
   };
 }
 
-async function runV5PreviewE2E(lmsShare) {
+async function runV5PreviewE2E() {
   const suffix = crypto.randomBytes(6).toString("hex");
   const slug = `clone-factory-test-v5-${suffix}`;
   const title = `${V5_E2E_PREFIX}${suffix}`;
   const email = `${V5_E2E_PREFIX}${suffix}@example.com`;
   const orderId = crypto.randomUUID();
   const previousTarget = process.env.V5_LMS_SYNC_URL;
-  const previousShare = process.env.V5_LMS_SYNC_SHARE;
   const checks = [];
   const check = (name, ok, detail = null) => {
     checks.push({ name, ok: Boolean(ok), detail });
@@ -136,7 +138,6 @@ async function runV5PreviewE2E(lmsShare) {
 
   try {
     process.env.V5_LMS_SYNC_URL = V5_E2E_LMS_PREVIEW;
-    process.env.V5_LMS_SYNC_SHARE = lmsShare;
 
     const courseSync = await syncV5CourseToLms({
       slug,
@@ -206,8 +207,6 @@ async function runV5PreviewE2E(lmsShare) {
   } finally {
     if (previousTarget === undefined) delete process.env.V5_LMS_SYNC_URL;
     else process.env.V5_LMS_SYNC_URL = previousTarget;
-    if (previousShare === undefined) delete process.env.V5_LMS_SYNC_SHARE;
-    else process.env.V5_LMS_SYNC_SHARE = previousShare;
     await supabase.from("student_enrollments").delete().eq("course_slug", slug).eq("email", email);
     await supabase.from("orders").delete().eq("id", orderId);
     const { data: courseRow } = await supabase.from("courses").select("id").eq("slug", slug).maybeSingle();
@@ -221,9 +220,7 @@ async function runV5PreviewE2E(lmsShare) {
 
 export default async function handler(req, res) {
   if (req.method === "GET" && process.env.VERCEL_ENV === "preview" && String(req.query?.gate || "") === "v5-cross-repo") {
-    const lmsShare = String(req.query?.lmsShare || "").trim();
-    if (!lmsShare) return res.status(400).json({ success: false, error: "missing_lms_share" });
-    const result = await runV5PreviewE2E(lmsShare);
+    const result = await runV5PreviewE2E();
     return res.status(result.success ? 200 : 500).json(result);
   }
 
