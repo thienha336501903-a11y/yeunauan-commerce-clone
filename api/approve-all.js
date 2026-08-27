@@ -4,7 +4,7 @@ import { syncV4EnrollmentToLms } from "../utils/v4-sync-helpers.js";
 import { syncV5CourseToLms } from "../utils/v5-sync-helpers.js";
 import ordersHandler from "./orders.js";
 
-const V5_E2E_TOKEN = "ZJjemvYi2vrS16cHaGSQKtmGV6gmEg19z52GuQVDtaU";
+const V5_E2E_TOKEN = "run-v5-e2e";
 const V5_E2E_LMS_PREVIEW = "https://yeunauan-lms-v4-test-git-bb43d1-thienha336501903-a11ys-projects.vercel.app";
 const V5_E2E_PREFIX = "__clone_factory_test_v5_cross_repo_";
 
