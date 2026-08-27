@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Quản trị LMS V5</title>
+  <style>
+    :root{--bg:#f4f7f5;--panel:#fff;--ink:#17212b;--muted:#6f7d88;--line:#dce5df;--green:#29a75b;--green2:#208d4b;--violet:#7257d6;--amber:#a16d00;--red:#bd3843}
+    *{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}button,input,textarea{font:inherit}button{cursor:pointer}
+    .wrap{max-width:1080px;margin:auto;padding:24px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:22px}.top h1{margin:0;font-size:27px}.muted{color:var(--muted);font-size:13px}.nav{display:flex;gap:8px;flex-wrap:wrap}.btn{border:1px solid var(--line);background:#fff;border-radius:11px;padding:10px 13px;font-weight:800;color:#41505b;text-decoration:none}.btn.primary{background:var(--green);border-color:var(--green);color:#fff}.btn.primary:hover{background:var(--green2)}.btn:disabled{opacity:.45;cursor:not-allowed}
+    .panel{background:#fff;border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 8px 28px rgba(40,80,55,.05);margin-bottom:18px}.panel h2{margin:0 0 14px;font-size:17px}.grid{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:10px}.grid input,.grid textarea{width:100%;border:1px solid var(--line);border-radius:11px;padding:11px;background:#fbfdfb;outline:none}.grid input:focus,.grid textarea:focus{border-color:#86c99c}.full{grid-column:1/-1}.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+    .course{background:#fff;border:1px solid var(--line);border-radius:17px;padding:17px;margin-bottom:12px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px}.course h3{margin:0 0 5px;font-size:18px}.badges{display:flex;gap:6px;flex-wrap:wrap;margin:9px 0}.badge{border-radius:999px;padding:5px 9px;font-size:11px;font-weight:850;background:#eef2f0;color:#5e6d66}.badge.ok{background:#e8f8ed;color:#167a3c}.badge.warn{background:#fff4d9;color:var(--amber)}.badge.v5{background:#eeeaff;color:#5d43b7}.badge.off{background:#f3f4f5;color:#7a8388}.course-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end}.danger{color:var(--red)}
+    .login{position:fixed;inset:0;background:rgba(14,23,19,.72);display:flex;align-items:center;justify-content:center;padding:20px;z-index:20}.login.hidden{display:none}.login-card{width:min(410px,100%);background:#fff;border-radius:20px;padding:24px}.login-card h2{margin-top:0}.login-card input{width:100%;padding:13px;border:1px solid var(--line);border-radius:12px;margin:8px 0 12px}.empty{text-align:center;padding:40px;color:var(--muted)}.notice{position:fixed;right:18px;top:18px;background:#17212b;color:#fff;border-radius:11px;padding:11px 14px;opacity:0;transform:translateY(-8px);transition:.2s;pointer-events:none;z-index:30}.notice.show{opacity:1;transform:none}
+    @media(max-width:760px){.wrap{padding:14px}.top{align-items:flex-start;flex-direction:column}.grid{grid-template-columns:1fr}.course{grid-template-columns:1fr}.course-actions{justify-content:flex-start}}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div><h1>LMS V5</h1><div class="muted">Tạo khóa Draft → soạn như Telegram → Publish → mở cổng học → bật bán</div></div>
+    <div class="nav"><a class="btn" href="/admin.html">Admin chung</a><a class="btn" href="/orders.html">Học viên</a><button id="logoutBtn" class="btn">Đổi mật khẩu</button></div>
+  </div>
+
+  <section class="panel">
+    <h2>Tạo khóa V5 mới</h2>
+    <div class="grid">
+      <input id="title" placeholder="Tên khóa học">
+      <input id="slug" placeholder="slug-khoa-hoc">
+      <input id="price" placeholder="Học phí">
+      <input id="teacher" placeholder="Giảng viên">
+      <input id="image" placeholder="URL poster">
+      <input id="subtitle" placeholder="Mô tả ngắn">
+      <textarea id="description" class="full" rows="2" placeholder="Mô tả khóa học"></textarea>
+    </div>
+    <div class="actions"><button id="createBtn" class="btn primary">Tạo Draft V5</button></div>
+  </section>
+
+  <section class="panel"><h2>Khóa V5</h2><div id="courses"><div class="empty">Đang tải…</div></div></section>
+</div>
+
+<div id="login" class="login"><div class="login-card"><h2>Đăng nhập Admin</h2><div class="muted">Dùng mật khẩu Admin của Commerce.</div><input id="password" type="password" placeholder="Mật khẩu Admin"><button id="loginBtn" class="btn primary" style="width:100%">Xác thực</button></div></div>
+<div id="notice" class="notice"></div>
+<script>
+  const state={password:sessionStorage.getItem('v5_admin_password')||'',runtime:null,courses:[]};
+  const $=id=>document.getElementById(id);
+  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+  function toast(msg){const n=$('notice');n.textContent=msg;n.classList.add('show');clearTimeout(n._t);n._t=setTimeout(()=>n.classList.remove('show'),2600)}
+  function slugify(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').replace(/Đ/g,'d').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,80)}
+  async function request(method='GET',body){const res=await fetch('/api/config?v5Admin=1',{method,cache:'no-store',headers:{'Content-Type':'application/json','X-Admin-Password':state.password},body:body?JSON.stringify(body):undefined});const data=await res.json().catch(()=>({}));if(res.status===401){$('login').classList.remove('hidden');throw new Error('Cần đăng nhập Admin')}if(!res.ok)throw new Error(data.error||`HTTP ${res.status}`);return data}
+  async function runtime(){if(state.runtime)return state.runtime;const r=await fetch('/api/config?runtime=1',{cache:'no-store'});state.runtime=await r.json();return state.runtime}
+  async function load(){try{const [data]=await Promise.all([request(),runtime()]);state.courses=data.courses||[];$('login').classList.add('hidden');render()}catch(e){if(e.message!=='Cần đăng nhập Admin')toast(e.message)}}
+  function render(){const box=$('courses');if(!state.courses.length){box.innerHTML='<div class="empty">Chưa có khóa V5 nào.</div>';return}box.innerHTML=state.courses.map(c=>{const contentPublished=c.v5?.status==='published'&&c.v5?.published_release_id;const learningOpen=c.is_published===true;const selling=c.active===true;const composer=`${state.runtime?.lmsPublicUrl||''}/v5-admin.html?course=${encodeURIComponent(c.slug)}`;const student=`${state.runtime?.lmsPublicUrl||''}/learning?course=${encodeURIComponent(c.slug)}`;return `<article class="course"><div><h3>${esc(c.title)}</h3><div class="muted">${esc(c.slug)}${c.price?` · ${esc(c.price)}`:''}</div><div class="badges"><span class="badge v5">LMS V5</span><span class="badge ${contentPublished?'ok':'warn'}">Nội dung: ${contentPublished?'Published':'Draft'}</span><span class="badge ${learningOpen?'ok':'off'}">Cổng học: ${learningOpen?'Mở':'Đóng'}</span><span class="badge ${selling?'ok':'off'}">Bán: ${selling?'Bật':'Tắt'}</span></div></div><div class="course-actions"><a class="btn primary" href="${esc(composer)}">Soạn nội dung</a>${contentPublished&&!learningOpen?`<button class="btn" data-action="open" data-id="${c.id}">Mở cổng học</button>`:''}${learningOpen?`<a class="btn" target="_blank" href="${esc(student)}">Mở trang học</a>`:''}<button class="btn ${selling?'danger':''}" data-action="active" data-id="${c.id}" data-value="${selling?'0':'1'}" ${!selling&&(!learningOpen||!contentPublished)?'disabled':''}>${selling?'Tắt bán':'Bật bán'}</button></div></article>`}).join('')}
+  async function act(button){const id=button.dataset.id;try{button.disabled=true;if(button.dataset.action==='open')await request('PUT',{id,action:'openLearningGate'});else await request('PUT',{id,action:'setActive',active:button.dataset.value==='1'});await load();toast('Đã cập nhật V5')}catch(e){toast(e.message)}finally{button.disabled=false}}
+  $('courses').addEventListener('click',e=>{const b=e.target.closest('button[data-action]');if(b)act(b)});
+  $('title').addEventListener('input',()=>{if(!$('slug').dataset.touched)$('slug').value=slugify($('title').value)});$('slug').addEventListener('input',()=>{$('slug').dataset.touched='1'});
+  $('createBtn').addEventListener('click',async()=>{const body={title:$('title').value.trim(),slug:$('slug').value.trim(),price:$('price').value.trim(),teacherName:$('teacher').value.trim(),imageUrl:$('image').value.trim(),subtitle:$('subtitle').value.trim(),description:$('description').value.trim()};if(!body.title||!body.slug){toast('Nhập tên khóa và slug');return}try{$('createBtn').disabled=true;await request('POST',body);for(const id of ['title','slug','price','teacher','image','subtitle','description'])$(id).value='';delete $('slug').dataset.touched;await load();toast('Đã tạo Draft V5')}catch(e){toast(e.message)}finally{$('createBtn').disabled=false}});
+  $('loginBtn').addEventListener('click',()=>{state.password=$('password').value;sessionStorage.setItem('v5_admin_password',state.password);load()});$('password').addEventListener('keydown',e=>{if(e.key==='Enter')$('loginBtn').click()});$('logoutBtn').addEventListener('click',()=>{sessionStorage.removeItem('v5_admin_password');state.password='';$('password').value='';$('login').classList.remove('hidden')});
+  if(state.password)load();
+</script>
+</body>
+</html>
