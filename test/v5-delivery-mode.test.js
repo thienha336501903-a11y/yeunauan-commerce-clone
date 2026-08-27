@@ -43,8 +43,8 @@ test('V5 admin creates safe draft and requires published content before sale', (
 });
 
 test('single and bulk approvals keep explicit V5 branches', () => {
-  assert.match(orders, /delivery_mode \|\| ''\)\.toLowerCase\(\) === 'v5'/);
+  assert.match(orders, /if \(mode === 'v5'\) return syncV5EnrollmentToLms\(order, actionType\)/);
   assert.match(orders, /syncV5EnrollmentToLms/);
-  assert.match(approveAll, /delivery_mode \|\| ''\)\.toLowerCase\(\) === 'v5'/);
-  assert.match(approveAll, /syncV5EnrollmentToLms/);
+  assert.match(approveAll, /else if \(mode === "v5"\) syncResults = await syncV5EnrollmentToLms\(order, "create"\)/);
+  assert.match(approveAll, /SKIPPED_V5/);
 });
