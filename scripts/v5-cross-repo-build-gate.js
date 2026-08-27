@@ -166,7 +166,9 @@ async function main() {
       await supabase.from('courses').delete().eq('id', courseRow.id);
     }
     await supabase.from('students').delete().eq('email', email);
-    if (allPassed) await supabase.from('courses').delete().eq('id', markerId);
+    if (allPassed) {
+      await supabase.from('courses').update({ subtitle: 'PASS|ALL', updated_at: new Date().toISOString() }).eq('id', markerId);
+    }
   }
 }
 
