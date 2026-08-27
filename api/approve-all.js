@@ -64,7 +64,8 @@ export default async function handler(req, res) {
       }
     }
     const syncSucceeded = results.filter(result => result.ok).length;
-    return res.status(200).json({ success: true, count: updatedOrders.length, gmails, skippedTelegram, syncSucceeded, syncFailed: results.length - syncSucceeded, results });
+    const syncFailedCount = results.length - syncSucceeded;
+    return res.status(200).json({ success: true, count: updatedOrders.length, gmails, skippedTelegram, syncSucceeded, syncFailed: syncFailedCount, results });
   } catch (error) {
     console.error("APPROVE_ALL_ERROR:", error);
     return res.status(500).json({ error: error.message });
