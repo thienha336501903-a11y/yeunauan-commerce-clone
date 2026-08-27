@@ -47,6 +47,9 @@ export default async function handler(req, res) {
     if (deliveryMode === 'v4' && courseRec.is_published !== true && courseRec.raw_data?.v4SellBeforePublishAcknowledged !== true) {
       return res.status(409).json({ error: 'Khóa học V4 chưa sẵn sàng nội dung nên chưa thể nhận đăng ký.' });
     }
+    if (deliveryMode === 'v5' && courseRec.is_published !== true) {
+      return res.status(409).json({ error: 'Khóa học V5 chưa Publish nội dung nên chưa thể nhận đăng ký.' });
+    }
     const telegramChatId = deliveryMode === 'telegram' ? String(courseRec.telegram_chat_id || '').trim() : '';
     if (deliveryMode === 'telegram' && !telegramChatId) {
       return res.status(409).json({ error: 'Khóa học Telegram đang chờ Admin kết nối group/channel. Vui lòng thử lại sau.' });
@@ -89,9 +92,8 @@ export default async function handler(req, res) {
       orderPayload.sync_portal_status = 'SKIPPED_TELEGRAM';
       orderPayload.telegram_join_status = 'invite_creating';
     }
-    if (deliveryMode === 'v4') {
-      orderPayload.sync_portal_status = 'SKIPPED_V4';
-    }
+    if (deliveryMode === 'v4') orderPayload.sync_portal_status = 'SKIPPED_V4';
+    if (deliveryMode === 'v5') orderPayload.sync_portal_status = 'SKIPPED_V5';
 
     const { error: insertError } = await supabase.from('orders').insert(orderPayload);
     if (insertError) throw insertError;
@@ -117,7 +119,7 @@ export default async function handler(req, res) {
     }
 
     // Only legacy LMS orders are mirrored into the legacy student Portal.
-    // V4 has its own course manager in LMS Clone and reads this order directly.
+    // V4/V5 use the LMS course manager and their own enrollment paths.
     if (deliveryMode === 'lms') {
       const system1Url = process.env.SYSTEM1_URL;
       const syncSecret = process.env.INTERNAL_SYNC_SECRET;
@@ -130,7 +132,9 @@ export default async function handler(req, res) {
 
     const managerPath = deliveryMode === 'v4'
       ? '/my-courses.html?registered=1&course=' + encodeURIComponent(courseSlug)
-      : runtime.legacyPortalPublicUrl + '/my-courses';
+      : deliveryMode === 'v5'
+        ? runtime.lmsPublicUrl.replace(/\/$/, '') + '/my-courses.html?registered=1&course=' + encodeURIComponent(courseSlug)
+        : runtime.legacyPortalPublicUrl + '/my-courses';
     return res.status(200).json({ success: true, file: billLink, course: courseSlug, courseName: finalCourseName, orderId, deliveryMode, managerPath });
   } catch (error) {
     console.error('REGISTER_ERROR:', error);
