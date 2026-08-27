@@ -12,7 +12,8 @@ test('delivery policy preserves V5 instead of degrading it to legacy LMS', () =>
 
 test('V5 sync helper uses the isolated LMS endpoint and never legacy Portal', () => {
   const helper = read('utils/v5-sync-helpers.js');
-  assert.match(helper, /V5_LMS_SYNC_URL \|\| process\.env\.SYSTEM3_URL \|\| process\.env\.LMS_PUBLIC_URL/);
+  assert.match(helper, /process\.env\.VERCEL_ENV === 'preview' \? process\.env\.V5_LMS_SYNC_URL : ''/);
+  assert.match(helper, /previewOverride \|\| process\.env\.LMS_PUBLIC_URL \|\| process\.env\.SYSTEM3_URL/);
   assert.match(helper, /\/api\/v5-sync/);
   assert.match(helper, /X-Sync-Secret/);
   assert.match(helper, /SKIPPED_V5/);
@@ -24,6 +25,12 @@ test('generic sync helper delegates V5 course and enrollment without legacy side
   const sync = read('utils/sync-helpers.js');
   assert.match(sync, /resolvedMode === 'v5'\) return syncV5CourseToLms/);
   assert.match(sync, /resolvedMode === 'v5'\) return syncV5EnrollmentToLms/);
+});
+
+test('V5 enrollment sync preserves Commerce order correlation for FK-backed entitlement', () => {
+  const helper = read('utils/v5-sync-helpers.js');
+  assert.match(helper, /orderId: String\(orderData\.id \|\| orderData\.source_order_id \|\| ''\)\.trim\(\) \|\| null/);
+  assert.match(helper, /action: actionType === 'create' \? 'syncEnrollment' : 'revokeEnrollment'/);
 });
 
 test('V5 registration requires published content and returns System B course manager', () => {
