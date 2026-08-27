@@ -10,7 +10,9 @@ function baseResult(lmsUrl) {
 
 async function callV5(payload) {
   const secret = String(process.env.INTERNAL_SYNC_SECRET || '').trim();
-  const previewOverride = process.env.VERCEL_ENV === 'preview' ? process.env.V5_LMS_SYNC_URL : '';
+  const isPreview = process.env.VERCEL_ENV === 'preview';
+  const previewOverride = isPreview ? process.env.V5_LMS_SYNC_URL : '';
+  const previewShare = isPreview ? String(process.env.V5_LMS_SYNC_SHARE || '').trim() : '';
   const lmsUrl = normalizeBase(previewOverride || process.env.LMS_PUBLIC_URL || process.env.SYSTEM3_URL);
   const result = baseResult(lmsUrl);
 
@@ -22,7 +24,8 @@ async function callV5(payload) {
   }
 
   try {
-    const response = await fetch(`${lmsUrl}/api/v5-sync`, {
+    const endpoint = `${lmsUrl}/api/v5-sync${previewShare ? `?_vercel_share=${encodeURIComponent(previewShare)}` : ''}`;
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
