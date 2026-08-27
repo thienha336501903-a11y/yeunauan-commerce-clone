@@ -12,7 +12,7 @@ async function callV5(payload) {
   const secret = String(process.env.INTERNAL_SYNC_SECRET || '').trim();
   const isPreview = process.env.VERCEL_ENV === 'preview';
   const previewOverride = isPreview ? process.env.V5_LMS_SYNC_URL : '';
-  const previewShare = isPreview ? String(process.env.V5_LMS_SYNC_SHARE || '').trim() : '';
+  const previewBypass = isPreview ? String(process.env.V5_LMS_PROTECTION_BYPASS || '').trim() : '';
   const lmsUrl = normalizeBase(previewOverride || process.env.LMS_PUBLIC_URL || process.env.SYSTEM3_URL);
   const result = baseResult(lmsUrl);
 
@@ -24,13 +24,14 @@ async function callV5(payload) {
   }
 
   try {
-    const endpoint = `${lmsUrl}/api/v5-sync${previewShare ? `?_vercel_share=${encodeURIComponent(previewShare)}` : ''}`;
-    const response = await fetch(endpoint, {
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-Sync-Secret': secret
+    };
+    if (previewBypass) headers['x-vercel-protection-bypass'] = previewBypass;
+    const response = await fetch(`${lmsUrl}/api/v5-sync`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Sync-Secret': secret
-      },
+      headers,
       body: JSON.stringify(payload)
     });
     if (response.ok) {
