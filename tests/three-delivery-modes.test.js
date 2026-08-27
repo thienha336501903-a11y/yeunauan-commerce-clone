@@ -5,8 +5,8 @@ import { DELIVERY_MODES, deliveryPolicy, normalizeDeliveryMode } from '../utils/
 
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
-test('delivery behavior table stays explicit for all three modes', () => {
-  assert.deepEqual(DELIVERY_MODES, ['lms', 'telegram', 'v4']);
+test('delivery behavior table stays explicit for all four modes', () => {
+  assert.deepEqual(DELIVERY_MODES, ['lms', 'telegram', 'v4', 'v5']);
   assert.deepEqual(deliveryPolicy('lms'), {
     mode: 'lms', requiresEmail: true, requiresTelegramUsername: false,
     createsLmsEnrollment: true, createsTelegramInvite: false, learningTarget: 'lms'
@@ -18,6 +18,10 @@ test('delivery behavior table stays explicit for all three modes', () => {
   assert.deepEqual(deliveryPolicy('v4'), {
     mode: 'v4', requiresEmail: true, requiresTelegramUsername: false,
     createsLmsEnrollment: true, createsTelegramInvite: false, learningTarget: 'v4'
+  });
+  assert.deepEqual(deliveryPolicy('v5'), {
+    mode: 'v5', requiresEmail: true, requiresTelegramUsername: false,
+    createsLmsEnrollment: true, createsTelegramInvite: false, learningTarget: 'v5'
   });
   assert.equal(normalizeDeliveryMode('unexpected-client-value'), 'lms');
 });
