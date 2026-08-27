@@ -10,15 +10,18 @@ test('delivery policy preserves V5 instead of degrading it to legacy LMS', () =>
   assert.match(policy, /mode === 'v5' \? 'v5'/);
 });
 
-test('V5 sync helper uses the isolated LMS endpoint and never legacy Portal', () => {
+test('V5 sync helper uses isolated Preview and Production targets and never legacy Portal', () => {
   const helper = read('utils/v5-sync-helpers.js');
   assert.match(helper, /process\.env\.VERCEL_ENV === 'preview' \? process\.env\.V5_LMS_SYNC_URL : ''/);
-  assert.match(helper, /previewOverride \|\| process\.env\.LMS_PUBLIC_URL \|\| process\.env\.SYSTEM3_URL/);
+  assert.match(helper, /process\.env\.V5_LMS_PUBLIC_URL/);
+  assert.match(helper, /cloneConfig\(\)\.v4PublicUrl/);
+  assert.match(helper, /previewOverride \|\| productionV5Base\(\)/);
   assert.match(helper, /\/api\/v5-sync/);
   assert.match(helper, /X-Sync-Secret/);
   assert.match(helper, /SKIPPED_V5/);
   assert.doesNotMatch(helper, /SYSTEM1_URL/);
   assert.doesNotMatch(helper, /PORTAL_URL/);
+  assert.doesNotMatch(helper, /process\.env\.LMS_PUBLIC_URL/);
 });
 
 test('generic sync helper delegates V5 course and enrollment without legacy side effects', () => {
