@@ -37,9 +37,10 @@ async function callV5(payload) {
       result.lms = 'SUCCESS';
       return result;
     }
-    const data = await response.json().catch(() => ({}));
+    const contentType = response.headers.get('content-type') || '';
+    const text = await response.text().catch(() => '');
     result.lms = 'FAILED';
-    result.error = `V5 LMS failed: ${data.error || response.statusText}`;
+    result.error = `V5 LMS failed ${response.status} ${contentType}: ${text.slice(0, 180)}`;
     return result;
   } catch (error) {
     result.lms = 'FAILED';
