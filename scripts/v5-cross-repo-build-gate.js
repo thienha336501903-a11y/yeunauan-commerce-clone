@@ -62,8 +62,11 @@ async function main() {
   try {
     currentStep = 'preview_environment';
     assertGate(currentStep, process.env.VERCEL_ENV === 'preview', String(process.env.VERCEL_ENV || 'missing'));
+    const bypass = String(process.env.V5_LMS_PROTECTION_BYPASS || '').trim();
     currentStep = 'protection_bypass_present';
-    assertGate(currentStep, Boolean(String(process.env.V5_LMS_PROTECTION_BYPASS || '').trim()));
+    assertGate(currentStep, Boolean(bypass));
+    currentStep = 'protection_bypass_length';
+    assertGate(currentStep, bypass.length === 32, `length=${bypass.length}`);
     currentStep = 'internal_sync_secret_present';
     assertGate(currentStep, Boolean(String(process.env.INTERNAL_SYNC_SECRET || '').trim()));
     currentStep = 'admin_password_present';
