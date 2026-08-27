@@ -5,8 +5,8 @@ import { DELIVERY_MODES, deliveryPolicy, normalizeDeliveryMode } from '../utils/
 
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
-test('delivery behavior table stays explicit for all three modes', () => {
-  assert.deepEqual(DELIVERY_MODES, ['lms', 'telegram', 'v4']);
+test('delivery behavior table stays explicit for all four modes', () => {
+  assert.deepEqual(DELIVERY_MODES, ['lms', 'telegram', 'v4', 'v5']);
   assert.deepEqual(deliveryPolicy('lms'), {
     mode: 'lms', requiresEmail: true, requiresTelegramUsername: false,
     createsLmsEnrollment: true, createsTelegramInvite: false, learningTarget: 'lms'
@@ -19,6 +19,10 @@ test('delivery behavior table stays explicit for all three modes', () => {
     mode: 'v4', requiresEmail: true, requiresTelegramUsername: false,
     createsLmsEnrollment: true, createsTelegramInvite: false, learningTarget: 'v4'
   });
+  assert.deepEqual(deliveryPolicy('v5'), {
+    mode: 'v5', requiresEmail: true, requiresTelegramUsername: false,
+    createsLmsEnrollment: true, createsTelegramInvite: false, learningTarget: 'v5'
+  });
   assert.equal(normalizeDeliveryMode('unexpected-client-value'), 'lms');
 });
 
@@ -29,6 +33,13 @@ test('V4 checkout is fail-closed until content is published', () => {
   assert.match(config, /rawData\.v4SellBeforePublishAcknowledged !== true/);
   assert.match(register, /policy\.requiresEmail/);
   assert.match(register, /if \(deliveryMode === 'telegram'\) \{[\s\S]*createOrderInvite/);
+});
+
+test('V5 checkout is fail-closed until content is published', () => {
+  const register = read('api/register.js');
+  assert.match(register, /deliveryMode === 'v5' && courseRec\.is_published !== true/);
+  assert.match(register, /Khóa học V5 chưa Publish nên chưa thể nhận đăng ký/);
+  assert.match(register, /SKIPPED_V5/);
 });
 
 test('bulk approval preserves Telegram bot authority and dispatches V4 separately', () => {
@@ -48,7 +59,7 @@ test('Commerce sends V4 order correlation and never deletes mapping implicitly',
   assert.doesNotMatch(deleteBlock, /lms_v4_telegram_course_sources'\)\.delete/);
 });
 
-test('Admin supports a post link, automatic slug and separate content/sale states', () => {
+test('Admin preserves existing LMS, Telegram and V4 setup UI', () => {
   const admin = read('admin.html');
   assert.match(admin, /Học trên LMS cũ/);
   assert.match(admin, /Nhận bài qua Telegram/);
