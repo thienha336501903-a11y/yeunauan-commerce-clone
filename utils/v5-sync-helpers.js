@@ -1,3 +1,5 @@
+import { cloneConfig } from './clone-config.js';
+
 const normalizeBase = value => String(value || '').trim().replace(/\/$/, '');
 
 function baseResult(lmsUrl) {
@@ -8,11 +10,20 @@ function baseResult(lmsUrl) {
   };
 }
 
+function productionV5Base() {
+  const explicit = String(process.env.V5_LMS_PUBLIC_URL || '').trim();
+  if (explicit) return explicit;
+  // V5 is deployed with the canonical V4/V5 runtime project today. Keep this
+  // target isolated from LMS_PUBLIC_URL so a stale legacy student-domain
+  // mapping cannot break V5 server-to-server sync.
+  return cloneConfig().v4PublicUrl;
+}
+
 async function callV5(payload) {
   const secret = String(process.env.INTERNAL_SYNC_SECRET || '').trim();
   const previewOverride = process.env.VERCEL_ENV === 'preview' ? process.env.V5_LMS_SYNC_URL : '';
   const previewBypass = process.env.VERCEL_ENV === 'preview' ? String(process.env.V5_LMS_PROTECTION_BYPASS || '').trim() : '';
-  const lmsUrl = normalizeBase(previewOverride || process.env.LMS_PUBLIC_URL || process.env.SYSTEM3_URL);
+  const lmsUrl = normalizeBase(previewOverride || productionV5Base());
   const result = baseResult(lmsUrl);
 
   if (!lmsUrl) return result;
