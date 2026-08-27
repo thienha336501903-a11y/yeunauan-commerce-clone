@@ -4,6 +4,7 @@ import { syncV5CourseToLms } from '../utils/v5-sync-helpers.js';
 import approveAllHandler from '../api/approve-all.js';
 import ordersHandler from '../api/orders.js';
 
+// Preview rerun marker after V5_LMS_PROTECTION_BYPASS correction.
 const LMS_PREVIEW = 'https://yeunauan-lms-clone-bpyhy6quf.vercel.app';
 const PREFIX = '__clone_factory_test_v5_build_gate_';
 const DIAG_PREFIX = '__clone_factory_test_v5_build_diag_';
