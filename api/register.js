@@ -16,6 +16,18 @@ const isValidTelegramNick = value => value.length >= 2 && value.length <= 64 && 
 const normalizeBase64 = value => String(value || '').replace(/\s+/g, '');
 const isValidBase64 = value => value.length > 0 && value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
 
+async function cleanupUnpersistedBill(publicId) {
+  const id = String(publicId || '').trim();
+  if (!id) return;
+  try {
+    await cloudinary.uploader.destroy(id, { resource_type: 'image', invalidate: true });
+  } catch (error) {
+    // Preserve the original order persistence error, but leave an actionable log
+    // if Cloudinary cleanup itself fails.
+    console.error('REGISTER_BILL_CLEANUP_ERROR:', id, error);
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   try {
@@ -107,7 +119,10 @@ export default async function handler(req, res) {
     if (deliveryMode === 'v5') orderPayload.sync_portal_status = 'SKIPPED_V5';
 
     const { error: insertError } = await supabase.from('orders').insert(orderPayload);
-    if (insertError) throw insertError;
+    if (insertError) {
+      await cleanupUnpersistedBill(uploadResult.public_id);
+      throw insertError;
+    }
 
     if (deliveryMode === 'telegram') {
       try {
