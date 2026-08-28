@@ -1,23 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { normalizeDeliveryMode, parseDeliveryMode } from '../utils/delivery-policy.js';
+import { normalizeDeliveryMode, parseDeliveryMode, requireDeliveryMode } from '../utils/delivery-policy.js';
 
-test('delivery mode parsing never degrades an explicit unknown mode to legacy LMS', () => {
-  assert.equal(parseDeliveryMode('v5'), 'v5');
-  assert.equal(parseDeliveryMode(' V4 '), 'v4');
-  assert.equal(parseDeliveryMode(''), null);
-  assert.equal(parseDeliveryMode('v5x'), null);
-  assert.throws(
-    () => normalizeDeliveryMode('v5x'),
-    error => error?.code === 'invalid_delivery_mode' && /v5x/.test(error.message)
-  );
+test('strict admin-write validator rejects blank or unsupported delivery mode', () => {
+  assert.equal(requireDeliveryMode('v5'), 'v5');
+  assert.equal(requireDeliveryMode(' V4 '), 'v4');
+  assert.throws(() => requireDeliveryMode(''), error => error?.code === 'invalid_delivery_mode' && error?.statusCode === 400);
+  assert.throws(() => requireDeliveryMode('v5x'), error => error?.code === 'invalid_delivery_mode' && error?.statusCode === 400);
 });
 
-test('an omitted delivery mode keeps the legacy-compatible default only for true omission', () => {
+test('tolerant normalization remains available only for legacy/read compatibility', () => {
+  assert.equal(parseDeliveryMode('v5'), 'v5');
+  assert.equal(parseDeliveryMode('unknown'), null);
   assert.equal(normalizeDeliveryMode(undefined), 'lms');
-  assert.equal(normalizeDeliveryMode(null), 'lms');
-  assert.equal(normalizeDeliveryMode(''), 'lms');
+  assert.equal(normalizeDeliveryMode('unknown'), 'lms');
   assert.equal(normalizeDeliveryMode('telegram'), 'telegram');
-  assert.equal(normalizeDeliveryMode('v4'), 'v4');
-  assert.equal(normalizeDeliveryMode('v5'), 'v5');
 });

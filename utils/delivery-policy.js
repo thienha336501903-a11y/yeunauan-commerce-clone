@@ -5,16 +5,19 @@ export function parseDeliveryMode(value) {
   return DELIVERY_MODES.includes(normalized) ? normalized : null;
 }
 
-export function normalizeDeliveryMode(value) {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (!normalized) return 'lms';
-  const parsed = parseDeliveryMode(normalized);
+export function requireDeliveryMode(value) {
+  const parsed = parseDeliveryMode(value);
   if (!parsed) {
-    const error = new Error(`Hình thức học không hợp lệ: ${normalized}`);
+    const error = new Error('Hình thức học không hợp lệ');
     error.code = 'invalid_delivery_mode';
+    error.statusCode = 400;
     throw error;
   }
   return parsed;
+}
+
+export function normalizeDeliveryMode(value) {
+  return parseDeliveryMode(value) || 'lms';
 }
 
 export function deliveryPolicy(value) {
