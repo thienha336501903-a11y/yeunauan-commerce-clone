@@ -6,7 +6,15 @@ export function parseDeliveryMode(value) {
 }
 
 export function normalizeDeliveryMode(value) {
-  return parseDeliveryMode(value) || 'lms';
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return 'lms';
+  const parsed = parseDeliveryMode(normalized);
+  if (!parsed) {
+    const error = new Error(`Hình thức học không hợp lệ: ${normalized}`);
+    error.code = 'invalid_delivery_mode';
+    throw error;
+  }
+  return parsed;
 }
 
 export function deliveryPolicy(value) {
