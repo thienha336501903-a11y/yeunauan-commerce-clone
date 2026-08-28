@@ -59,6 +59,34 @@ function compensationNoop(reason) {
   return { lms: 'SUCCESS', portal: 'SKIPPED_V5', error: null, compensation: reason };
 }
 
+function normalizedIdentity(order) {
+  return {
+    email: String(order?.customer_email || '').trim().toLowerCase(),
+    courseId: String(order?.course_id || '').trim(),
+    courseSlug: String(order?.course_slug || '').trim(),
+    deliveryMode: String(order?.delivery_mode || '').trim().toLowerCase()
+  };
+}
+
+function sameEntitlementIdentity(left, right) {
+  const a = normalizedIdentity(left);
+  const b = normalizedIdentity(right);
+  return a.email === b.email
+    && a.courseId === b.courseId
+    && a.courseSlug === b.courseSlug
+    && a.deliveryMode === b.deliveryMode;
+}
+
+function guardOrderIdentity(query, order) {
+  const identity = normalizedIdentity(order);
+  let scoped = query.eq('id', order.id).eq('status', order.status);
+  scoped = identity.email ? scoped.eq('customer_email', identity.email) : scoped.is('customer_email', null);
+  if (identity.courseId) scoped = scoped.eq('course_id', identity.courseId);
+  if (identity.courseSlug) scoped = scoped.eq('course_slug', identity.courseSlug);
+  if (identity.deliveryMode) scoped = scoped.eq('delivery_mode', identity.deliveryMode);
+  return scoped;
+}
+
 async function currentOrderForCompensation(orderId) {
   const { data, error } = await supabase
     .from('orders')
@@ -76,17 +104,25 @@ async function compensateOrderWriteRace(order, attemptedAction) {
       return { lms: 'FAILED', portal: 'SKIPPED_V5', error: 'Order disappeared before V5 compensation could reconcile access.' };
     }
     const shouldHaveAccess = current.status === 'Đã duyệt';
+    const sameIdentity = sameEntitlementIdentity(current, order);
 
     if (attemptedAction === 'create') {
-      // The grant already succeeded. Keep it if another writer committed the
-      // same approved state; otherwise revoke the exact order-owned entitlement.
-      if (shouldHaveAccess) return compensationNoop('CURRENT_ORDER_ALREADY_APPROVED');
-      return syncV5EnrollmentToLms(current, 'revoke');
+      // The successful grant used the original identity snapshot. DB truth decides
+      // whether the order should still have access, but compensation must revoke
+      // the exact identity that was actually granted, not a concurrently edited one.
+      if (!shouldHaveAccess) return syncV5EnrollmentToLms(order, 'revoke');
+      if (sameIdentity) return compensationNoop('CURRENT_ORDER_ALREADY_APPROVED');
+
+      const revokeStale = await syncV5EnrollmentToLms(order, 'revoke');
+      if (v5SyncFailed(revokeStale)) return revokeStale;
+      const restoreCurrent = await syncV5EnrollmentToLms(current, 'restore');
+      if (v5SyncFailed(restoreCurrent)) return restoreCurrent;
+      return { ...restoreCurrent, compensation: 'REVOKED_STALE_IDENTITY_AND_RESTORED_CURRENT' };
     }
 
     if (attemptedAction === 'revoke') {
-      // The revoke already succeeded. Keep it if the current order is no longer
-      // approved; only restore when DB truth still says this order owns access.
+      // The revoke used the original identity. Keep it if DB no longer approves
+      // this order; otherwise restore the entitlement that current DB truth owns.
       if (!shouldHaveAccess) return compensationNoop('CURRENT_ORDER_NO_LONGER_APPROVED');
       return syncV5EnrollmentToLms(current, 'restore');
     }
@@ -110,18 +146,19 @@ export async function approveV5Order(order, updatePatch = {}) {
     return syncConflict(syncResults, 'Không thể cấp quyền học V5; đơn vẫn ở Chờ duyệt.');
   }
 
-  const { data, error } = await supabase.from('orders').update({
+  const write = guardOrderIdentity(supabase.from('orders').update({
     ...updatePatch,
     status: 'Đã duyệt',
     sync_lms_status: syncResults.lms,
     sync_portal_status: syncResults.portal,
     sync_error: syncResults.error,
     updated_at: new Date().toISOString()
-  }).eq('id', order.id).eq('status', order.status).select().maybeSingle();
+  }), order);
+  const { data, error } = await write.select().maybeSingle();
 
   if (error || !data) {
     const compensation = await compensateOrderWriteRace(order, 'create');
-    const wrapped = new Error(error?.message || 'Order changed while V5 approval was being committed.');
+    const wrapped = new Error(error?.message || 'Order identity/status changed while V5 approval was being committed.');
     wrapped.code = 'v5_order_commit_failed';
     wrapped.compensation = compensation;
     throw wrapped;
@@ -136,18 +173,19 @@ export async function revokeV5Order(order, nextStatus, updatePatch = {}) {
     return syncConflict(syncResults, 'Không thể thu hồi quyền V5; trạng thái đơn chưa thay đổi.');
   }
 
-  const { data, error } = await supabase.from('orders').update({
+  const write = guardOrderIdentity(supabase.from('orders').update({
     ...updatePatch,
     status: nextStatus,
     sync_lms_status: syncResults.lms,
     sync_portal_status: syncResults.portal,
     sync_error: syncResults.error,
     updated_at: new Date().toISOString()
-  }).eq('id', order.id).eq('status', order.status).select().maybeSingle();
+  }), order);
+  const { data, error } = await write.select().maybeSingle();
 
   if (error || !data) {
     const compensation = await compensateOrderWriteRace(order, 'revoke');
-    const wrapped = new Error(error?.message || 'Order changed while V5 revoke was being committed.');
+    const wrapped = new Error(error?.message || 'Order identity/status changed while V5 revoke was being committed.');
     wrapped.code = 'v5_order_commit_failed';
     wrapped.compensation = compensation;
     throw wrapped;
