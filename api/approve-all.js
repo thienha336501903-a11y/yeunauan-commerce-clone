@@ -1,5 +1,6 @@
 import { supabase } from "../utils/supabase.js";
 import { syncV4EnrollmentToLms } from "../utils/v4-sync-helpers.js";
+import { getV5Readiness } from "../utils/v5-readiness.js";
 
 function syncFailed(syncResults) {
   if (!syncResults) return true;
@@ -13,6 +14,29 @@ function skippedPortalForMode(mode) {
   if (normalized === "v4") return "SKIPPED_V4";
   if (normalized === "v5") return "SKIPPED_V5";
   return "FAILED";
+}
+
+async function ensureBulkV5Ready(courseSlug, orders) {
+  const hasV5 = (orders || []).some(order => String(order.delivery_mode || '').toLowerCase() === 'v5');
+  if (!hasV5) return { ok: true };
+
+  const { data: course, error } = await supabase
+    .from('courses')
+    .select('id,slug,delivery_mode,active,is_published')
+    .eq('slug', courseSlug)
+    .maybeSingle();
+  if (error) throw error;
+  if (!course || String(course.delivery_mode || '').toLowerCase() !== 'v5') {
+    return { ok: false, code: 'v5_course_not_found', error: 'Khóa V5 không còn hợp lệ.' };
+  }
+  if (course.active !== true || course.is_published !== true) {
+    return { ok: false, code: 'v5_course_not_for_sale', error: 'Khóa V5 chưa mở bán hoặc chưa Publish.' };
+  }
+  const readiness = await getV5Readiness(course.id);
+  if (!readiness.ready) {
+    return { ok: false, code: readiness.reason || 'v5_not_ready', error: 'Khóa V5 chưa có canonical Published release hợp lệ.' };
+  }
+  return { ok: true, course, release: readiness.release || null };
 }
 
 export default async function handler(req, res) {
@@ -30,13 +54,18 @@ export default async function handler(req, res) {
 
     const { data: pendingOrders, error: pendingError } = await supabase
       .from("orders")
-      .select("id, customer_email, course_slug, course_title, delivery_mode, status")
+      .select("id, course_id, customer_email, course_slug, course_title, delivery_mode, status")
       .eq("course_slug", course)
       .eq("status", "Chờ duyệt");
     if (pendingError) throw pendingError;
 
     const enrollmentOrders = (pendingOrders || []).filter(order => order.delivery_mode !== "telegram");
     const skippedTelegram = (pendingOrders || []).length - enrollmentOrders.length;
+
+    const v5Gate = await ensureBulkV5Ready(course, enrollmentOrders);
+    if (!v5Gate.ok) {
+      return res.status(409).json({ error: v5Gate.error, code: v5Gate.code || 'v5_not_ready' });
+    }
 
     let updatedOrders = [];
     if (enrollmentOrders.length) {
@@ -45,7 +74,7 @@ export default async function handler(req, res) {
         .update({ status: "Đã duyệt", updated_at: new Date().toISOString() })
         .in("id", enrollmentOrders.map(order => order.id))
         .eq("status", "Chờ duyệt")
-        .select("id, customer_email, course_slug, course_title, delivery_mode");
+        .select("id, course_id, customer_email, course_slug, course_title, delivery_mode");
       if (error) throw error;
       updatedOrders = data || [];
     }

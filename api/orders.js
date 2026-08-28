@@ -2,12 +2,34 @@ import { v2 as cloudinary } from 'cloudinary';
 import { supabase } from '../utils/supabase.js';
 import { extractCloudinaryBillPublicId } from '../utils/cloudinary-public-id.js';
 import { syncV4EnrollmentToLms } from '../utils/v4-sync-helpers.js';
+import { getV5Readiness } from '../utils/v5-readiness.js';
 
 const VALID_ORDER_STATUSES = new Set(['Chờ duyệt', 'Đã duyệt', 'Từ chối']);
 const TEST_TITLE_PREFIX = '__clone_factory_test';
 const TEST_SLUG_PATTERN = /^clone-factory-test(?:-|$)/;
 const TEST_DELETE_CONFIRMATION = 'DELETE_CLONE_FACTORY_TEST';
 const isUuid = value => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+
+async function v5ApprovalReadiness(order) {
+  if (String(order?.delivery_mode || '').toLowerCase() !== 'v5') return { ok: true };
+  const courseId = String(order.course_id || '').trim();
+  const courseSlug = String(order.course_slug || '').trim();
+  let query = supabase.from('courses').select('id,slug,delivery_mode,active,is_published');
+  query = courseId ? query.eq('id', courseId) : query.eq('slug', courseSlug);
+  const { data: course, error } = await query.maybeSingle();
+  if (error) throw error;
+  if (!course || String(course.delivery_mode || '').toLowerCase() !== 'v5') {
+    return { ok: false, code: 'v5_course_not_found', error: 'Khóa V5 của đơn hàng không còn hợp lệ.' };
+  }
+  if (course.active !== true || course.is_published !== true) {
+    return { ok: false, code: 'v5_course_not_for_sale', error: 'Khóa V5 chưa mở bán hoặc chưa Publish.' };
+  }
+  const readiness = await getV5Readiness(course.id);
+  if (!readiness.ready) {
+    return { ok: false, code: readiness.reason || 'v5_not_ready', error: 'Khóa V5 chưa có canonical Published release hợp lệ.' };
+  }
+  return { ok: true, course, release: readiness.release || null };
+}
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -76,6 +98,13 @@ export default async function handler(req, res) {
 
       if (existingOrder.delivery_mode === 'telegram' && status !== undefined && status !== existingOrder.status) {
         return res.status(409).json({ error: 'Đơn Telegram phải được duyệt hoặc từ chối trong bot Telegram để quyền gia nhập và trạng thái đơn luôn đồng bộ.' });
+      }
+
+      if (status === 'Đã duyệt' && existingOrder.status !== 'Đã duyệt' && String(existingOrder.delivery_mode || '').toLowerCase() === 'v5') {
+        const gate = await v5ApprovalReadiness(existingOrder);
+        if (!gate.ok) {
+          return res.status(409).json({ error: gate.error, code: gate.code || 'v5_not_ready' });
+        }
       }
 
       const updateData = { updated_at: new Date().toISOString() };
