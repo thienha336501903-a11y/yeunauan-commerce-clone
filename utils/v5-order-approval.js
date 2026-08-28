@@ -39,17 +39,6 @@ export async function v5ExistingAccessReadiness(order) {
   return v5OrderReadiness(order, { requireSale: false });
 }
 
-async function persistSyncState(orderId, syncResults) {
-  const { data, error } = await supabase.from('orders').update({
-    sync_lms_status: syncResults?.lms || 'FAILED',
-    sync_portal_status: syncResults?.portal || 'SKIPPED_V5',
-    sync_error: syncResults?.error || null,
-    updated_at: new Date().toISOString()
-  }).eq('id', orderId).select().maybeSingle();
-  if (error) throw error;
-  return data || null;
-}
-
 function syncConflict(syncResults, fallback) {
   const message = syncResults?.error || fallback || 'Đồng bộ quyền học V5 thất bại.';
   return { ok: false, statusCode: 409, error: message, code: 'v5_enrollment_sync_failed', syncResults };
@@ -77,6 +66,10 @@ function sameEntitlementIdentity(left, right) {
     && a.deliveryMode === b.deliveryMode;
 }
 
+function sameOrderSnapshot(left, right) {
+  return String(left?.status || '') === String(right?.status || '') && sameEntitlementIdentity(left, right);
+}
+
 function guardOrderIdentity(query, order) {
   const identity = normalizedIdentity(order);
   let scoped = query.eq('id', order.id).eq('status', order.status);
@@ -97,6 +90,18 @@ async function currentOrderForCompensation(orderId) {
   return data || null;
 }
 
+async function persistSyncState(order, syncResults) {
+  const write = guardOrderIdentity(supabase.from('orders').update({
+    sync_lms_status: syncResults?.lms || 'FAILED',
+    sync_portal_status: syncResults?.portal || 'SKIPPED_V5',
+    sync_error: syncResults?.error || null,
+    updated_at: new Date().toISOString()
+  }), order);
+  const { data, error } = await write.select().maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
 async function compensateOrderWriteRace(order, attemptedAction) {
   try {
     const current = await currentOrderForCompensation(order.id);
@@ -105,11 +110,12 @@ async function compensateOrderWriteRace(order, attemptedAction) {
     }
     const shouldHaveAccess = current.status === 'Đã duyệt';
     const sameIdentity = sameEntitlementIdentity(current, order);
+    const granted = attemptedAction === 'create' || attemptedAction === 'restore';
 
-    if (attemptedAction === 'create') {
+    if (granted) {
       // The successful grant used the original identity snapshot. DB truth decides
       // whether the order should still have access, but compensation must revoke
-      // the exact identity that was actually granted, not a concurrently edited one.
+      // the exact identity actually granted, not a concurrently edited one.
       if (!shouldHaveAccess) return syncV5EnrollmentToLms(order, 'revoke');
       if (sameIdentity) return compensationNoop('CURRENT_ORDER_ALREADY_APPROVED');
 
@@ -142,7 +148,7 @@ export async function approveV5Order(order, updatePatch = {}) {
 
   const syncResults = await syncV5EnrollmentToLms(order, 'create');
   if (v5SyncFailed(syncResults)) {
-    await persistSyncState(order.id, syncResults);
+    await persistSyncState(order, syncResults);
     return syncConflict(syncResults, 'Không thể cấp quyền học V5; đơn vẫn ở Chờ duyệt.');
   }
 
@@ -169,7 +175,7 @@ export async function approveV5Order(order, updatePatch = {}) {
 export async function revokeV5Order(order, nextStatus, updatePatch = {}) {
   const syncResults = await syncV5EnrollmentToLms(order, 'revoke');
   if (v5SyncFailed(syncResults)) {
-    await persistSyncState(order.id, syncResults);
+    await persistSyncState(order, syncResults);
     return syncConflict(syncResults, 'Không thể thu hồi quyền V5; trạng thái đơn chưa thay đổi.');
   }
 
@@ -200,8 +206,31 @@ export async function resyncV5Order(order) {
     const gate = await v5ExistingAccessReadiness(order);
     if (!gate.ok) return { ...gate, statusCode: 409 };
   }
+
   const syncResults = await syncV5EnrollmentToLms(order, action);
-  const data = await persistSyncState(order.id, syncResults);
-  if (v5SyncFailed(syncResults)) return syncConflict(syncResults);
+  if (v5SyncFailed(syncResults)) {
+    await persistSyncState(order, syncResults);
+    return syncConflict(syncResults);
+  }
+
+  const current = await currentOrderForCompensation(order.id);
+  if (!current) {
+    const compensation = await compensateOrderWriteRace(order, action);
+    return { ok: false, statusCode: 409, code: 'v5_order_changed_during_resync', error: 'Order biến mất trong lúc Resync V5.', syncResults, compensation };
+  }
+
+  if (!sameOrderSnapshot(current, order)) {
+    const compensation = await compensateOrderWriteRace(order, action);
+    if (v5SyncFailed(compensation)) {
+      return { ok: false, statusCode: 409, code: 'v5_order_resync_compensation_failed', error: compensation.error || 'Order thay đổi và không thể reconcile quyền V5 về trạng thái hiện tại.', syncResults, compensation };
+    }
+    return { ok: false, statusCode: 409, code: 'v5_order_changed_during_resync', error: 'Order đã thay đổi trong lúc Resync; quyền V5 đã được reconcile theo trạng thái mới. Hãy tải lại đơn.', syncResults, compensation };
+  }
+
+  const data = await persistSyncState(order, syncResults);
+  if (!data) {
+    const compensation = await compensateOrderWriteRace(order, action);
+    return { ok: false, statusCode: 409, code: 'v5_order_changed_during_resync', error: 'Order thay đổi trước khi ghi trạng thái Resync; quyền V5 đã được reconcile theo DB hiện tại.', syncResults, compensation };
+  }
   return { ok: true, data, syncResults };
 }
