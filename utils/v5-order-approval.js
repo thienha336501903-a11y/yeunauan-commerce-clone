@@ -7,7 +7,7 @@ export function v5SyncFailed(syncResults) {
   return String(syncResults.lms || '').toUpperCase() !== 'SUCCESS' || Boolean(syncResults.error);
 }
 
-export async function v5ApprovalReadiness(order) {
+async function v5OrderReadiness(order, { requireSale = true } = {}) {
   if (String(order?.delivery_mode || '').toLowerCase() !== 'v5') return { ok: true };
   const courseId = String(order.course_id || '').trim();
   const courseSlug = String(order.course_slug || '').trim();
@@ -18,14 +18,25 @@ export async function v5ApprovalReadiness(order) {
   if (!course || String(course.delivery_mode || '').toLowerCase() !== 'v5') {
     return { ok: false, code: 'v5_course_not_found', error: 'Khóa V5 của đơn hàng không còn hợp lệ.' };
   }
-  if (course.active !== true || course.is_published !== true) {
-    return { ok: false, code: 'v5_course_not_for_sale', error: 'Khóa V5 chưa mở bán hoặc chưa Publish.' };
+  if (course.is_published !== true) {
+    return { ok: false, code: 'v5_course_unpublished', error: 'Khóa V5 chưa Publish hoặc đã Unpublish.' };
+  }
+  if (requireSale && course.active !== true) {
+    return { ok: false, code: 'v5_course_not_for_sale', error: 'Khóa V5 hiện chưa mở bán.' };
   }
   const readiness = await getV5Readiness(course.id);
   if (!readiness.ready) {
     return { ok: false, code: readiness.reason || 'v5_not_ready', error: 'Khóa V5 chưa có canonical Published release hợp lệ.' };
   }
   return { ok: true, course, release: readiness.release || null };
+}
+
+export async function v5ApprovalReadiness(order) {
+  return v5OrderReadiness(order, { requireSale: true });
+}
+
+export async function v5ExistingAccessReadiness(order) {
+  return v5OrderReadiness(order, { requireSale: false });
 }
 
 async function persistSyncState(orderId, syncResults) {
@@ -42,6 +53,48 @@ async function persistSyncState(orderId, syncResults) {
 function syncConflict(syncResults, fallback) {
   const message = syncResults?.error || fallback || 'Đồng bộ quyền học V5 thất bại.';
   return { ok: false, statusCode: 409, error: message, code: 'v5_enrollment_sync_failed', syncResults };
+}
+
+function compensationNoop(reason) {
+  return { lms: 'SUCCESS', portal: 'SKIPPED_V5', error: null, compensation: reason };
+}
+
+async function currentOrderForCompensation(orderId) {
+  const { data, error } = await supabase
+    .from('orders')
+    .select('id,status,customer_email,course_id,course_slug,delivery_mode')
+    .eq('id', orderId)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+async function compensateOrderWriteRace(order, attemptedAction) {
+  try {
+    const current = await currentOrderForCompensation(order.id);
+    if (!current) {
+      return { lms: 'FAILED', portal: 'SKIPPED_V5', error: 'Order disappeared before V5 compensation could reconcile access.' };
+    }
+    const shouldHaveAccess = current.status === 'Đã duyệt';
+
+    if (attemptedAction === 'create') {
+      // The grant already succeeded. Keep it if another writer committed the
+      // same approved state; otherwise revoke the exact order-owned entitlement.
+      if (shouldHaveAccess) return compensationNoop('CURRENT_ORDER_ALREADY_APPROVED');
+      return syncV5EnrollmentToLms(current, 'revoke');
+    }
+
+    if (attemptedAction === 'revoke') {
+      // The revoke already succeeded. Keep it if the current order is no longer
+      // approved; only restore when DB truth still says this order owns access.
+      if (!shouldHaveAccess) return compensationNoop('CURRENT_ORDER_NO_LONGER_APPROVED');
+      return syncV5EnrollmentToLms(current, 'restore');
+    }
+
+    return { lms: 'FAILED', portal: 'SKIPPED_V5', error: 'Invalid V5 compensation action.' };
+  } catch (error) {
+    return { lms: 'FAILED', portal: 'SKIPPED_V5', error: `V5 compensation state check failed: ${error.message || error}` };
+  }
 }
 
 export async function approveV5Order(order, updatePatch = {}) {
@@ -67,9 +120,7 @@ export async function approveV5Order(order, updatePatch = {}) {
   }).eq('id', order.id).eq('status', order.status).select().maybeSingle();
 
   if (error || !data) {
-    // Enrollment is owned by this exact order id, so compensation cannot revoke
-    // another Commerce/manual grant after the LMS ownership hardening.
-    const compensation = await syncV5EnrollmentToLms(order, 'revoke');
+    const compensation = await compensateOrderWriteRace(order, 'create');
     const wrapped = new Error(error?.message || 'Order changed while V5 approval was being committed.');
     wrapped.code = 'v5_order_commit_failed';
     wrapped.compensation = compensation;
@@ -95,12 +146,7 @@ export async function revokeV5Order(order, nextStatus, updatePatch = {}) {
   }).eq('id', order.id).eq('status', order.status).select().maybeSingle();
 
   if (error || !data) {
-    // Best-effort restore when the order write loses a race/fails. Creation is
-    // independently gated by canonical readiness in LMS, so it cannot grant an
-    // unpublished course. If restore cannot run, surface the inconsistency.
-    const compensation = order.status === 'Đã duyệt'
-      ? await syncV5EnrollmentToLms(order, 'create')
-      : null;
+    const compensation = await compensateOrderWriteRace(order, 'revoke');
     const wrapped = new Error(error?.message || 'Order changed while V5 revoke was being committed.');
     wrapped.code = 'v5_order_commit_failed';
     wrapped.compensation = compensation;
@@ -110,9 +156,10 @@ export async function revokeV5Order(order, nextStatus, updatePatch = {}) {
 }
 
 export async function resyncV5Order(order) {
-  const action = order.status === 'Đã duyệt' ? 'create' : 'revoke';
-  if (action === 'create') {
-    const gate = await v5ApprovalReadiness(order);
+  const approved = order.status === 'Đã duyệt';
+  const action = approved ? 'restore' : 'revoke';
+  if (approved) {
+    const gate = await v5ExistingAccessReadiness(order);
     if (!gate.ok) return { ...gate, statusCode: 409 };
   }
   const syncResults = await syncV5EnrollmentToLms(order, action);

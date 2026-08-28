@@ -74,11 +74,20 @@ export async function syncV5CourseToLms(courseData) {
 export async function syncV5EnrollmentToLms(orderData, actionType) {
   const email = String(orderData.customer_email || orderData.gmail || '').trim().toLowerCase();
   const courseSlug = String(orderData.course_slug || orderData.course || '').trim();
+  const actionMap = {
+    create: 'syncEnrollment',
+    restore: 'restoreEnrollment',
+    revoke: 'revokeEnrollment'
+  };
+  const action = actionMap[String(actionType || '').trim().toLowerCase()];
+  if (!action) {
+    return { lms: 'FAILED', portal: 'SKIPPED_V5', error: 'Invalid V5 enrollment sync action' };
+  }
   if (!email || !courseSlug) {
     return { lms: 'FAILED', portal: 'SKIPPED_V5', error: 'Missing email or course slug' };
   }
   return callV5({
-    action: actionType === 'create' ? 'syncEnrollment' : 'revokeEnrollment',
+    action,
     email,
     courseSlug,
     orderId: String(orderData.id || orderData.source_order_id || '').trim() || null
