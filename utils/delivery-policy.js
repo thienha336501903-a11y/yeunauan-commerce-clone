@@ -1,8 +1,12 @@
 export const DELIVERY_MODES = Object.freeze(['lms', 'telegram', 'v4', 'v5']);
 
-export function normalizeDeliveryMode(value) {
+export function parseDeliveryMode(value) {
   const normalized = String(value || '').trim().toLowerCase();
-  return DELIVERY_MODES.includes(normalized) ? normalized : 'lms';
+  return DELIVERY_MODES.includes(normalized) ? normalized : null;
+}
+
+export function normalizeDeliveryMode(value) {
+  return parseDeliveryMode(value) || 'lms';
 }
 
 export function deliveryPolicy(value) {

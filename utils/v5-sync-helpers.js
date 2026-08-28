@@ -65,7 +65,9 @@ export async function syncV5CourseToLms(courseData) {
     subtitle: String(courseData.subtitle || courseData.description || '').trim(),
     imageUrl: String(courseData.imageUrl || courseData.image_url || '').trim(),
     expected_start_date: courseData.expected_start_date || null,
-    active: courseData.active !== undefined ? courseData.active : true
+    // Omission must be fail-closed. Only an explicit Commerce sale-state action
+    // may ask LMS V5 to activate an already canonical Published release.
+    active: courseData.active === true
   });
 }
 

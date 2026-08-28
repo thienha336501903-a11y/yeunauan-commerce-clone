@@ -27,6 +27,9 @@ export default async function handler(req, res) {
     if (deliveryMode === 'v4' && course.is_published !== true && rawData.v4SellBeforePublishAcknowledged !== true) {
       return res.status(404).json({ error: `Khóa học V4 chưa sẵn sàng với slug: ${courseSlug}` });
     }
+    if (deliveryMode === 'v5' && course.is_published !== true) {
+      return res.status(404).json({ error: `Khóa học V5 chưa Publish với slug: ${courseSlug}` });
+    }
 
     return res.status(200).json({
       course: course.slug,
