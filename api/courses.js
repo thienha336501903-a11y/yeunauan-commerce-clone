@@ -1,8 +1,9 @@
 import crypto from 'crypto';
 import { supabase } from '../utils/supabase.js';
 import { syncV4CourseToLms } from '../utils/v4-sync-helpers.js';
-import { normalizeDeliveryMode } from '../utils/delivery-policy.js';
+import { normalizeDeliveryMode, requireDeliveryMode } from '../utils/delivery-policy.js';
 import { handleV4Workflow } from '../utils/v4-workflow.js';
+import { getV5Readiness } from '../utils/v5-readiness.js';
 
 const normalizeExpectedStartDate = value => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim()) ? String(value).trim() : null;
 const validDateInput = value => String(value || '').trim() === '' || /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
@@ -11,6 +12,21 @@ const validUuid = value => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9
 const mode = normalizeDeliveryMode;
 const ttl = value => Math.min(720, Math.max(1, Number.parseInt(value, 10) || 72));
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+
+function requestedDeliveryMode(body) {
+  const hasMode = hasOwn(body, 'deliveryMode') || hasOwn(body, 'delivery_mode');
+  if (!hasMode) return null;
+  const raw = hasOwn(body, 'deliveryMode') ? body.deliveryMode : body.delivery_mode;
+  return requireDeliveryMode(raw);
+}
+
+function errorStatus(error) {
+  const explicit = Number(error?.statusCode || 0);
+  if (explicit >= 400 && explicit <= 599) return explicit;
+  const message = String(error?.message || '');
+  if (/v5_(course_not_ready_for_sale|mode_conversion_requires_controlled_bootstrap|mode_change_requires_controlled_cleanup|course_delete_requires_controlled_cleanup)/.test(message)) return 409;
+  return 500;
+}
 
 async function actualIndexedCount(sourceId) {
   const { count, error } = await supabase
@@ -68,8 +84,8 @@ async function handleV4Sources(req, res) {
 
     const [{ data: course, error: courseError }, { data: source, error: sourceError }, { data: currentMapping, error: currentMappingError }] = await Promise.all([
       supabase.from('courses').select('id,slug,title,delivery_mode,is_published').eq('slug', courseSlug).maybeSingle(),
-      supabase.from('tgcloner_sources').select('id,chat_id,title,username,active,indexed_at,indexed_message_count').eq('id', sourceId).maybeSingle()
-      ,supabase.from('lms_v4_telegram_course_sources').select('source_id').eq('course_slug', courseSlug).maybeSingle()
+      supabase.from('tgcloner_sources').select('id,chat_id,title,username,active,indexed_at,indexed_message_count').eq('id', sourceId).maybeSingle(),
+      supabase.from('lms_v4_telegram_course_sources').select('source_id').eq('course_slug', courseSlug).maybeSingle()
     ]);
     if (courseError) throw courseError;
     if (sourceError) throw sourceError;
@@ -129,7 +145,16 @@ async function syncCourseIfLms(course, dataId) {
   }
 
   const { syncCourseToExternalSystems } = await import('../utils/sync-helpers.js');
-  const result = await syncCourseToExternalSystems({ slug: course.slug, courseName: course.courseName, price: course.price, imageUrl: course.imageUrl, expected_start_date: course.expected_start_date, active: course.active, teacher_name: course.teacher_name });
+  const result = await syncCourseToExternalSystems({
+    slug: course.slug,
+    courseName: course.courseName,
+    price: course.price,
+    imageUrl: course.imageUrl,
+    expected_start_date: course.expected_start_date,
+    active: course.active,
+    teacher_name: course.teacher_name,
+    deliveryMode
+  });
   await supabase.from('courses').update({ sync_lms_status: result.lms, sync_portal_status: result.portal, sync_error: result.error }).eq('id', dataId);
   return result;
 }
@@ -195,10 +220,11 @@ export default async function handler(req, res) {
       if (!validDateInput(body.expected_start_date)) return res.status(400).json({ error: 'Lịch khai giảng dự kiến phải có định dạng YYYY-MM-DD' });
 
       const hasDeliveryMode = hasOwn(body, 'deliveryMode') || hasOwn(body, 'delivery_mode');
+      const requestedMode = requestedDeliveryMode(body);
       const hasTelegramChatId = hasOwn(body, 'telegramChatId') || hasOwn(body, 'telegram_chat_id');
       const hasTelegramChatTitle = hasOwn(body, 'telegramChatTitle') || hasOwn(body, 'telegram_chat_title');
       const hasTelegramTtl = hasOwn(body, 'telegramInviteTtlHours') || hasOwn(body, 'telegram_invite_ttl_hours');
-      let deliveryMode = mode(body.deliveryMode || body.delivery_mode);
+      let deliveryMode = requestedMode || 'lms';
       const telegramChatId = String(body.telegramChatId || body.telegram_chat_id || '').trim();
 
       const rawDataPatch = {};
@@ -211,19 +237,33 @@ export default async function handler(req, res) {
         }
         rawDataPatch.originalLessonEntryVisible = body.originalLessonEntryVisible;
       }
+
       const base = {
-        slug, title: courseName, price: body.price, image_url: String(body.imageUrl || '').trim(), expected_start_date: normalizeExpectedStartDate(body.expected_start_date),
-        active: body.active !== undefined ? body.active : true, sort_order: body.sort_order !== undefined ? Number.parseInt(body.sort_order, 10) || 0 : 0,
-        description: body.description || '', teacher_name: body.teacher_name || '', delivery_mode: deliveryMode,
+        slug,
+        title: courseName,
+        price: body.price,
+        image_url: String(body.imageUrl || '').trim(),
+        expected_start_date: normalizeExpectedStartDate(body.expected_start_date),
+        sort_order: body.sort_order !== undefined ? Number.parseInt(body.sort_order, 10) || 0 : 0,
+        description: body.description || '',
+        teacher_name: body.teacher_name || '',
+        delivery_mode: deliveryMode,
         telegram_chat_id: deliveryMode === 'telegram' ? telegramChatId || null : null,
         telegram_chat_title: deliveryMode === 'telegram' ? String(body.telegramChatTitle || body.telegram_chat_title || '').trim() || null : null,
         telegram_invite_ttl_hours: ttl(body.telegramInviteTtlHours || body.telegram_invite_ttl_hours),
         raw_data: rawDataPatch
       };
-      if (body.is_published !== undefined) base.is_published = body.is_published === true;
 
       let data;
       if (req.method === 'POST') {
+        if (deliveryMode === 'v5') {
+          base.active = false;
+          base.is_published = false;
+        } else {
+          base.active = body.active !== undefined ? body.active === true : true;
+          if (body.is_published !== undefined) base.is_published = body.is_published === true;
+        }
+
         if (deliveryMode === 'v4' && base.is_published === true) {
           return res.status(409).json({ error: 'Khóa V4 mới phải tạo ở trạng thái Chờ lên bài, sau đó gắn nguồn nội dung rồi mới chuyển Sẵn sàng.' });
         }
@@ -241,19 +281,25 @@ export default async function handler(req, res) {
         if (!id) return res.status(400).json({ error: 'Thiếu ID khóa học để cập nhật' });
         const { data: existing, error: existingErr } = await supabase
           .from('courses')
-          .select('slug,image_url,raw_data,expected_start_date,delivery_mode,telegram_chat_id,telegram_chat_title,telegram_invite_ttl_hours,is_published,active')
+          .select('id,slug,title,image_url,raw_data,expected_start_date,delivery_mode,telegram_chat_id,telegram_chat_title,telegram_invite_ttl_hours,is_published,active')
           .eq('id', id)
           .maybeSingle();
         if (existingErr) throw existingErr;
         if (!existing) return res.status(404).json({ error: 'Không tìm thấy khóa học' });
 
-        if (!hasDeliveryMode) {
-          deliveryMode = mode(existing.delivery_mode);
-          base.delivery_mode = deliveryMode;
+        const existingMode = mode(existing.delivery_mode);
+        deliveryMode = requestedMode || existingMode;
+        base.delivery_mode = deliveryMode;
+
+        if (existingMode === 'v5' && deliveryMode !== 'v5') {
+          return res.status(409).json({ error: 'Khóa V5 không thể đổi hình thức học bằng chỉnh sửa Commerce. Hãy quản lý lifecycle tại LMS V5.' });
+        }
+        if (existingMode !== 'v5' && deliveryMode === 'v5') {
+          return res.status(409).json({ error: 'Không chuyển khóa hiện hữu sang V5 bằng chỉnh sửa Commerce. Hãy tạo/khởi tạo V5 qua LMS V5 để bảo toàn dữ liệu.' });
         }
 
         const slugChanged = existing.slug !== slug;
-        const modeChanged = mode(existing.delivery_mode) !== deliveryMode;
+        const modeChanged = existingMode !== deliveryMode;
         if (slugChanged || modeChanged) {
           const [{ count: orderCount, error: orderError }, { count: enrollmentCount, error: enrollmentError }, { count: mappingCount, error: mappingError }] = await Promise.all([
             supabase.from('orders').select('id', { count: 'exact', head: true }).eq('course_slug', existing.slug),
@@ -272,6 +318,10 @@ export default async function handler(req, res) {
         base.raw_data = { ...(existing.raw_data || {}), ...base.raw_data };
         if (!hasOwn(body, 'expected_start_date')) delete base.expected_start_date;
         if (!hasTelegramTtl) base.telegram_invite_ttl_hours = existing.telegram_invite_ttl_hours || 72;
+        if (!hasOwn(body, 'active')) delete base.active;
+        else base.active = body.active === true;
+        if (!hasOwn(body, 'is_published')) delete base.is_published;
+        else base.is_published = body.is_published === true;
 
         if (deliveryMode === 'telegram') {
           if (!hasTelegramChatId) base.telegram_chat_id = existing.telegram_chat_id || null;
@@ -286,13 +336,24 @@ export default async function handler(req, res) {
           if (!readyCheck.ok) return res.status(409).json({ error: readyCheck.error });
         }
         const effectivePublished = hasOwn(base, 'is_published') ? base.is_published : existing.is_published === true;
-        if (deliveryMode === 'v4' && base.active === true && !effectivePublished && body.allowSellingUnpublishedV4 !== true) {
+        const effectiveActive = hasOwn(base, 'active') ? base.active : existing.active === true;
+        if (deliveryMode === 'v4' && effectiveActive && !effectivePublished && body.allowSellingUnpublishedV4 !== true) {
           return res.status(409).json({ error: 'Không thể bật bán khóa V4 khi nội dung chưa Publish.' });
         }
         if (deliveryMode === 'v4') {
-          base.raw_data.v4SellBeforePublishAcknowledged = base.active === true && !effectivePublished && body.allowSellingUnpublishedV4 === true;
+          base.raw_data.v4SellBeforePublishAcknowledged = effectiveActive && !effectivePublished && body.allowSellingUnpublishedV4 === true;
         } else {
           delete base.raw_data.v4SellBeforePublishAcknowledged;
+        }
+
+        if (deliveryMode === 'v5' && (effectivePublished || effectiveActive)) {
+          const readiness = await getV5Readiness(existing.id);
+          if (!readiness.ready) {
+            return res.status(409).json({
+              error: 'Khóa V5 chưa có canonical Published release hợp lệ nên chưa thể chuyển Sẵn sàng/Bật bán.',
+              code: readiness.reason || 'v5_not_ready'
+            });
+          }
         }
 
         const result = await supabase.from('courses').update(base).eq('id', id).select().single();
@@ -301,16 +362,42 @@ export default async function handler(req, res) {
       }
 
       let syncResults = { lms: 'PENDING', portal: 'PENDING', error: null };
-      try { syncResults = await syncCourseIfLms({ ...body, slug, courseName, deliveryMode }, data.id); } catch (syncErr) { console.error('Course sync trigger error:', syncErr); syncResults.error = String(syncErr.message || syncErr); }
+      try {
+        syncResults = await syncCourseIfLms({
+          slug: data.slug,
+          courseName: data.title,
+          price: data.price,
+          imageUrl: data.image_url,
+          expected_start_date: data.expected_start_date,
+          active: data.active,
+          teacher_name: data.teacher_name,
+          deliveryMode: mode(data.delivery_mode)
+        }, data.id);
+      } catch (syncErr) {
+        console.error('Course sync trigger error:', syncErr);
+        syncResults.error = String(syncErr.message || syncErr);
+      }
       return res.status(req.method === 'POST' ? 201 : 200).json({ success: true, data: { ...data, syncResults, telegramConnected: Boolean(String(data.telegram_chat_id || '').trim()) } });
     }
 
     if (req.method === 'DELETE') {
       const { id } = req.body || req.query;
       if (!id) return res.status(400).json({ error: 'Thiếu ID khóa học để xóa' });
-      const { data: course, error: courseErr } = await supabase.from('courses').select('slug,delivery_mode').eq('id', id).maybeSingle();
+      const { data: course, error: courseErr } = await supabase.from('courses').select('id,slug,delivery_mode').eq('id', id).maybeSingle();
       if (courseErr) throw courseErr;
       if (!course) return res.status(404).json({ error: 'Không tìm thấy khóa học' });
+
+      if (mode(course.delivery_mode) === 'v5') {
+        const { count: v5ConfigCount, error: v5ConfigError } = await supabase
+          .from('v5_course_configs')
+          .select('course_id', { count: 'exact', head: true })
+          .eq('course_id', course.id);
+        if (v5ConfigError) throw v5ConfigError;
+        if (Number(v5ConfigCount || 0) > 0) {
+          return res.status(409).json({ error: 'Không xóa khóa V5 canonical từ Commerce. Hãy dùng quy trình cleanup/archive của LMS V5.' });
+        }
+      }
+
       const [{ count: orderCount, error: orderErr }, { count: enrollmentCount, error: enrollmentErr }, { count: mappingCount, error: mappingErr }] = await Promise.all([
         supabase.from('orders').select('id', { count: 'exact', head: true }).eq('course_slug', course.slug),
         supabase.from('student_enrollments').select('id', { count: 'exact', head: true }).eq('course_slug', course.slug),
@@ -331,6 +418,6 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   } catch (error) {
     console.error('COURSES_API_ERROR:', error);
-    return res.status(500).json({ error: error.message });
+    return res.status(errorStatus(error)).json({ error: error.message, code: error.code || null });
   }
 }
