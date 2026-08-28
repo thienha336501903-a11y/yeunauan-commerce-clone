@@ -30,6 +30,21 @@ diff --git a/admin.html b/admin.html
 +                  ${course.deliveryMode === 'v4' ? `<span class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black ${isPublished ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">Nội dung: ${isPublished ? 'Đã Publish' : 'Draft'}</span>` : course.deliveryMode === 'v5' ? `<span id="v5-state-${id}" class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black bg-slate-100 text-slate-600">V5: đang kiểm tra...</span>` : ''}
                    <span class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black ${active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'}">Bán: ${active ? 'Đang bán' : 'Đã tắt'}</span>
 @@
+-                <div class="mb-4 rounded-2xl border ${isPublished ? 'border-green-200 bg-green-50' : 'border-orange-200 bg-orange-50'} p-3">
++                <div class="mb-4 rounded-2xl border ${course.deliveryMode === 'v5' ? 'border-emerald-200 bg-emerald-50' : isPublished ? 'border-green-200 bg-green-50' : 'border-orange-200 bg-orange-50'} p-3">
+                   <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                     <div>
+-                      <p class="text-[10px] uppercase font-black tracking-wider ${isPublished ? 'text-green-700' : 'text-orange-700'}">
+-                        Trạng thái nội dung
++                      <p class="text-[10px] uppercase font-black tracking-wider ${course.deliveryMode === 'v5' ? 'text-emerald-700' : isPublished ? 'text-green-700' : 'text-orange-700'}">
++                        ${course.deliveryMode === 'v5' ? 'Trạng thái nội dung canonical V5' : 'Trạng thái nội dung'}
+                       </p>
+-                      <p class="text-sm font-black ${isPublished ? 'text-green-700' : 'text-orange-700'}">
+-                        ${isPublished ? '🟢 Sẵn sàng' : '🟠 Chờ lên bài'}
++                      <p id="${course.deliveryMode === 'v5' ? 'v5-content-' + id : ''}" class="text-sm font-black ${course.deliveryMode === 'v5' ? 'text-emerald-700' : isPublished ? 'text-green-700' : 'text-orange-700'}">
++                        ${course.deliveryMode === 'v5' ? 'Đang kiểm tra Published release…' : isPublished ? '🟢 Sẵn sàng' : '🟠 Chờ lên bài'}
+                       </p>
+                     </div>
                      <button
 -                      onclick="toggleCoursePublished('${id}', ${isPublished})"
 +                      onclick="${course.deliveryMode === 'v5' ? "openV5Channel('" + slug + "')" : "toggleCoursePublished('" + id + "', " + isPublished + ")"}"
@@ -66,15 +81,29 @@ diff --git a/admin.html b/admin.html
 +    async function hydrateV5Readiness(courses) {
 +      const v5Courses = (Array.isArray(courses) ? courses : []).filter(course => course.deliveryMode === 'v5');
 +      await Promise.all(v5Courses.map(async course => {
-+        const node = document.getElementById('v5-state-' + course.id);
-+        if (!node) return;
++        const badge = document.getElementById('v5-state-' + course.id);
++        const content = document.getElementById('v5-content-' + course.id);
 +        try {
 +          const data = await getV5AdminReadiness(course.slug);
-+          node.className = 'inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black ' + (data.canonicalReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700');
-+          node.innerText = data.canonicalReady ? 'V5: Published' + (data.release?.version ? ' · r' + data.release.version : '') : 'V5: Draft / chưa sẵn sàng';
++          if (badge) {
++            badge.className = 'inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black ' + (data.canonicalReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700');
++            badge.innerText = data.canonicalReady ? 'V5: Published' + (data.release?.version ? ' · r' + data.release.version : '') : 'V5: Draft / chưa sẵn sàng';
++          }
++          if (content) {
++            content.className = 'text-sm font-black ' + (data.canonicalReady ? 'text-emerald-700' : 'text-amber-700');
++            content.innerText = data.canonicalReady
++              ? '🟢 Published' + (data.release?.version ? ' · Release ' + data.release.version : '')
++              : '🟠 Draft / chưa có Published release hợp lệ';
++          }
 +        } catch (error) {
-+          node.className = 'inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black bg-rose-100 text-rose-700';
-+          node.innerText = 'V5: không kiểm tra được';
++          if (badge) {
++            badge.className = 'inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black bg-rose-100 text-rose-700';
++            badge.innerText = 'V5: không kiểm tra được';
++          }
++          if (content) {
++            content.className = 'text-sm font-black text-rose-700';
++            content.innerText = 'Không kiểm tra được canonical V5';
++          }
 +        }
 +      }));
 +    }
@@ -109,7 +138,7 @@ diff --git a/admin.html b/admin.html
 +      try {
 +        const data = await getV5AdminReadiness(courseSlug);
 +        node.innerText = data.canonicalReady
-+          ? '✓ Published' + (data.release?.version ? ' · Release ' + data.release.version : '') + (data.canSell ? ' · Đang đủ điều kiện bán' : ' · Có thể bật bán tại Commerce')
++          ? '✓ Published' + (data.release?.version ? ' · Release ' + data.release.version : '') + (data.canSell ? ' · Đang bán' : ' · Có thể bật bán tại Commerce')
 +          : 'Draft / chưa có Published release hợp lệ';
 +      } catch (error) {
 +        node.innerText = error.message || 'Không kiểm tra được trạng thái V5';
