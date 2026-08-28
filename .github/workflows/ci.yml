@@ -17,6 +17,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
       - name: Syntax checks
         run: |
           node --check api/courses.js
@@ -28,6 +31,8 @@ jobs:
           node --check utils/sync-helpers.js
           node --check utils/v4-sync-helpers.js
           node --check utils/v5-sync-helpers.js
+          node --check utils/v5-order-approval.js
+          node --check utils/v5-readiness.js
       - name: Regression tests
         run: npm test
       - name: Clone configuration isolation

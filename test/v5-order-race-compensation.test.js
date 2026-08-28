@@ -25,10 +25,13 @@ test('order-write race compensation re-reads current DB state before changing en
   assert.match(approval, /const shouldHaveAccess = current\.status === 'Đã duyệt'/);
 });
 
-test('approval race keeps a grant when another writer already approved and revokes otherwise', () => {
-  assert.match(approval, /attemptedAction === 'create'/);
+test('approval race revokes the exact stale identity granted, keeps same approved identity, and restores drifted approved identity', () => {
+  assert.match(approval, /const granted = attemptedAction === 'create' \|\| attemptedAction === 'restore'/);
+  assert.match(approval, /if \(!shouldHaveAccess\) return syncV5EnrollmentToLms\(order, 'revoke'\)/);
   assert.match(approval, /CURRENT_ORDER_ALREADY_APPROVED/);
-  assert.match(approval, /syncV5EnrollmentToLms\(current, 'revoke'\)/);
+  assert.match(approval, /const revokeStale = await syncV5EnrollmentToLms\(order, 'revoke'\)/);
+  assert.match(approval, /const restoreCurrent = await syncV5EnrollmentToLms\(current, 'restore'\)/);
+  assert.match(approval, /REVOKED_STALE_IDENTITY_AND_RESTORED_CURRENT/);
 });
 
 test('revoke race keeps revoke for non-approved state and restores only a still-approved order', () => {

@@ -16,8 +16,9 @@ test('new V5 shells are forced off-sale and unpublished', () => {
 
 test('existing V5 mode cannot be downgraded or generic-converted', () => {
   assert.match(source, /existingMode === 'v5' && deliveryMode !== 'v5'/);
+  assert.match(source, /Khóa V5 không thể đổi hình thức học bằng chỉnh sửa Commerce/);
   assert.match(source, /existingMode !== 'v5' && deliveryMode === 'v5'/);
-  assert.match(source, /Không thể đổi hình thức học bằng chỉnh sửa Commerce/);
+  assert.match(source, /Không chuyển khóa hiện hữu sang V5 bằng chỉnh sửa Commerce/);
 });
 
 test('V5 readiness gates both ready/sale flags against canonical release state', () => {

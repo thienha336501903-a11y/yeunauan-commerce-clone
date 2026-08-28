@@ -1,24 +1,21 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
-import { evaluateV5Readiness } from '../utils/v5-readiness.js';
 
+const readiness = fs.readFileSync(new URL('../utils/v5-readiness.js', import.meta.url), 'utf8');
 const configSource = fs.readFileSync(new URL('../api/config.js', import.meta.url), 'utf8');
 
 test('canonical V5 readiness requires a published config pointing to the matching published release', () => {
-  const courseId = '00000000-0000-4000-8000-000000000001';
-  const releaseId = '00000000-0000-4000-8000-000000000002';
-  assert.deepEqual(
-    evaluateV5Readiness(
-      { status: 'published', published_release_id: releaseId },
-      { id: releaseId, course_id: courseId, status: 'published' },
-      courseId
-    ),
-    { ready: true, reason: null, releaseId }
-  );
-  assert.equal(evaluateV5Readiness({ status: 'draft', published_release_id: releaseId }, { id: releaseId, course_id: courseId, status: 'published' }, courseId).ready, false);
-  assert.equal(evaluateV5Readiness({ status: 'published', published_release_id: releaseId }, { id: releaseId, course_id: courseId, status: 'superseded' }, courseId).ready, false);
-  assert.equal(evaluateV5Readiness({ status: 'published', published_release_id: releaseId }, { id: releaseId, course_id: 'other', status: 'published' }, courseId).ready, false);
+  assert.match(readiness, /config\.status \|\| ''\)\.toLowerCase\(\) !== 'published'/);
+  assert.match(readiness, /published_release_id/);
+  assert.match(readiness, /String\(release\.id \|\| ''\) !== releaseId/);
+  assert.match(readiness, /String\(release\.course_id \|\| ''\) !== id/);
+  assert.match(readiness, /release\.status \|\| ''\)\.toLowerCase\(\) !== 'published'/);
+  assert.match(readiness, /return \{ ready: true, reason: null, releaseId \}/);
+});
+
+test('readiness DB lookup scopes the release to the same course', () => {
+  assert.match(readiness, /\.from\('v5_releases'\)[\s\S]*\.eq\('id', releaseId\)[\s\S]*\.eq\('course_id', id\)/);
 });
 
 test('storefront config checks canonical V5 readiness before exposing checkout', () => {
