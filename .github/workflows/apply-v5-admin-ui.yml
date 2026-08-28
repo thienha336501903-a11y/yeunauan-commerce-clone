@@ -1,0 +1,79 @@
+name: Apply V5 Admin UI
+
+on:
+  push:
+    branches:
+      - fix/v5-go-live-hardening-20260828
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply staged admin patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('docs/patches/commerce-v5-admin-ui.patch')
+          text = p.read_text()
+          old = "/api/v5-readiness?course="
+          new = "/api/config?adminReadiness=1&course="
+          if old not in text:
+              raise SystemExit('staged patch readiness URL anchor missing')
+          p.write_text(text.replace(old, new))
+          PY
+          git apply --check docs/patches/commerce-v5-admin-ui.patch
+          git apply docs/patches/commerce-v5-admin-ui.patch
+          cat > test/v5-admin-ui-staged-patch.test.js <<'EOF'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import test from 'node:test';
+
+          const admin = fs.readFileSync(new URL('../admin.html', import.meta.url), 'utf8');
+
+          test('Commerce admin explicitly represents LMS V5', () => {
+            assert.match(admin, /<option value="v5">Học trên LMS V5<\/option>/);
+            assert.match(admin, /LMS V5/);
+            assert.match(admin, /v5CourseFields/);
+          });
+
+          test('existing V5 mode is locked and content lifecycle opens canonical V5 Channel', () => {
+            assert.match(admin, /deliveryModeInput\.disabled = editingV5/);
+            assert.match(admin, /openV5Channel/);
+            assert.match(admin, /v5-admin\.html\?course=/);
+            assert.match(admin, /Trạng thái nội dung canonical V5/);
+          });
+
+          test('V5 UI reads canonical readiness before sale activation', () => {
+            assert.match(admin, /\/api\/config\?adminReadiness=1&course=/);
+            assert.match(admin, /readiness\.canonicalReady/);
+            assert.match(admin, /chưa có Published release hợp lệ/);
+          });
+
+          test('generic V5 publish/original lesson controls do not own V5 lifecycle', () => {
+            assert.match(admin, /if \(course\.deliveryMode === 'v5'\)[\s\S]*openV5Channel\(course\.slug\)/);
+            assert.match(admin, /Nội dung LMS V5 được quản lý tại V5 Channel/);
+            assert.match(admin, /deliveryMode: course\.deliveryMode \|\| 'lms'/);
+          });
+          EOF
+          rm docs/patches/commerce-v5-admin-ui.patch
+          rm .github/workflows/apply-v5-admin-ui.yml
+          git diff --check
+          node --test test/v5-admin-ui-staged-patch.test.js
+      - name: Commit applied UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add admin.html test/v5-admin-ui-staged-patch.test.js docs/patches/commerce-v5-admin-ui.patch .github/workflows/apply-v5-admin-ui.yml
+          git commit -m 'feat: apply Commerce V5 admin UI'
+          git push origin HEAD:fix/v5-go-live-hardening-20260828
