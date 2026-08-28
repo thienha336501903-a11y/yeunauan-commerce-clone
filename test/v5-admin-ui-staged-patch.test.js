@@ -2,29 +2,30 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-const patch = fs.readFileSync(new URL('../docs/patches/commerce-v5-admin-ui.patch', import.meta.url), 'utf8');
+const admin = fs.readFileSync(new URL('../admin.html', import.meta.url), 'utf8');
 
-test('staged Commerce admin patch explicitly represents LMS V5', () => {
-  assert.match(patch, /<option value="v5">Học trên LMS V5<\/option>/);
-  assert.match(patch, /LMS V5/);
-  assert.match(patch, /v5CourseFields/);
+test('Commerce admin explicitly represents LMS V5', () => {
+  assert.match(admin, /<option value="v5">Học trên LMS V5<\/option>/);
+  assert.match(admin, /id="v5CourseFields"/);
+  assert.match(admin, /LMS V5/);
 });
 
 test('existing V5 mode is locked and content lifecycle opens canonical V5 Channel', () => {
-  assert.match(patch, /deliveryModeInput\.disabled = editingV5/);
-  assert.match(patch, /openV5Channel/);
-  assert.match(patch, /v5-admin\.html\?course=/);
-  assert.match(patch, /Trạng thái nội dung canonical V5/);
+  assert.match(admin, /deliveryModeInput\.disabled = editingV5/);
+  assert.match(admin, /editingV5 = course\.deliveryMode === 'v5'/);
+  assert.match(admin, /v5-admin\.html\?course=/);
+  assert.match(admin, /Trạng thái nội dung canonical V5/);
 });
 
 test('V5 UI reads canonical readiness before sale activation', () => {
-  assert.match(patch, /\/api\/v5-readiness\?course=/);
-  assert.match(patch, /readiness\.canonicalReady/);
-  assert.match(patch, /chưa có Published release hợp lệ/);
+  assert.match(admin, /\/api\/config\?adminReadiness=1&course=/);
+  assert.match(admin, /readiness\.canonicalReady/);
+  assert.match(admin, /Published release hợp lệ/);
+  assert.match(admin, /if \(!currentStatus && course\.deliveryMode === 'v5'\)/);
 });
 
-test('generic V5 publish/original lesson controls do not own V5 lifecycle', () => {
-  assert.match(patch, /if \(course\.deliveryMode === 'v5'\)[\s\S]*openV5Channel\(course\.slug\)/);
-  assert.match(patch, /Nội dung LMS V5 được quản lý tại V5 Channel/);
-  assert.match(patch, /deliveryMode: course\.deliveryMode \|\| 'lms'/);
+test('generic V5 content controls do not own V5 lifecycle', () => {
+  assert.match(admin, /Nội dung LMS V5 được quản lý tại V5 Channel/);
+  assert.match(admin, /openV5Channel\(course\.slug\)/);
+  assert.match(admin, /course\.deliveryMode === 'v5' \? 'hidden'/);
 });
