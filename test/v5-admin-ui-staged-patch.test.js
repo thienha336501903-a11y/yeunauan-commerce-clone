@@ -29,3 +29,9 @@ test('generic V5 content controls do not own V5 lifecycle', () => {
   assert.match(admin, /openV5Channel\(course\.slug\)/);
   assert.match(admin, /course\.deliveryMode === 'v5' \? 'hidden'/);
 });
+
+test('temporary admin rollout machinery is removed from the branch', () => {
+  assert.equal(fs.existsSync(new URL('../docs/patches/commerce-v5-admin-ui.patch', import.meta.url)), false);
+  assert.equal(fs.existsSync(new URL('../.github/workflows/apply-v5-admin-ui.yml', import.meta.url)), false);
+  assert.equal(fs.existsSync(new URL('../.github/workflows/apply-v5-admin-ui-v2.yml', import.meta.url)), false);
+});
