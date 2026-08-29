@@ -145,7 +145,7 @@ async function syncCourseIfLms(course, dataId) {
   }
 
   const { syncCourseToExternalSystems } = await import('../utils/sync-helpers.js');
-  const result = await syncCourseToExternalSystems({
+  const externalCourse = {
     slug: course.slug,
     courseName: course.courseName,
     price: course.price,
@@ -154,7 +154,12 @@ async function syncCourseIfLms(course, dataId) {
     active: course.active,
     teacher_name: course.teacher_name,
     deliveryMode
-  });
+  };
+  // Commerce and canonical LMS V5 share the same course row. Re-sending the
+  // sale flag through the remote metadata bridge can race the committed row
+  // and must not own V5 sale/publish lifecycle.
+  if (deliveryMode === 'v5') delete externalCourse.active;
+  const result = await syncCourseToExternalSystems(externalCourse);
   await supabase.from('courses').update({ sync_lms_status: result.lms, sync_portal_status: result.portal, sync_error: result.error }).eq('id', dataId);
   return result;
 }

@@ -27,11 +27,12 @@ test('V5 readiness gates both ready/sale flags against canonical release state',
   assert.match(source, /canonical Published release hợp lệ/);
 });
 
-test('V5 metadata sync uses persisted DB state and explicit delivery mode', () => {
+test('V5 metadata sync uses explicit delivery mode without replaying shared sale state', () => {
   assert.match(source, /slug: data\.slug/);
   assert.match(source, /active: data\.active/);
   assert.match(source, /deliveryMode: mode\(data\.delivery_mode\)/);
-  assert.match(source, /deliveryMode\s*\n\s*\}\);/);
+  assert.match(source, /if \(deliveryMode === 'v5'\) delete externalCourse\.active/);
+  assert.match(source, /syncCourseToExternalSystems\(externalCourse\)/);
 });
 
 test('generic Commerce delete refuses canonical V5 data', () => {
