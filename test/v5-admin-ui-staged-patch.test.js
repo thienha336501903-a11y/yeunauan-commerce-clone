@@ -33,6 +33,11 @@ test('sale toggle never writes the canonical publish flag', () => {
   assert.doesNotMatch(saleToggle, /^\s*is_published\s*:/m);
 });
 
+test('Commerce API ignores canonical publish writes for existing V5 courses', () => {
+  const coursesApi = fs.readFileSync(new URL('../api/courses.js', import.meta.url), 'utf8');
+  assert.match(coursesApi, /if \(deliveryMode === 'v5'\) delete base\.is_published/);
+});
+
 test('generic V5 content controls do not own V5 lifecycle', () => {
   assert.match(admin, /Nội dung LMS V5 được quản lý tại V5 Channel/);
   assert.match(admin, /openV5Channel\(course\.slug\)/);

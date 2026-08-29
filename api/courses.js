@@ -323,6 +323,11 @@ export default async function handler(req, res) {
         if (!hasOwn(body, 'is_published')) delete base.is_published;
         else base.is_published = body.is_published === true;
 
+        // Canonical V5 publish state is owned by the LMS release lifecycle.
+        // Commerce updates (including stale admin tabs) may change sale state
+        // but must never publish or unpublish V5 content.
+        if (deliveryMode === 'v5') delete base.is_published;
+
         if (deliveryMode === 'telegram') {
           if (!hasTelegramChatId) base.telegram_chat_id = existing.telegram_chat_id || null;
           if (!hasTelegramChatTitle) base.telegram_chat_title = existing.telegram_chat_title || null;
