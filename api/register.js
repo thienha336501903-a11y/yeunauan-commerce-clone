@@ -156,11 +156,9 @@ export default async function handler(req, res) {
       }
     }
 
-    const managerPath = deliveryMode === 'v5'
-      ? runtime.lmsPublicUrl.replace(/\/$/, '') + '/my-courses.html?registered=1&course=' + encodeURIComponent(courseSlug)
-      : deliveryMode === 'v4'
-        ? '/my-courses.html?registered=1&course=' + encodeURIComponent(courseSlug)
-        : runtime.legacyPortalPublicUrl + '/my-courses';
+    const managerPath = ['v4', 'v5'].includes(deliveryMode)
+      ? (deliveryMode === 'v5' ? runtime.lmsPublicUrl.replace(/\/$/, '') : '') + '/my-courses.html?registered=1&course=' + encodeURIComponent(courseSlug)
+      : runtime.legacyPortalPublicUrl + '/my-courses';
     return res.status(200).json({ success: true, file: billLink, course: courseSlug, courseName: finalCourseName, orderId, deliveryMode, managerPath });
   } catch (error) {
     console.error('REGISTER_ERROR:', error);
