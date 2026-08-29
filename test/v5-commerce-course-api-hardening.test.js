@@ -27,10 +27,15 @@ test('V5 readiness gates both ready/sale flags against canonical release state',
   assert.match(source, /canonical Published release hợp lệ/);
 });
 
-test('V5 metadata sync uses explicit delivery mode without replaying shared sale state', () => {
-  assert.match(source, /slug: data\.slug/);
-  assert.match(source, /active: data\.active/);
+test('existing V5 PUT is shared-DB only while V5 POST shell creation keeps the course bridge', () => {
+  assert.match(source, /req\.method === 'PUT' && mode\(data\.delivery_mode\) === 'v5'/);
+  assert.match(source, /lms: 'SKIPPED_SHARED_DB'/);
+  assert.match(source, /portal: 'SKIPPED_V5'/);
+  assert.match(source, /else \{\s*try \{\s*syncResults = await syncCourseIfLms/);
   assert.match(source, /deliveryMode: mode\(data\.delivery_mode\)/);
+});
+
+test('V5 shell sync never replays shared sale state through the remote bridge', () => {
   assert.match(source, /if \(deliveryMode === 'v5'\) delete externalCourse\.active/);
   assert.match(source, /syncCourseToExternalSystems\(externalCourse\)/);
 });

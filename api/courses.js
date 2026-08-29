@@ -372,20 +372,36 @@ export default async function handler(req, res) {
       }
 
       let syncResults = { lms: 'PENDING', portal: 'PENDING', error: null };
-      try {
-        syncResults = await syncCourseIfLms({
-          slug: data.slug,
-          courseName: data.title,
-          price: data.price,
-          imageUrl: data.image_url,
-          expected_start_date: data.expected_start_date,
-          active: data.active,
-          teacher_name: data.teacher_name,
-          deliveryMode: mode(data.delivery_mode)
-        }, data.id);
-      } catch (syncErr) {
-        console.error('Course sync trigger error:', syncErr);
-        syncResults.error = String(syncErr.message || syncErr);
+      if (req.method === 'PUT' && mode(data.delivery_mode) === 'v5') {
+        // Existing V5 courses already share the canonical course row with LMS.
+        // A second remote syncCourse is redundant and can race the committed
+        // sale/publish state, so PUT is intentionally DB-only.
+        syncResults = { lms: 'SKIPPED_SHARED_DB', portal: 'SKIPPED_V5', error: null };
+        const statusResult = await supabase.from('courses').update({
+          sync_lms_status: syncResults.lms,
+          sync_portal_status: syncResults.portal,
+          sync_error: null
+        }).eq('id', data.id);
+        if (statusResult.error) {
+          console.error('Course sync status update error:', statusResult.error);
+          syncResults.error = String(statusResult.error.message || statusResult.error);
+        }
+      } else {
+        try {
+          syncResults = await syncCourseIfLms({
+            slug: data.slug,
+            courseName: data.title,
+            price: data.price,
+            imageUrl: data.image_url,
+            expected_start_date: data.expected_start_date,
+            active: data.active,
+            teacher_name: data.teacher_name,
+            deliveryMode: mode(data.delivery_mode)
+          }, data.id);
+        } catch (syncErr) {
+          console.error('Course sync trigger error:', syncErr);
+          syncResults.error = String(syncErr.message || syncErr);
+        }
       }
       return res.status(req.method === 'POST' ? 201 : 200).json({ success: true, data: { ...data, syncResults, telegramConnected: Boolean(String(data.telegram_chat_id || '').trim()) } });
     }
