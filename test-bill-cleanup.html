@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Commerce Test Bill Cleanup</title>
+<style>body{font-family:system-ui,sans-serif;background:#f6f4f3;color:#30231e;margin:0;padding:32px}.card{max-width:720px;margin:auto;background:#fff;padding:24px;border-radius:18px;box-shadow:0 8px 30px #30231e18}label{display:block;font-weight:750;margin:14px 0 6px}input{width:100%;box-sizing:border-box;padding:11px;border:1px solid #d8cdc8;border-radius:10px;font:inherit}button{margin-top:16px;padding:11px 16px;border:0;border-radius:10px;background:#b4232d;color:#fff;font-weight:800}pre{white-space:pre-wrap;background:#f3efed;padding:12px;border-radius:10px}</style></head>
+<body><main class="card"><h1>Cleanup Cloudinary bill test orphan</h1><p>Chỉ public ID dưới thư mục <code>bill-chuyen-khoan/clone-factory-test…</code> và khóa không còn order mới được phép xóa.</p>
+<label>Course slug</label><input id="courseSlug">
+<label>Cloudinary public ID</label><input id="publicId">
+<button id="cleanup">Xóa bill test orphan</button><pre id="result">Chưa chạy.</pre></main>
+<script>
+const $=id=>document.getElementById(id);
+$('cleanup').onclick=async()=>{const courseSlug=$('courseSlug').value.trim();const orphanBillPublicId=$('publicId').value.trim();if(!confirm(`Xóa vĩnh viễn bill test ${orphanBillPublicId}?`))return;const password=sessionStorage.getItem('admin_password')||'';if(!password){$('result').textContent='Hãy đăng nhập orders.html trong chính tab này trước.';return}$('cleanup').disabled=true;$('result').textContent='Đang cleanup…';try{const response=await fetch('/api/orders',{method:'DELETE',headers:{'Content-Type':'application/json','X-Admin-Password':password},body:JSON.stringify({courseSlug,orphanBillPublicId,confirmation:'DELETE_CLONE_FACTORY_TEST_ORPHAN_BILL'})});const data=await response.json().catch(()=>({}));if(!response.ok||!data.success)throw new Error(data.error||`HTTP ${response.status}`);$('result').textContent=JSON.stringify(data,null,2)}catch(error){$('result').textContent=error.message||String(error)}finally{$('cleanup').disabled=false}};
+</script></body></html>
