@@ -24,6 +24,15 @@ test('V5 UI reads canonical readiness before sale activation', () => {
   assert.match(admin, /if \(!currentStatus && course\.deliveryMode === 'v5'\)/);
 });
 
+test('sale toggle never writes the canonical publish flag', () => {
+  const saleToggle = admin.slice(
+    admin.indexOf('async function toggleCourseActive'),
+    admin.indexOf('async function toggleCoursePublished')
+  );
+  assert.match(saleToggle, /active:\s*!currentStatus/);
+  assert.doesNotMatch(saleToggle, /^\s*is_published\s*:/m);
+});
+
 test('generic V5 content controls do not own V5 lifecycle', () => {
   assert.match(admin, /Nội dung LMS V5 được quản lý tại V5 Channel/);
   assert.match(admin, /openV5Channel\(course\.slug\)/);
