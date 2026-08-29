@@ -8,6 +8,7 @@ const VALID_ORDER_STATUSES = new Set(['Chờ duyệt', 'Đã duyệt', 'Từ ch�
 const TEST_TITLE_PREFIX = '__clone_factory_test';
 const TEST_SLUG_PATTERN = /^clone-factory-test(?:-|$)/;
 const TEST_DELETE_CONFIRMATION = 'DELETE_CLONE_FACTORY_TEST';
+const TEST_ORPHAN_BILL_CONFIRMATION = 'DELETE_CLONE_FACTORY_TEST_ORPHAN_BILL';
 const isUuid = value => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
 
 export default async function handler(req, res) {
@@ -141,7 +142,33 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'DELETE') {
-      const { id, confirmation } = req.body || {};
+      const { id, confirmation, courseSlug: requestedCourseSlug, orphanBillPublicId } = req.body || {};
+
+      if (confirmation === TEST_ORPHAN_BILL_CONFIRMATION) {
+        const courseSlug = String(requestedCourseSlug || '').trim();
+        const publicId = String(orphanBillPublicId || '').trim();
+        const expectedPrefix = `bill-chuyen-khoan/${courseSlug}/`;
+        if (!TEST_SLUG_PATTERN.test(courseSlug) || !publicId.startsWith(expectedPrefix) || publicId.length <= expectedPrefix.length) {
+          return res.status(409).json({ error: 'Cleanup bill orphan bị chặn: public ID không thuộc clone factory test.' });
+        }
+
+        const { count: activeOrderCount, error: activeOrderError } = await supabase
+          .from('orders')
+          .select('id', { count: 'exact', head: true })
+          .eq('course_slug', courseSlug);
+        if (activeOrderError) throw activeOrderError;
+        if (activeOrderCount) return res.status(409).json({ error: 'Cleanup bill orphan bị chặn: khóa test vẫn còn order trong DB.' });
+
+        const missingCloudinaryEnv = ['CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET'].filter(name => !process.env[name]);
+        if (missingCloudinaryEnv.length) return res.status(500).json({ error: 'Thiếu cấu hình Cloudinary cleanup' });
+        cloudinary.config({ cloud_name: process.env.CLOUDINARY_CLOUD_NAME, api_key: process.env.CLOUDINARY_API_KEY, api_secret: process.env.CLOUDINARY_API_SECRET });
+        const cloudinaryResult = await cloudinary.uploader.destroy(publicId, { resource_type: 'image', invalidate: true });
+        if (!['ok', 'not found'].includes(String(cloudinaryResult?.result || '').toLowerCase())) {
+          throw new Error('Cloudinary không xác nhận xóa bill test orphan');
+        }
+        return res.status(200).json({ success: true, deletedPublicId: publicId, cloudinaryResult: cloudinaryResult.result });
+      }
+
       if (!isUuid(id) || confirmation !== TEST_DELETE_CONFIRMATION) {
         return res.status(400).json({ error: 'Yêu cầu cleanup test không hợp lệ' });
       }
