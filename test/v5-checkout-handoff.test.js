@@ -6,8 +6,9 @@ const register = fs.readFileSync(new URL('../api/register.js', import.meta.url),
 const checkout = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
 test('V5 registration returns an absolute LMS course-manager URL', () => {
-  assert.match(register, /deliveryMode === 'v5'[\s\S]*runtime\.lmsPublicUrl\.replace\(\/\\\/$\/, ''\)[\s\S]*\/my-courses\.html\?registered=1&course=/);
-  assert.match(register, /deliveryMode === 'v4'[\s\S]*'\/my-courses\.html\?registered=1&course='/);
+  assert.ok(register.includes("const managerPath = ['v4', 'v5'].includes(deliveryMode)"));
+  assert.ok(register.includes("deliveryMode === 'v5' ? runtime.lmsPublicUrl.replace(/\\/$/, '') : ''"));
+  assert.ok(register.includes("'/my-courses.html?registered=1&course=' + encodeURIComponent(courseSlug)"));
 });
 
 test('checkout generic handoff honors an absolute managerPath', () => {
