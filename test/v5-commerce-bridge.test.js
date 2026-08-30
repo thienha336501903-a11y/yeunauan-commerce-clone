@@ -15,15 +15,17 @@ test('delivery policy preserves V5 and exposes strict parsing for admin APIs', (
   assert.equal(parseDeliveryMode('unknown'), null);
 });
 
-test('V5 sync helper uses isolated Preview and Production targets and never legacy Portal', () => {
+test('V5 sync helper uses isolated Preview and Production targets, dedicated auth, and never legacy Portal', () => {
   const helper = read('utils/v5-sync-helpers.js');
-  assert.match(helper, /process\.env\.V5_SYNC_SECRET \|\| process\.env\.INTERNAL_SYNC_SECRET/);
+  assert.match(helper, /const secret = String\(process\.env\.V5_SYNC_SECRET \|\| ''\)\.trim\(\)/);
+  assert.doesNotMatch(helper, /process\.env\.INTERNAL_SYNC_SECRET/);
   assert.match(helper, /process\.env\.VERCEL_ENV === 'preview' \? process\.env\.V5_LMS_SYNC_URL : ''/);
   assert.match(helper, /process\.env\.V5_LMS_PUBLIC_URL/);
   assert.match(helper, /cloneConfig\(\)\.v4PublicUrl/);
   assert.match(helper, /previewOverride \|\| productionV5Base\(\)/);
   assert.match(helper, /\/api\/v5-sync/);
   assert.match(helper, /X-Sync-Secret/);
+  assert.match(helper, /Missing V5_SYNC_SECRET/);
   assert.match(helper, /SKIPPED_V5/);
   assert.doesNotMatch(helper, /SYSTEM1_URL/);
   assert.doesNotMatch(helper, /PORTAL_URL/);
@@ -55,7 +57,7 @@ test('V5 course sync preserves existing sale state when active is omitted', asyn
   assert.equal(Object.hasOwn(payload, 'active'), false);
 });
 
-test('Production V5 runtime ignores stale LMS_PUBLIC_URL and prefers dedicated V5 secret', async t => {
+test('Production V5 runtime ignores stale LMS_PUBLIC_URL and uses dedicated V5 secret', async t => {
   const keys = ['VERCEL_ENV', 'V5_SYNC_SECRET', 'INTERNAL_SYNC_SECRET', 'V4_PUBLIC_URL', 'LMS_PUBLIC_URL', 'V5_LMS_PUBLIC_URL', 'V5_LMS_SYNC_URL'];
   const before = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   const originalFetch = global.fetch;
@@ -94,6 +96,36 @@ test('Production V5 runtime ignores stale LMS_PUBLIC_URL and prefers dedicated V
   assert.equal(calledUrl, 'https://v4-runtime.example/api/v5-sync');
   assert.equal(sentSecret, 'v5-dedicated-secret');
   assert.doesNotMatch(calledUrl, /stale-lms/);
+});
+
+test('legacy internal secret alone cannot authenticate the Commerce V5 caller', async t => {
+  const keys = ['VERCEL_ENV', 'V5_SYNC_SECRET', 'INTERNAL_SYNC_SECRET', 'V4_PUBLIC_URL', 'V5_LMS_PUBLIC_URL'];
+  const before = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  const originalFetch = global.fetch;
+  t.after(() => {
+    for (const key of keys) {
+      if (before[key] === undefined) delete process.env[key];
+      else process.env[key] = before[key];
+    }
+    global.fetch = originalFetch;
+  });
+
+  process.env.VERCEL_ENV = 'production';
+  delete process.env.V5_SYNC_SECRET;
+  process.env.INTERNAL_SYNC_SECRET = 'legacy-secret';
+  process.env.V4_PUBLIC_URL = 'https://v4-runtime.example';
+  delete process.env.V5_LMS_PUBLIC_URL;
+
+  let fetchCalled = false;
+  global.fetch = async () => {
+    fetchCalled = true;
+    throw new Error('fetch must not run without V5_SYNC_SECRET');
+  };
+
+  const result = await syncV5CourseToLms({ slug: 'v5-course', courseName: 'V5 Course' });
+  assert.equal(result.lms, 'FAILED');
+  assert.equal(result.error, 'Missing V5_SYNC_SECRET');
+  assert.equal(fetchCalled, false);
 });
 
 test('generic sync helper delegates V5 course and enrollment without legacy side effects', () => {
