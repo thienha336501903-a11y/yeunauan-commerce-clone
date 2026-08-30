@@ -268,7 +268,21 @@
             <option value="lms">Học trên LMS cũ</option>
             <option value="telegram">Nhận bài qua Telegram</option>
             <option value="v4">Học trên LMS V4</option>
+            <option value="v5">Học trên LMS V5</option>
           </select>
+
+          <div id="v5CourseFields" class="hidden mt-4">
+            <div class="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+              <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <p class="text-xs uppercase font-extrabold text-emerald-800 tracking-wider">Nội dung LMS V5</p>
+                  <p id="v5ModalContentState" class="text-sm font-black text-slate-800 mt-1">Lưu khóa trước để mở V5 Channel.</p>
+                  <p class="text-[11px] text-slate-500 mt-1">Commerce chỉ quản lý thông tin bán và trạng thái bán. Draft / Preflight / Publish / Rollback được quản lý tại LMS V5.</p>
+                </div>
+                <button type="button" onclick="openV5ChannelFromModal()" class="shrink-0 px-4 py-3 bg-emerald-700 text-white rounded-xl text-sm font-black hover:bg-emerald-800 transition">Mở V5 Channel ↗</button>
+              </div>
+            </div>
+          </div>
 
           <div id="v4CourseFields" class="hidden mt-4 space-y-3">
             <div class="rounded-2xl border border-sky-200 bg-sky-50 p-4">
@@ -746,8 +760,8 @@
                   ${course.description || "Chưa có mô tả ngắn."}
                 </p>
                 <div class="mb-4 flex flex-wrap gap-2">
-                  <span class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${course.deliveryMode === 'v4' ? 'bg-violet-100 text-violet-700' : course.deliveryMode === 'telegram' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-600'}">${course.deliveryMode === 'v4' ? 'LMS V4' : course.deliveryMode === 'telegram' ? 'TELEGRAM' : 'LMS CŨ'}</span>
-                  ${course.deliveryMode === 'v4' ? `<span class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black ${isPublished ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">Nội dung: ${isPublished ? 'Đã Publish' : 'Draft'}</span>` : ''}
+                  <span class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${course.deliveryMode === 'v4' ? 'bg-violet-100 text-violet-700' : course.deliveryMode === 'v5' ? 'bg-emerald-100 text-emerald-700' : course.deliveryMode === 'telegram' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-600'}">${course.deliveryMode === 'v4' ? 'LMS V4' : course.deliveryMode === 'v5' ? 'LMS V5' : course.deliveryMode === 'telegram' ? 'TELEGRAM' : 'LMS CŨ'}</span>
+                  ${course.deliveryMode === 'v4' ? `<span class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black ${isPublished ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">Nội dung: ${isPublished ? 'Đã Publish' : 'Draft'}</span>` : course.deliveryMode === 'v5' ? `<span id="v5-state-${id}" class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black bg-slate-100 text-slate-600">V5: đang kiểm tra...</span>` : ''}
                   <span class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black ${active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'}">Bán: ${active ? 'Đang bán' : 'Đã tắt'}</span>
                 </div>
 
@@ -779,27 +793,27 @@
                 </div>
 
                 <!-- Trạng thái nội dung -->
-                <div class="mb-4 rounded-2xl border ${isPublished ? 'border-green-200 bg-green-50' : 'border-orange-200 bg-orange-50'} p-3">
+                <div class="mb-4 rounded-2xl border ${course.deliveryMode === 'v5' ? 'border-emerald-200 bg-emerald-50' : isPublished ? 'border-green-200 bg-green-50' : 'border-orange-200 bg-orange-50'} p-3">
                   <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                     <div>
-                      <p class="text-[10px] uppercase font-black tracking-wider ${isPublished ? 'text-green-700' : 'text-orange-700'}">
-                        Trạng thái nội dung
+                      <p class="text-[10px] uppercase font-black tracking-wider ${course.deliveryMode === 'v5' ? 'text-emerald-700' : isPublished ? 'text-green-700' : 'text-orange-700'}">
+                        ${course.deliveryMode === 'v5' ? 'Trạng thái nội dung canonical V5' : 'Trạng thái nội dung'}
                       </p>
-                      <p class="text-sm font-black ${isPublished ? 'text-green-700' : 'text-orange-700'}">
-                        ${isPublished ? '🟢 Sẵn sàng' : '🟠 Chờ lên bài'}
+                      <p id="${course.deliveryMode === 'v5' ? 'v5-content-' + id : ''}" class="text-sm font-black ${course.deliveryMode === 'v5' ? 'text-emerald-700' : isPublished ? 'text-green-700' : 'text-orange-700'}">
+                        ${course.deliveryMode === 'v5' ? 'Đang kiểm tra Published release…' : isPublished ? '🟢 Sẵn sàng' : '🟠 Chờ lên bài'}
                       </p>
                     </div>
                     <button
-                      onclick="toggleCoursePublished('${id}', ${isPublished})"
+                      onclick="${course.deliveryMode === 'v5' ? "openV5Channel('" + slug + "')" : "toggleCoursePublished('" + id + "', " + isPublished + ")"}"
                       class="text-[11px] font-black px-3 py-2 rounded-xl transition ${isPublished ? 'bg-white text-orange-700 border border-orange-200 hover:bg-orange-100' : 'bg-white text-green-700 border border-green-200 hover:bg-green-100'}"
                     >
-                      ${isPublished ? 'Chuyển chờ lên bài' : 'Chuyển sẵn sàng'}
+                      ${course.deliveryMode === 'v5' ? 'Mở V5 Channel ↗' : isPublished ? 'Chuyển chờ lên bài' : 'Chuyển sẵn sàng'}
                     </button>
                   </div>
                 </div>
 
                 <!-- Lối vào bài học gốc -->
-                <div class="mb-4 rounded-2xl border ${originalLessonEntryVisible ? 'border-green-200 bg-green-50' : 'border-orange-200 bg-orange-50'} p-3">
+                <div class="${course.deliveryMode === 'v5' ? 'hidden' : ''} mb-4 rounded-2xl border ${originalLessonEntryVisible ? 'border-green-200 bg-green-50' : 'border-orange-200 bg-orange-50'} p-3">
                   <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                     <div>
                       <p class="text-[10px] uppercase font-black tracking-wider ${originalLessonEntryVisible ? 'text-green-700' : 'text-orange-700'}">
@@ -866,6 +880,7 @@
           </div>
         `;
       }).join('');
+      hydrateV5Readiness(courses).catch(error => console.warn('[v5-admin] readiness hydrate failed', error));
     }
 
     // 5. SEARCH & FILTER COURSES
@@ -900,6 +915,84 @@
       navigator.clipboard.writeText(link).then(() => {
         showToast("Đã copy link trang đăng ký");
       });
+    }
+
+    async function getV5AdminReadiness(slug) {
+      const response = await fetch('/api/config?adminReadiness=1&course=' + encodeURIComponent(slug), {
+        cache: 'no-store',
+        headers: { 'X-Admin-Password': currentAdminPassword }
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Không kiểm tra được trạng thái LMS V5');
+      return data;
+    }
+
+    async function hydrateV5Readiness(courses) {
+      const v5Courses = (Array.isArray(courses) ? courses : []).filter(course => course.deliveryMode === 'v5');
+      await Promise.all(v5Courses.map(async course => {
+        const badge = document.getElementById('v5-state-' + course.id);
+        const content = document.getElementById('v5-content-' + course.id);
+        try {
+          const readiness = await getV5AdminReadiness(course.slug);
+          if (badge) {
+            badge.className = 'inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black ' + (readiness.canonicalReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700');
+            badge.innerText = readiness.canonicalReady ? 'V5: Published' + (readiness.release?.version ? ' · r' + readiness.release.version : '') : 'V5: Draft / chưa sẵn sàng';
+          }
+          if (content) {
+            content.className = 'text-sm font-black ' + (readiness.canonicalReady ? 'text-emerald-700' : 'text-amber-700');
+            content.innerText = readiness.canonicalReady
+              ? '🟢 Published' + (readiness.release?.version ? ' · Release ' + readiness.release.version : '')
+              : '🟠 Draft / chưa có Published release hợp lệ';
+          }
+        } catch (error) {
+          if (badge) {
+            badge.className = 'inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black bg-rose-100 text-rose-700';
+            badge.innerText = 'V5: không kiểm tra được';
+          }
+          if (content) {
+            content.className = 'text-sm font-black text-rose-700';
+            content.innerText = 'Không kiểm tra được canonical V5';
+          }
+        }
+      }));
+    }
+
+    async function openV5Channel(slug) {
+      const courseSlug = String(slug || '').trim();
+      if (!courseSlug) return showToast('Hãy lưu khóa V5 trước.');
+      try {
+        const response = await fetch('/api/config?runtime=1', { cache: 'no-store' });
+        const runtime = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(runtime.error || 'Không tải được cấu hình LMS V5');
+        const base = String(runtime.v4PublicUrl || '').replace(/\/$/, '');
+        if (!base) throw new Error('Thiếu URL LMS V5');
+        window.open(base + '/v5-admin.html?course=' + encodeURIComponent(courseSlug), '_blank', 'noopener');
+      } catch (error) {
+        alert(error.message || 'Không mở được V5 Channel');
+      }
+    }
+
+    function openV5ChannelFromModal() {
+      openV5Channel(document.getElementById('courseSlugInput')?.value || '');
+    }
+
+    async function refreshV5ModalState(slug) {
+      const node = document.getElementById('v5ModalContentState');
+      if (!node) return;
+      const courseSlug = String(slug || '').trim();
+      if (!courseSlug || !document.getElementById('courseId')?.value) {
+        node.innerText = 'Lưu khóa trước để mở V5 Channel.';
+        return;
+      }
+      node.innerText = 'Đang kiểm tra trạng thái canonical V5...';
+      try {
+        const readiness = await getV5AdminReadiness(courseSlug);
+        node.innerText = readiness.canonicalReady
+          ? '✓ Published' + (readiness.release?.version ? ' · Release ' + readiness.release.version : '') + (readiness.canSell ? ' · Đang bán' : ' · Có thể bật bán tại Commerce')
+          : 'Draft / chưa có Published release hợp lệ';
+      } catch (error) {
+        node.innerText = error.message || 'Không kiểm tra được trạng thái V5';
+      }
     }
 
     // Helpers for course modal enhancements
@@ -1642,8 +1735,10 @@
       const mode = document.getElementById('courseDeliveryModeInput')?.value || 'lms';
       const box = document.getElementById('telegramCourseFields');
       const v4Box = document.getElementById('v4CourseFields');
+      const v5Box = document.getElementById('v5CourseFields');
       if (box) box.classList.toggle('hidden', mode !== 'telegram');
       if (v4Box) v4Box.classList.toggle('hidden', mode !== 'v4');
+      if (v5Box) v5Box.classList.toggle('hidden', mode !== 'v5');
       const chatId = document.getElementById('telegramChatIdInput');
       if (chatId) chatId.required = false;
       updateTelegramConnectUi();
@@ -1655,6 +1750,10 @@
       }
       if (mode === 'v4' && !document.getElementById('courseId')?.value) {
         document.getElementById('courseActiveInput').checked = false;
+      }
+      if (mode === 'v5') {
+        if (!document.getElementById('courseId')?.value) document.getElementById('courseActiveInput').checked = false;
+        refreshV5ModalState(document.getElementById('courseSlugInput')?.value || '');
       }
       updateV4StepGuide();
     }
@@ -1755,7 +1854,12 @@
         document.getElementById("courseActiveInput").checked = course.active;
         document.getElementById("courseImageUrlInput").value = course.imageUrl || "";
         document.getElementById("courseDescriptionInput").value = course.description || "";
-        document.getElementById("courseDeliveryModeInput").value = course.deliveryMode || "lms";
+        const deliveryModeInput = document.getElementById("courseDeliveryModeInput");
+        deliveryModeInput.value = course.deliveryMode || "lms";
+        const editingV5 = course.deliveryMode === 'v5';
+        deliveryModeInput.disabled = editingV5;
+        deliveryModeInput.classList.toggle('opacity-60', editingV5);
+        deliveryModeInput.title = editingV5 ? 'Khóa LMS V5 không được đổi hình thức học từ Commerce.' : '';
         document.getElementById("telegramChatIdInput").value = course.telegramChatId || "";
         document.getElementById("telegramChatTitleInput").value = course.telegramChatTitle || "";
         document.getElementById("telegramInviteTtlInput").value = course.telegramInviteTtlHours || 72;
@@ -1763,6 +1867,7 @@
         courseSlugTouched = true;
         toggleTelegramFields();
         updateTelegramConnectUi();
+        if (course.deliveryMode === 'v5') refreshV5ModalState(course.slug);
         
         // Bank details from raw_data
         document.getElementById("bankNameInput").value = course.bankName || "";
@@ -1778,7 +1883,11 @@
         document.getElementById("courseActiveInput").checked = true;
         document.getElementById("courseSortOrderInput").value = 0;
         document.getElementById("courseExpectedStartDateInput").value = "";
-        document.getElementById("courseDeliveryModeInput").value = "lms";
+        const deliveryModeInput = document.getElementById("courseDeliveryModeInput");
+        deliveryModeInput.disabled = false;
+        deliveryModeInput.classList.remove('opacity-60');
+        deliveryModeInput.title = '';
+        deliveryModeInput.value = "lms";
         document.getElementById("telegramChatIdInput").value = "";
         document.getElementById("telegramChatTitleInput").value = "";
         document.getElementById("telegramInviteTtlInput").value = 72;
@@ -1928,6 +2037,10 @@
             showToast('Khóa V4 đã lưu Draft trong cửa sổ này.');
             await loadCourses();
             await refreshV4WorkflowStatus();
+          } else if (deliveryMode === 'v5' && savedCourseId) {
+            showToast(id ? 'Đã cập nhật thông tin bán LMS V5.' : 'Đã tạo vỏ khóa LMS V5 ở trạng thái Draft.');
+            await loadCourses();
+            await refreshV5ModalState(slug);
           } else if (deliveryMode === 'telegram' && !telegramChatId && savedCourseId) {
             showToast(id ? "Đã cập nhật khóa. Bây giờ hãy kết nối Telegram." : "Đã tạo khóa. Bây giờ hãy kết nối Telegram.");
             updateTelegramConnectUi();
@@ -1956,6 +2069,18 @@
         allowSellingUnpublishedV4 = confirm('Nội dung V4 chưa Publish. Bạn có chủ đích vẫn bật bán khóa này không?');
         if (!allowSellingUnpublishedV4) return;
       }
+      if (!currentStatus && course.deliveryMode === 'v5') {
+        try {
+          const readiness = await getV5AdminReadiness(course.slug);
+          if (!readiness.canonicalReady) {
+            alert('Khóa LMS V5 chưa có Published release hợp lệ. Hãy Publish tại V5 Channel trước khi bật bán.');
+            return;
+          }
+        } catch (error) {
+          alert(error.message || 'Không kiểm tra được trạng thái LMS V5.');
+          return;
+        }
+      }
 
       const payload = {
         id: course.id,
@@ -1968,7 +2093,6 @@
         description: course.description,
         imageUrl: course.imageUrl,
         active: !currentStatus,
-        is_published: course.is_published === true,
         deliveryMode: course.deliveryMode || 'lms',
         telegramChatId: course.telegramChatId || '',
         telegramChatTitle: course.telegramChatTitle || '',
@@ -2010,6 +2134,11 @@
     async function toggleCoursePublished(id, currentPublished) {
       const course = allCourses.find(c => c.id === id);
       if (!course) return;
+      if (course.deliveryMode === 'v5') {
+        showToast('Nội dung LMS V5 được quản lý tại V5 Channel.');
+        openV5Channel(course.slug);
+        return;
+      }
 
       const nextPublished = !currentPublished;
       const courseName = course.courseName || course.slug;
@@ -2073,6 +2202,11 @@
     async function toggleOriginalLessonEntry(id, currentVisible) {
       const course = allCourses.find(c => c.id === id);
       if (!course) return;
+      if (course.deliveryMode === 'v5') {
+        showToast('Nội dung LMS V5 được quản lý tại V5 Channel.');
+        openV5Channel(course.slug);
+        return;
+      }
 
       const nextVisible = !currentVisible;
       const courseName = course.courseName || course.slug;

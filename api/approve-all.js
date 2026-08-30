@@ -1,5 +1,6 @@
 import { supabase } from "../utils/supabase.js";
 import { syncV4EnrollmentToLms } from "../utils/v4-sync-helpers.js";
+import { approveV5Order, v5SyncFailed } from "../utils/v5-order-approval.js";
 
 function syncFailed(syncResults) {
   if (!syncResults) return true;
@@ -30,30 +31,52 @@ export default async function handler(req, res) {
 
     const { data: pendingOrders, error: pendingError } = await supabase
       .from("orders")
-      .select("id, customer_email, course_slug, course_title, delivery_mode, status")
+      .select("id, course_id, customer_email, course_slug, course_title, delivery_mode, status")
       .eq("course_slug", course)
       .eq("status", "Chờ duyệt");
     if (pendingError) throw pendingError;
 
-    const enrollmentOrders = (pendingOrders || []).filter(order => order.delivery_mode !== "telegram");
+    const enrollmentOrders = (pendingOrders || []).filter(order => String(order.delivery_mode || '').toLowerCase() !== "telegram");
+    const v5Orders = enrollmentOrders.filter(order => String(order.delivery_mode || '').toLowerCase() === 'v5');
+    const standardOrders = enrollmentOrders.filter(order => String(order.delivery_mode || '').toLowerCase() !== 'v5');
     const skippedTelegram = (pendingOrders || []).length - enrollmentOrders.length;
+    const results = [];
+    const approvedOrders = [];
 
-    let updatedOrders = [];
-    if (enrollmentOrders.length) {
+    // V5 is sync-first: an order stays pending if entitlement creation fails.
+    // This prevents “Đã duyệt” from being visible while no learner access exists.
+    for (const order of v5Orders) {
+      try {
+        const result = await approveV5Order(order);
+        if (!result.ok) {
+          results.push({ id: order.id, ok: false, keptPending: true, sync: result.syncResults || { lms: 'FAILED', portal: 'SKIPPED_V5', error: result.error }, code: result.code || 'v5_approval_failed' });
+          continue;
+        }
+        approvedOrders.push(result.data);
+        results.push({ id: order.id, ok: !v5SyncFailed(result.syncResults), sync: result.syncResults });
+      } catch (syncErr) {
+        const message = syncErr?.message || String(syncErr);
+        console.error("Bulk approve V5 error:", order.id, message);
+        results.push({ id: order.id, ok: false, keptPending: true, sync: { lms: "FAILED", portal: "SKIPPED_V5", error: message }, code: syncErr?.code || 'v5_approval_failed' });
+      }
+    }
+
+    // Preserve the existing V4/legacy behavior; this change is deliberately
+    // isolated to V5 so the stable modes are not refactored during V5 rollout.
+    let updatedStandardOrders = [];
+    if (standardOrders.length) {
       const { data, error } = await supabase
         .from("orders")
         .update({ status: "Đã duyệt", updated_at: new Date().toISOString() })
-        .in("id", enrollmentOrders.map(order => order.id))
+        .in("id", standardOrders.map(order => order.id))
         .eq("status", "Chờ duyệt")
-        .select("id, customer_email, course_slug, course_title, delivery_mode");
+        .select("id, course_id, customer_email, course_slug, course_title, delivery_mode");
       if (error) throw error;
-      updatedOrders = data || [];
+      updatedStandardOrders = data || [];
+      approvedOrders.push(...updatedStandardOrders);
     }
 
-    const gmails = updatedOrders.map(order => order.customer_email).filter(Boolean);
-    const results = [];
-
-    for (const order of updatedOrders) {
+    for (const order of updatedStandardOrders) {
       if (!order.customer_email) {
         const syncResults = {
           lms: "FAILED",
@@ -74,8 +97,6 @@ export default async function handler(req, res) {
         if (String(order.delivery_mode || "").toLowerCase() === "v4") {
           syncResults = await syncV4EnrollmentToLms(order, "create");
         } else {
-          // Generic helper detects V5 and delegates to /api/v5-sync,
-          // while legacy LMS remains unchanged for delivery_mode=lms.
           const { syncEnrollmentToExternalSystems } = await import("../utils/sync-helpers.js");
           syncResults = await syncEnrollmentToExternalSystems(order, "create");
         }
@@ -101,20 +122,24 @@ export default async function handler(req, res) {
       }
     }
 
+    const gmails = approvedOrders.map(order => order.customer_email).filter(Boolean);
     const syncSucceeded = results.filter(result => result.ok).length;
     const syncFailedCount = results.length - syncSucceeded;
+    const v5KeptPending = results.filter(result => result.keptPending).length;
 
     return res.status(200).json({
       success: true,
-      count: updatedOrders.length,
+      requested: enrollmentOrders.length,
+      count: approvedOrders.length,
       gmails,
       skippedTelegram,
+      v5KeptPending,
       syncSucceeded,
       syncFailed: syncFailedCount,
       results
     });
   } catch (error) {
     console.error("APPROVE_ALL_ERROR:", error);
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message, code: error.code || 'approve_all_error', compensation: error.compensation || null });
   }
 }

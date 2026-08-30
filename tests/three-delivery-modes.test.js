@@ -35,16 +35,18 @@ test('V4 checkout is fail-closed until content is published', () => {
   assert.match(register, /if \(deliveryMode === 'telegram'\) \{[\s\S]*createOrderInvite/);
 });
 
-test('V5 checkout is fail-closed until content is published', () => {
+test('V5 checkout is fail-closed until sale is active and canonical content is published', () => {
   const register = read('api/register.js');
-  assert.match(register, /deliveryMode === 'v5' && courseRec\.is_published !== true/);
-  assert.match(register, /Khóa học V5 chưa Publish nên chưa thể nhận đăng ký/);
+  assert.match(register, /if \(deliveryMode === 'v5'\) \{[\s\S]*courseRec\.active !== true \|\| courseRec\.is_published !== true/);
+  assert.match(register, /getV5Readiness\(courseRec\.id\)/);
+  assert.match(register, /if \(!readiness\.ready\)/);
+  assert.match(register, /Khóa học V5 chưa mở bán hoặc chưa Publish nên chưa thể nhận đăng ký/);
   assert.match(register, /SKIPPED_V5/);
 });
 
 test('bulk approval preserves Telegram bot authority and dispatches V4 separately', () => {
   const bulk = read('api/approve-all.js');
-  assert.match(bulk, /filter\(order => order\.delivery_mode !== "telegram"\)/);
+  assert.match(bulk, /filter\(order => String\(order\.delivery_mode \|\| ''\)\.toLowerCase\(\) !== "telegram"\)/);
   assert.match(bulk, /syncV4EnrollmentToLms/);
   assert.match(bulk, /skippedTelegram/);
 });

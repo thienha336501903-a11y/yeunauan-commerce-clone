@@ -1,6 +1,7 @@
 import { cloneConfig } from './clone-config.js';
 
 const normalizeBase = value => String(value || '').trim().replace(/\/$/, '');
+const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key);
 
 function baseResult(lmsUrl) {
   return {
@@ -58,25 +59,39 @@ async function callV5(payload) {
 }
 
 export async function syncV5CourseToLms(courseData) {
-  return callV5({
+  const payload = {
     action: 'syncCourse',
     slug: String(courseData.slug || '').trim(),
     title: String(courseData.courseName || courseData.title || '').trim(),
     subtitle: String(courseData.subtitle || courseData.description || '').trim(),
-    imageUrl: String(courseData.imageUrl || courseData.image_url || '').trim(),
-    expected_start_date: courseData.expected_start_date || null,
-    active: courseData.active !== undefined ? courseData.active : true
-  });
+    imageUrl: String(courseData.imageUrl || courseData.image_url || '').trim()
+  };
+
+  // Omitted fields mean "preserve current LMS state". A metadata-only sync must
+  // never silently turn V5 sales off or clear a start date.
+  if (hasOwn(courseData, 'active')) payload.active = courseData.active === true;
+  if (hasOwn(courseData, 'expected_start_date')) payload.expected_start_date = courseData.expected_start_date || null;
+
+  return callV5(payload);
 }
 
 export async function syncV5EnrollmentToLms(orderData, actionType) {
   const email = String(orderData.customer_email || orderData.gmail || '').trim().toLowerCase();
   const courseSlug = String(orderData.course_slug || orderData.course || '').trim();
+  const actionMap = {
+    create: 'syncEnrollment',
+    restore: 'restoreEnrollment',
+    revoke: 'revokeEnrollment'
+  };
+  const action = actionMap[String(actionType || '').trim().toLowerCase()];
+  if (!action) {
+    return { lms: 'FAILED', portal: 'SKIPPED_V5', error: 'Invalid V5 enrollment sync action' };
+  }
   if (!email || !courseSlug) {
     return { lms: 'FAILED', portal: 'SKIPPED_V5', error: 'Missing email or course slug' };
   }
   return callV5({
-    action: actionType === 'create' ? 'syncEnrollment' : 'revokeEnrollment',
+    action,
     email,
     courseSlug,
     orderId: String(orderData.id || orderData.source_order_id || '').trim() || null

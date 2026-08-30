@@ -1,0 +1,236 @@
+import { supabase } from './supabase.js';
+import { getV5Readiness } from './v5-readiness.js';
+import { syncV5EnrollmentToLms } from './v5-sync-helpers.js';
+
+export function v5SyncFailed(syncResults) {
+  if (!syncResults) return true;
+  return String(syncResults.lms || '').toUpperCase() !== 'SUCCESS' || Boolean(syncResults.error);
+}
+
+async function v5OrderReadiness(order, { requireSale = true } = {}) {
+  if (String(order?.delivery_mode || '').toLowerCase() !== 'v5') return { ok: true };
+  const courseId = String(order.course_id || '').trim();
+  const courseSlug = String(order.course_slug || '').trim();
+  let query = supabase.from('courses').select('id,slug,delivery_mode,active,is_published');
+  query = courseId ? query.eq('id', courseId) : query.eq('slug', courseSlug);
+  const { data: course, error } = await query.maybeSingle();
+  if (error) throw error;
+  if (!course || String(course.delivery_mode || '').toLowerCase() !== 'v5') {
+    return { ok: false, code: 'v5_course_not_found', error: 'Khóa V5 của đơn hàng không còn hợp lệ.' };
+  }
+  if (course.is_published !== true) {
+    return { ok: false, code: 'v5_course_unpublished', error: 'Khóa V5 chưa Publish hoặc đã Unpublish.' };
+  }
+  if (requireSale && course.active !== true) {
+    return { ok: false, code: 'v5_course_not_for_sale', error: 'Khóa V5 hiện chưa mở bán.' };
+  }
+  const readiness = await getV5Readiness(course.id);
+  if (!readiness.ready) {
+    return { ok: false, code: readiness.reason || 'v5_not_ready', error: 'Khóa V5 chưa có canonical Published release hợp lệ.' };
+  }
+  return { ok: true, course, release: readiness.release || null };
+}
+
+export async function v5ApprovalReadiness(order) {
+  return v5OrderReadiness(order, { requireSale: true });
+}
+
+export async function v5ExistingAccessReadiness(order) {
+  return v5OrderReadiness(order, { requireSale: false });
+}
+
+function syncConflict(syncResults, fallback) {
+  const message = syncResults?.error || fallback || 'Đồng bộ quyền học V5 thất bại.';
+  return { ok: false, statusCode: 409, error: message, code: 'v5_enrollment_sync_failed', syncResults };
+}
+
+function compensationNoop(reason) {
+  return { lms: 'SUCCESS', portal: 'SKIPPED_V5', error: null, compensation: reason };
+}
+
+function normalizedIdentity(order) {
+  return {
+    email: String(order?.customer_email || '').trim().toLowerCase(),
+    courseId: String(order?.course_id || '').trim(),
+    courseSlug: String(order?.course_slug || '').trim(),
+    deliveryMode: String(order?.delivery_mode || '').trim().toLowerCase()
+  };
+}
+
+function sameEntitlementIdentity(left, right) {
+  const a = normalizedIdentity(left);
+  const b = normalizedIdentity(right);
+  return a.email === b.email
+    && a.courseId === b.courseId
+    && a.courseSlug === b.courseSlug
+    && a.deliveryMode === b.deliveryMode;
+}
+
+function sameOrderSnapshot(left, right) {
+  return String(left?.status || '') === String(right?.status || '') && sameEntitlementIdentity(left, right);
+}
+
+function guardOrderIdentity(query, order) {
+  const identity = normalizedIdentity(order);
+  let scoped = query.eq('id', order.id).eq('status', order.status);
+  scoped = identity.email ? scoped.eq('customer_email', identity.email) : scoped.is('customer_email', null);
+  if (identity.courseId) scoped = scoped.eq('course_id', identity.courseId);
+  if (identity.courseSlug) scoped = scoped.eq('course_slug', identity.courseSlug);
+  if (identity.deliveryMode) scoped = scoped.eq('delivery_mode', identity.deliveryMode);
+  return scoped;
+}
+
+async function currentOrderForCompensation(orderId) {
+  const { data, error } = await supabase
+    .from('orders')
+    .select('id,status,customer_email,course_id,course_slug,delivery_mode')
+    .eq('id', orderId)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+async function persistSyncState(order, syncResults) {
+  const write = guardOrderIdentity(supabase.from('orders').update({
+    sync_lms_status: syncResults?.lms || 'FAILED',
+    sync_portal_status: syncResults?.portal || 'SKIPPED_V5',
+    sync_error: syncResults?.error || null,
+    updated_at: new Date().toISOString()
+  }), order);
+  const { data, error } = await write.select().maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+async function compensateOrderWriteRace(order, attemptedAction) {
+  try {
+    const current = await currentOrderForCompensation(order.id);
+    if (!current) {
+      return { lms: 'FAILED', portal: 'SKIPPED_V5', error: 'Order disappeared before V5 compensation could reconcile access.' };
+    }
+    const shouldHaveAccess = current.status === 'Đã duyệt';
+    const sameIdentity = sameEntitlementIdentity(current, order);
+    const granted = attemptedAction === 'create' || attemptedAction === 'restore';
+
+    if (granted) {
+      // The successful grant used the original identity snapshot. DB truth decides
+      // whether the order should still have access, but compensation must revoke
+      // the exact identity actually granted, not a concurrently edited one.
+      if (!shouldHaveAccess) return syncV5EnrollmentToLms(order, 'revoke');
+      if (sameIdentity) return compensationNoop('CURRENT_ORDER_ALREADY_APPROVED');
+
+      const revokeStale = await syncV5EnrollmentToLms(order, 'revoke');
+      if (v5SyncFailed(revokeStale)) return revokeStale;
+      const restoreCurrent = await syncV5EnrollmentToLms(current, 'restore');
+      if (v5SyncFailed(restoreCurrent)) return restoreCurrent;
+      return { ...restoreCurrent, compensation: 'REVOKED_STALE_IDENTITY_AND_RESTORED_CURRENT' };
+    }
+
+    if (attemptedAction === 'revoke') {
+      // The revoke used the original identity. Keep it if DB no longer approves
+      // this order; otherwise restore the entitlement that current DB truth owns.
+      if (!shouldHaveAccess) return compensationNoop('CURRENT_ORDER_NO_LONGER_APPROVED');
+      return syncV5EnrollmentToLms(current, 'restore');
+    }
+
+    return { lms: 'FAILED', portal: 'SKIPPED_V5', error: 'Invalid V5 compensation action.' };
+  } catch (error) {
+    return { lms: 'FAILED', portal: 'SKIPPED_V5', error: `V5 compensation state check failed: ${error.message || error}` };
+  }
+}
+
+export async function approveV5Order(order, updatePatch = {}) {
+  const gate = await v5ApprovalReadiness(order);
+  if (!gate.ok) return { ...gate, statusCode: 409 };
+  if (!String(order.customer_email || '').trim()) {
+    return { ok: false, statusCode: 400, code: 'v5_missing_email', error: 'Đơn V5 chưa có Gmail học viên.' };
+  }
+
+  const syncResults = await syncV5EnrollmentToLms(order, 'create');
+  if (v5SyncFailed(syncResults)) {
+    await persistSyncState(order, syncResults);
+    return syncConflict(syncResults, 'Không thể cấp quyền học V5; đơn vẫn ở Chờ duyệt.');
+  }
+
+  const write = guardOrderIdentity(supabase.from('orders').update({
+    ...updatePatch,
+    status: 'Đã duyệt',
+    sync_lms_status: syncResults.lms,
+    sync_portal_status: syncResults.portal,
+    sync_error: syncResults.error,
+    updated_at: new Date().toISOString()
+  }), order);
+  const { data, error } = await write.select().maybeSingle();
+
+  if (error || !data) {
+    const compensation = await compensateOrderWriteRace(order, 'create');
+    const wrapped = new Error(error?.message || 'Order identity/status changed while V5 approval was being committed.');
+    wrapped.code = 'v5_order_commit_failed';
+    wrapped.compensation = compensation;
+    throw wrapped;
+  }
+  return { ok: true, data, syncResults };
+}
+
+export async function revokeV5Order(order, nextStatus, updatePatch = {}) {
+  const syncResults = await syncV5EnrollmentToLms(order, 'revoke');
+  if (v5SyncFailed(syncResults)) {
+    await persistSyncState(order, syncResults);
+    return syncConflict(syncResults, 'Không thể thu hồi quyền V5; trạng thái đơn chưa thay đổi.');
+  }
+
+  const write = guardOrderIdentity(supabase.from('orders').update({
+    ...updatePatch,
+    status: nextStatus,
+    sync_lms_status: syncResults.lms,
+    sync_portal_status: syncResults.portal,
+    sync_error: syncResults.error,
+    updated_at: new Date().toISOString()
+  }), order);
+  const { data, error } = await write.select().maybeSingle();
+
+  if (error || !data) {
+    const compensation = await compensateOrderWriteRace(order, 'revoke');
+    const wrapped = new Error(error?.message || 'Order identity/status changed while V5 revoke was being committed.');
+    wrapped.code = 'v5_order_commit_failed';
+    wrapped.compensation = compensation;
+    throw wrapped;
+  }
+  return { ok: true, data, syncResults };
+}
+
+export async function resyncV5Order(order) {
+  const approved = order.status === 'Đã duyệt';
+  const action = approved ? 'restore' : 'revoke';
+  if (approved) {
+    const gate = await v5ExistingAccessReadiness(order);
+    if (!gate.ok) return { ...gate, statusCode: 409 };
+  }
+
+  const syncResults = await syncV5EnrollmentToLms(order, action);
+  if (v5SyncFailed(syncResults)) {
+    await persistSyncState(order, syncResults);
+    return syncConflict(syncResults);
+  }
+
+  const current = await currentOrderForCompensation(order.id);
+  if (!current) {
+    const compensation = await compensateOrderWriteRace(order, action);
+    return { ok: false, statusCode: 409, code: 'v5_order_changed_during_resync', error: 'Order biến mất trong lúc Resync V5.', syncResults, compensation };
+  }
+
+  if (!sameOrderSnapshot(current, order)) {
+    const compensation = await compensateOrderWriteRace(order, action);
+    if (v5SyncFailed(compensation)) {
+      return { ok: false, statusCode: 409, code: 'v5_order_resync_compensation_failed', error: compensation.error || 'Order thay đổi và không thể reconcile quyền V5 về trạng thái hiện tại.', syncResults, compensation };
+    }
+    return { ok: false, statusCode: 409, code: 'v5_order_changed_during_resync', error: 'Order đã thay đổi trong lúc Resync; quyền V5 đã được reconcile theo trạng thái mới. Hãy tải lại đơn.', syncResults, compensation };
+  }
+
+  const data = await persistSyncState(order, syncResults);
+  if (!data) {
+    const compensation = await compensateOrderWriteRace(order, action);
+    return { ok: false, statusCode: 409, code: 'v5_order_changed_during_resync', error: 'Order thay đổi trước khi ghi trạng thái Resync; quyền V5 đã được reconcile theo DB hiện tại.', syncResults, compensation };
+  }
+  return { ok: true, data, syncResults };
+}

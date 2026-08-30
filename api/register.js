@@ -4,6 +4,7 @@ import { supabase } from '../utils/supabase.js';
 import { createOrderInvite } from '../utils/telegram.js';
 import { deliveryPolicy, normalizeDeliveryMode } from '../utils/delivery-policy.js';
 import { cloneConfig } from '../utils/clone-config.js';
+import { getV5Readiness } from '../utils/v5-readiness.js';
 
 const MAX_BILL_BYTES = 5 * 1024 * 1024;
 const ALLOWED_BILL_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -14,6 +15,18 @@ const normalizeTelegramNick = value => String(value || '').trim().replace(/\s+/g
 const isValidTelegramNick = value => value.length >= 2 && value.length <= 64 && !/[\x00-\x1F\x7F]/.test(value);
 const normalizeBase64 = value => String(value || '').replace(/\s+/g, '');
 const isValidBase64 = value => value.length > 0 && value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
+
+async function cleanupUnpersistedBill(publicId) {
+  const id = String(publicId || '').trim();
+  if (!id) return;
+  try {
+    await cloudinary.uploader.destroy(id, { resource_type: 'image', invalidate: true });
+  } catch (error) {
+    // Preserve the original order persistence error, but leave an actionable log
+    // if Cloudinary cleanup itself fails.
+    console.error('REGISTER_BILL_CLEANUP_ERROR:', id, error);
+  }
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -47,8 +60,18 @@ export default async function handler(req, res) {
     if (deliveryMode === 'v4' && courseRec.is_published !== true && courseRec.raw_data?.v4SellBeforePublishAcknowledged !== true) {
       return res.status(409).json({ error: 'Khóa học V4 chưa sẵn sàng nội dung nên chưa thể nhận đăng ký.' });
     }
-    if (deliveryMode === 'v5' && courseRec.is_published !== true) {
-      return res.status(409).json({ error: 'Khóa học V5 chưa Publish nên chưa thể nhận đăng ký.' });
+    if (deliveryMode === 'v5') {
+      if (courseRec.active !== true || courseRec.is_published !== true) {
+        return res.status(409).json({ error: 'Khóa học V5 chưa mở bán hoặc chưa Publish nên chưa thể nhận đăng ký.' });
+      }
+      const readiness = await getV5Readiness(courseRec.id);
+      if (!readiness.ready) {
+        console.warn('[register] V5 order blocked by canonical readiness:', courseSlug, readiness.reason);
+        return res.status(409).json({
+          error: 'Khóa học V5 chưa có release Published hợp lệ nên chưa thể nhận đăng ký.',
+          code: readiness.reason || 'v5_not_ready'
+        });
+      }
     }
     const telegramChatId = deliveryMode === 'telegram' ? String(courseRec.telegram_chat_id || '').trim() : '';
     if (deliveryMode === 'telegram' && !telegramChatId) {
@@ -96,7 +119,10 @@ export default async function handler(req, res) {
     if (deliveryMode === 'v5') orderPayload.sync_portal_status = 'SKIPPED_V5';
 
     const { error: insertError } = await supabase.from('orders').insert(orderPayload);
-    if (insertError) throw insertError;
+    if (insertError) {
+      await cleanupUnpersistedBill(uploadResult.public_id);
+      throw insertError;
+    }
 
     if (deliveryMode === 'telegram') {
       try {
@@ -131,7 +157,7 @@ export default async function handler(req, res) {
     }
 
     const managerPath = ['v4', 'v5'].includes(deliveryMode)
-      ? '/my-courses.html?registered=1&course=' + encodeURIComponent(courseSlug)
+      ? (deliveryMode === 'v5' ? runtime.lmsPublicUrl.replace(/\/$/, '') : '') + '/my-courses.html?registered=1&course=' + encodeURIComponent(courseSlug)
       : runtime.legacyPortalPublicUrl + '/my-courses';
     return res.status(200).json({ success: true, file: billLink, course: courseSlug, courseName: finalCourseName, orderId, deliveryMode, managerPath });
   } catch (error) {
