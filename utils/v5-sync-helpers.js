@@ -18,7 +18,7 @@ function productionV5Base() {
 }
 
 async function callV5(payload) {
-  const secret = String(process.env.V5_SYNC_SECRET || process.env.INTERNAL_SYNC_SECRET || '').trim();
+  const secret = String(process.env.V5_SYNC_SECRET || '').trim();
   const previewOverride = process.env.VERCEL_ENV === 'preview' ? process.env.V5_LMS_SYNC_URL : '';
   const previewBypass = process.env.VERCEL_ENV === 'preview' ? String(process.env.V5_LMS_PROTECTION_BYPASS || '').trim() : '';
   const lmsUrl = normalizeBase(previewOverride || productionV5Base());
@@ -27,7 +27,7 @@ async function callV5(payload) {
   if (!lmsUrl) return result;
   if (!secret) {
     result.lms = 'FAILED';
-    result.error = 'Missing V5_SYNC_SECRET or INTERNAL_SYNC_SECRET';
+    result.error = 'Missing V5_SYNC_SECRET';
     return result;
   }
 
