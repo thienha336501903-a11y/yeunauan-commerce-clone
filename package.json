@@ -9,7 +9,7 @@
 "check:clone": "npm run check:domains && npm run check:secrets"
 },
 "dependencies": {
-"@supabase/supabase-js": "^2.39.8",
-"cloudinary": "^2.3.0"
+"@supabase/supabase-js": "^2.112.4",
+"cloudinary": "^2.11.0"
 }
 }
