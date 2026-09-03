@@ -209,5 +209,5 @@ export async function syncEnrollmentToExternalSystems(orderData, actionType) {
 }
 
 export async function sendApprovalEmail(email, courseName) {
-  console.log(`[Email Hook - TODO] Gửi email số 1 duyệt khóa học đến ${email} cho khóa ${courseName}`);
+  console.log(`[Email Hook - TODO] Approval email queued for course ${courseName}`);
 }
