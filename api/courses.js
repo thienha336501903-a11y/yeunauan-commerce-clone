@@ -4,6 +4,7 @@ import { syncV4CourseToLms } from '../utils/v4-sync-helpers.js';
 import { normalizeDeliveryMode, requireDeliveryMode } from '../utils/delivery-policy.js';
 import { handleV4Workflow } from '../utils/v4-workflow.js';
 import { getV5Readiness } from '../utils/v5-readiness.js';
+import { enforceSameOriginAdminRequest } from '../utils/admin-cors.js';
 
 const normalizeExpectedStartDate = value => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim()) ? String(value).trim() : null;
 const validDateInput = value => String(value || '').trim() === '' || /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
@@ -191,10 +192,7 @@ async function validateV4ReadySource(courseSlug) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Admin-Password');
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (!enforceSameOriginAdminRequest(req, res, ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])) return;
   const adminPassword = req.headers['x-admin-password'];
   if (!adminPassword || adminPassword !== process.env.ADMIN_PASSWORD) return res.status(401).json({ error: 'Unauthorized: Mật khẩu Admin không chính xác hoặc trống.' });
 

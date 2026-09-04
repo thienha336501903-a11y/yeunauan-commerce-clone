@@ -1,4 +1,5 @@
 import { v2 as cloudinary } from "cloudinary";
+import { enforceSameOriginAdminRequest } from "../utils/admin-cors.js";
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
@@ -9,13 +10,7 @@ function missingCloudinaryEnv() {
 }
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Admin-Password");
-
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
+  if (!enforceSameOriginAdminRequest(req, res, ["POST", "OPTIONS"])) return;
 
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
