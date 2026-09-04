@@ -29,6 +29,8 @@ jobs:
           node --check api/register.js
           node --check api/approve-all.js
           node --check api/config.js
+          node --check api/upload.js
+          node --check utils/admin-cors.js
           node --check utils/delivery-policy.js
           node --check utils/sync-helpers.js
           node --check utils/v4-sync-helpers.js
