@@ -1,6 +1,15 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "regions": ["sin1"],
+  "rewrites": [
+    {
+      "source": "/",
+      "has": [
+        { "type": "query", "key": "course" }
+      ],
+      "destination": "/course-gate.html"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
