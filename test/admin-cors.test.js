@@ -22,6 +22,7 @@ test('same-origin Commerce admin requests are allowed without wildcard CORS', ()
   assert.equal(enforceSameOriginAdminRequest(req, res, ['GET', 'OPTIONS']), true);
   assert.equal(res.headers['access-control-allow-origin'], 'https://yeubep.shop');
   assert.notEqual(res.headers['access-control-allow-origin'], '*');
+  assert.equal(res.headers['cache-control'], 'private, no-store');
 });
 
 test('foreign-origin Commerce admin requests fail before password authorization', () => {
@@ -46,9 +47,26 @@ test('same-origin preflight is explicit and foreign or origin-less preflight fai
 });
 
 test('every password-protected Commerce admin surface uses the shared CORS guard', () => {
-  for (const file of ['api/orders.js', 'api/courses.js', 'api/upload.js']) {
+  for (const file of [
+    'api/orders.js',
+    'api/courses.js',
+    'api/upload.js',
+    'api/approve-all.js',
+    'api/check-auth.js',
+    'api/config.js',
+    'api/telegram-connect.js',
+    'api/telegram-setup.js'
+  ]) {
     const source = fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
     assert.match(source, /enforceSameOriginAdminRequest/);
     assert.doesNotMatch(source, /Access-Control-Allow-Origin['"],\s*['"]\*['"]/);
   }
+});
+
+test('foreign-origin and unauthenticated admin responses remain private and non-cacheable', () => {
+  const req = { method: 'GET', headers: { origin: 'https://evil.example', host: 'yeubep.shop', 'x-forwarded-proto': 'https' } };
+  const res = response();
+  assert.equal(enforceSameOriginAdminRequest(req, res, ['GET', 'OPTIONS']), false);
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.headers['cache-control'], 'private, no-store');
 });
