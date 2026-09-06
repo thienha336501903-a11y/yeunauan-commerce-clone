@@ -32,3 +32,12 @@ test('admin course updates validate and merge the pause flag into raw_data', () 
   assert.match(source, /rawDataPatch\.salePaused = body\.salePaused/);
   assert.match(source, /base\.raw_data = \{ \.\.\.\(existing\.raw_data \|\| \{\}\), \.\.\.base\.raw_data \}/);
 });
+
+test('admin distinguishes sale pause from the system active switch', () => {
+  const admin = read('admin.html');
+  assert.match(admin, /const salePaused = course\.salePaused === true/);
+  assert.match(admin, /Bán: \$\{selling \? 'Đang bán' : salePaused \? 'Tạm dừng'/);
+  assert.match(admin, /toggleCourseSalePause/);
+  assert.match(admin, /Quyền học và trạng thái Publish sẽ được giữ nguyên/);
+  assert.match(admin, /salePaused: nextPaused/);
+});
