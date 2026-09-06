@@ -719,6 +719,8 @@
         const image = normalizeImageUrl(rawImage) || COURSE_IMAGE_PLACEHOLDER;
         const link = `${origin}/?course=${encodeURIComponent(slug)}`;
         const active = course.active;
+        const salePaused = course.salePaused === true;
+        const selling = active && !salePaused;
         const isPublished = course.is_published === true;
         const originalLessonEntryVisible = course.originalLessonEntryVisible !== false;
         const sortOrder = course.sort_order || 0;
@@ -733,7 +735,7 @@
                     ? "bg-green-500 text-white shadow-md shadow-green-500/10" 
                     : "bg-slate-500 text-white"
                 }">
-                  ${active ? "Đang Bật" : "Đã Tắt"}
+                  ${active ? "Hệ thống Bật" : "Hệ thống Tắt"}
                 </span>
                 <span class="bg-black/50 text-white text-xs px-2.5 py-1 rounded-full backdrop-blur-sm font-semibold">
                   Sắp xếp: ${sortOrder}
@@ -762,7 +764,7 @@
                 <div class="mb-4 flex flex-wrap gap-2">
                   <span class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${course.deliveryMode === 'v4' ? 'bg-violet-100 text-violet-700' : course.deliveryMode === 'v5' ? 'bg-emerald-100 text-emerald-700' : course.deliveryMode === 'telegram' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-600'}">${course.deliveryMode === 'v4' ? 'LMS V4' : course.deliveryMode === 'v5' ? 'LMS V5' : course.deliveryMode === 'telegram' ? 'TELEGRAM' : 'LMS CŨ'}</span>
                   ${course.deliveryMode === 'v4' ? `<span class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black ${isPublished ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">Nội dung: ${isPublished ? 'Đã Publish' : 'Draft'}</span>` : course.deliveryMode === 'v5' ? `<span id="v5-state-${id}" class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black bg-slate-100 text-slate-600">V5: đang kiểm tra...</span>` : ''}
-                  <span class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black ${active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'}">Bán: ${active ? 'Đang bán' : 'Đã tắt'}</span>
+                  <span class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black ${selling ? 'bg-green-100 text-green-700' : salePaused ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}">Bán: ${selling ? 'Đang bán' : salePaused ? 'Tạm dừng' : 'Đã tắt hệ thống'}</span>
                 </div>
 
                 <!-- Trạng thái đồng bộ -->
@@ -845,12 +847,19 @@
               </div>
 
               <!-- Button actions -->
-              <div class="grid grid-cols-3 gap-2 border-t border-slate-50 pt-4">
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 border-t border-slate-50 pt-4">
                 <button 
                   onclick="toggleCourseActive('${id}', ${active})"
                   class="text-[10px] font-bold py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition text-center"
                 >
-                  ${active ? "Tắt" : "Bật"}
+                  ${active ? "Tắt hệ thống" : "Bật hệ thống"}
+                </button>
+
+                <button
+                  onclick="toggleCourseSalePause('${id}', ${salePaused})"
+                  class="text-[10px] font-bold py-2 rounded-lg border ${salePaused ? 'border-green-200 text-green-700 hover:bg-green-50' : 'border-amber-200 text-amber-700 hover:bg-amber-50'} transition text-center"
+                >
+                  ${salePaused ? "Mở bán" : "Dừng bán"}
                 </button>
                 
                 <button 
@@ -2125,6 +2134,61 @@
         }
       } catch (err) {
         alert("Lỗi kết nối");
+      } finally {
+        hideLoader();
+      }
+    }
+
+    async function toggleCourseSalePause(id, currentPaused) {
+      const course = allCourses.find(c => c.id === id);
+      if (!course) return;
+      const nextPaused = !currentPaused;
+      const action = nextPaused ? 'tạm dừng bán' : 'mở bán lại';
+      if (!confirm(`Bạn có chắc muốn ${action} khóa "${course.courseName || course.slug}"?\nQuyền học và trạng thái Publish sẽ được giữ nguyên.`)) return;
+
+      const payload = {
+        id: course.id,
+        slug: course.slug,
+        courseName: course.courseName,
+        price: course.price,
+        sort_order: course.sort_order,
+        teacher_name: course.teacher_name,
+        expected_start_date: course.expected_start_date || "",
+        description: course.description,
+        imageUrl: course.imageUrl,
+        active: course.active,
+        deliveryMode: course.deliveryMode || 'lms',
+        telegramChatId: course.telegramChatId || '',
+        telegramChatTitle: course.telegramChatTitle || '',
+        telegramInviteTtlHours: course.telegramInviteTtlHours || 72,
+        bankName: course.bankName,
+        bankAccount: course.bankAccount,
+        bankOwner: course.bankOwner,
+        transferNote: course.transferNote,
+        qrImageUrl: course.qrImageUrl,
+        salePaused: nextPaused,
+        allowSellingUnpublishedV4: course.v4SellBeforePublishAcknowledged === true
+      };
+
+      showLoader(nextPaused ? 'Đang tạm dừng bán...' : 'Đang mở bán lại...');
+      try {
+        const response = await fetch('/api/courses', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Password': currentAdminPassword
+          },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          alert(data.error || `Không thể ${action} khóa học`);
+          return;
+        }
+        showToast(nextPaused ? 'Đã tạm dừng bán; quyền học được giữ nguyên.' : 'Đã mở bán lại.');
+        await loadCourses();
+      } catch (error) {
+        alert(`Lỗi kết nối khi ${action} khóa học`);
       } finally {
         hideLoader();
       }
