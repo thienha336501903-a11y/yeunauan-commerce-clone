@@ -1,6 +1,7 @@
 import { supabase } from "../utils/supabase.js";
 import { syncV4EnrollmentToLms } from "../utils/v4-sync-helpers.js";
 import { approveV5Order, v5SyncFailed } from "../utils/v5-order-approval.js";
+import { enforceSameOriginAdminRequest } from "../utils/admin-cors.js";
 
 function syncFailed(syncResults) {
   if (!syncResults) return true;
@@ -17,6 +18,7 @@ function skippedPortalForMode(mode) {
 }
 
 export default async function handler(req, res) {
+  if (!enforceSameOriginAdminRequest(req, res, ["POST", "OPTIONS"])) return;
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   const adminPassword = req.headers["x-admin-password"];

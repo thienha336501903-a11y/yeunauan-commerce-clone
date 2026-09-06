@@ -26,6 +26,7 @@ export function enforceSameOriginAdminRequest(req, res, methods) {
   const sameOrigin = origin && origin === requestOrigin(req);
 
   res.setHeader('Vary', 'Origin');
+  res.setHeader('Cache-Control', 'private, no-store');
 
   if (suppliedOrigin && !sameOrigin) {
     res.status(403).json({ error: 'Cross-origin admin request denied.' });

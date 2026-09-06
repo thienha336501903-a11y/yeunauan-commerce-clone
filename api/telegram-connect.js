@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { supabase } from '../utils/supabase.js';
 import { createCourseConnectToken, telegramApi } from '../utils/telegram.js';
+import { enforceSameOriginAdminRequest } from '../utils/admin-cors.js';
 
 function safeEqual(a, b) {
   const left = String(a || '');
@@ -22,6 +23,7 @@ async function getCourse(courseId) {
 }
 
 export default async function handler(req, res) {
+  if (!enforceSameOriginAdminRequest(req, res, ['GET', 'POST', 'OPTIONS'])) return;
   if (!safeEqual(req.headers['x-admin-password'], process.env.ADMIN_PASSWORD)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }

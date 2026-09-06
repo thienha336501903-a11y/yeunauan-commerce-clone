@@ -2,11 +2,12 @@ import { supabase } from '../utils/supabase.js';
 import { normalizeDeliveryMode } from '../utils/delivery-policy.js';
 import { cloneConfig } from '../utils/clone-config.js';
 import { getV5Readiness } from '../utils/v5-readiness.js';
+import { enforceSameOriginAdminRequest } from '../utils/admin-cors.js';
 
 const validSlug = value => /^[a-z0-9_-]+$/.test(String(value || '').trim());
 
 async function handleV5AdminReadiness(req, res) {
-  res.setHeader('Cache-Control', 'private, no-store');
+  if (!enforceSameOriginAdminRequest(req, res, ['GET', 'OPTIONS'])) return;
   if (req.method !== 'GET') return res.status(405).json({ success: false, error: 'Method not allowed' });
 
   const adminPassword = req.headers['x-admin-password'];

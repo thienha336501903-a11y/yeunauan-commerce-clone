@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { telegramApi, telegramBotAdminRights, telegramConfigStatus, getTelegramRuntimeConfig } from '../utils/telegram.js';
+import { enforceSameOriginAdminRequest } from '../utils/admin-cors.js';
 
 function safeEqual(a, b) {
   const left = String(a || '');
@@ -11,6 +12,7 @@ function safeEqual(a, b) {
 }
 
 export default async function handler(req, res) {
+  if (!enforceSameOriginAdminRequest(req, res, ['POST', 'OPTIONS'])) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   if (!safeEqual(req.headers['x-admin-password'], process.env.ADMIN_PASSWORD)) return res.status(401).json({ error: 'Unauthorized' });
   const cfg = await telegramConfigStatus();
