@@ -44,9 +44,10 @@ test('admin distinguishes sale pause from the system active switch', () => {
 
 test('course links are gated before the payment storefront', () => {
   const vercel = JSON.parse(read('vercel.json'));
-  const gateRewrite = vercel.rewrites?.find(rule => rule.source === '/' && rule.destination === '/course-gate.html');
-  assert.ok(gateRewrite, 'course-gate rewrite must exist');
-  assert.deepEqual(gateRewrite.has, [{ type: 'query', key: 'course' }]);
+  const gateRedirect = vercel.redirects?.find(rule => rule.source === '/' && rule.destination === '/course-gate.html?course=:course');
+  assert.ok(gateRedirect, 'course-gate redirect must exist');
+  assert.equal(gateRedirect.permanent, false);
+  assert.deepEqual(gateRedirect.has, [{ type: 'query', key: 'course', value: '(?<course>.+)' }]);
 
   const gate = read('course-gate.html');
   assert.match(gate, /data\.code==='sale_paused'/);
