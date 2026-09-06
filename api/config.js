@@ -3,6 +3,7 @@ import { normalizeDeliveryMode } from '../utils/delivery-policy.js';
 import { cloneConfig } from '../utils/clone-config.js';
 import { getV5Readiness } from '../utils/v5-readiness.js';
 import { enforceSameOriginAdminRequest } from '../utils/admin-cors.js';
+import { isCourseForSale, isSalePaused } from '../utils/sale-state.js';
 
 const validSlug = value => /^[a-z0-9_-]+$/.test(String(value || '').trim());
 
@@ -20,7 +21,7 @@ async function handleV5AdminReadiness(req, res) {
 
   const { data: course, error } = await supabase
     .from('courses')
-    .select('id,slug,title,delivery_mode,active,is_published')
+    .select('id,slug,title,delivery_mode,active,is_published,raw_data')
     .eq('slug', slug)
     .maybeSingle();
   if (error) throw error;
@@ -37,7 +38,8 @@ async function handleV5AdminReadiness(req, res) {
       slug: course.slug,
       title: course.title,
       active: course.active === true,
-      is_published: course.is_published === true
+      is_published: course.is_published === true,
+      salePaused: isSalePaused(course)
     },
     canonicalReady: readiness.ready === true,
     reason: readiness.reason || null,
@@ -47,7 +49,7 @@ async function handleV5AdminReadiness(req, res) {
       status: readiness.release.status,
       created_at: readiness.release.created_at
     } : null,
-    canSell: readiness.ready === true && course.active === true && course.is_published === true
+    canSell: readiness.ready === true && isCourseForSale(course) && course.is_published === true
   });
 }
 
@@ -74,6 +76,9 @@ export default async function handler(req, res) {
     }
 
     const rawData = course.raw_data || {};
+    if (isSalePaused(course)) {
+      return res.status(404).json({ error: `Khóa học đang tạm dừng nhận đăng ký với slug: ${courseSlug}`, code: 'sale_paused' });
+    }
     const courseImage = course.image_url || rawData.imageUrl || rawData.posterUrl || rawData.posterImageUrl || rawData.thumbnail || rawData.heroUrl || rawData.heroImageUrl || rawData.coverUrl || '';
     const deliveryMode = normalizeDeliveryMode(course.delivery_mode);
     if (deliveryMode === 'v4' && course.is_published !== true && rawData.v4SellBeforePublishAcknowledged !== true) {
