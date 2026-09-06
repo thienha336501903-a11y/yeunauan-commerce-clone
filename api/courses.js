@@ -240,6 +240,12 @@ export default async function handler(req, res) {
         }
         rawDataPatch.originalLessonEntryVisible = body.originalLessonEntryVisible;
       }
+      if (hasOwn(body, 'salePaused')) {
+        if (typeof body.salePaused !== 'boolean') {
+          return res.status(400).json({ error: 'Trạng thái tạm dừng bán không hợp lệ.' });
+        }
+        rawDataPatch.salePaused = body.salePaused;
+      }
 
       const base = {
         slug,
