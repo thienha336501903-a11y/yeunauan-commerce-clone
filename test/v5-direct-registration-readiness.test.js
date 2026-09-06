@@ -19,5 +19,5 @@ test('admin readiness route is authenticated and reports sale readiness separate
   assert.match(config, /adminPassword !== process\.env\.ADMIN_PASSWORD/);
   assert.match(config, /getV5Readiness\(course\.id\)/);
   assert.match(config, /canonicalReady: readiness\.ready === true/);
-  assert.match(config, /canSell: readiness\.ready === true && course\.active === true && course\.is_published === true/);
+  assert.match(config, /canSell: readiness\.ready === true && isCourseForSale\(course\) && course\.is_published === true/);
 });
