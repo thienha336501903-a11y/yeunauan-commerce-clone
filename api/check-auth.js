@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { enforceSameOriginAdminRequest } from "../utils/admin-cors.js";
 
 function safeEqual(left, right) {
   const leftBuffer = Buffer.from(String(left || ""), "utf8");
@@ -9,9 +10,7 @@ function safeEqual(left, right) {
 }
 
 export default function handler(req, res) {
-  if (req.method === "OPTIONS") {
-    return res.status(204).end();
-  }
+  if (!enforceSameOriginAdminRequest(req, res, ["POST", "OPTIONS"])) return;
 
   if (req.method !== "POST") {
     return res.status(405).json({ message: "Method not allowed" });
