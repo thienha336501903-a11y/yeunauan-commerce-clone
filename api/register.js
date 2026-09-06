@@ -5,6 +5,7 @@ import { createOrderInvite } from '../utils/telegram.js';
 import { deliveryPolicy, normalizeDeliveryMode } from '../utils/delivery-policy.js';
 import { cloneConfig } from '../utils/clone-config.js';
 import { getV5Readiness } from '../utils/v5-readiness.js';
+import { isSalePaused } from '../utils/sale-state.js';
 
 const MAX_BILL_BYTES = 5 * 1024 * 1024;
 const ALLOWED_BILL_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -54,6 +55,9 @@ export default async function handler(req, res) {
       .maybeSingle();
     if (courseError) throw courseError;
     if (!courseRec || courseRec.active === false) return res.status(404).json({ error: 'Khóa học không tồn tại hoặc chưa mở đăng ký' });
+    if (isSalePaused(courseRec)) {
+      return res.status(409).json({ error: 'Khóa học đang tạm dừng nhận đăng ký.', code: 'sale_paused' });
+    }
 
     const deliveryMode = normalizeDeliveryMode(courseRec.delivery_mode);
     const policy = deliveryPolicy(deliveryMode);
