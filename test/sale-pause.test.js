@@ -41,3 +41,17 @@ test('admin distinguishes sale pause from the system active switch', () => {
   assert.match(admin, /Quyền học và trạng thái Publish sẽ được giữ nguyên/);
   assert.match(admin, /salePaused: nextPaused/);
 });
+
+test('course links are gated before the payment storefront', () => {
+  const vercel = JSON.parse(read('vercel.json'));
+  const gateRewrite = vercel.rewrites?.find(rule => rule.source === '/' && rule.destination === '/course-gate.html');
+  assert.ok(gateRewrite, 'course-gate rewrite must exist');
+  assert.deepEqual(gateRewrite.has, [{ type: 'query', key: 'course' }]);
+
+  const gate = read('course-gate.html');
+  assert.match(gate, /data\.code==='sale_paused'/);
+  assert.match(gate, /Khóa học hiện đang tạm dừng nhận đăng ký/);
+  assert.match(gate, /window\.location\.replace\(`\/index\.html\$\{window\.location\.search\}`\)/);
+  assert.doesNotMatch(gate, /\/api\/register/);
+  assert.doesNotMatch(gate, /billData/);
+});
