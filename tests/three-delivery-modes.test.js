@@ -69,5 +69,5 @@ test('Admin preserves existing LMS, Telegram and V4 setup UI', () => {
   assert.match(admin, /id="v4TelegramPostLinkInput"/);
   assert.match(admin, /function slugifyCourse/);
   assert.match(admin, /Nội dung: \$\{isPublished \? 'Đã Publish' : 'Draft'\}/);
-  assert.match(admin, /Bán: \$\{active \? 'Đang bán' : 'Đã tắt'\}/);
+  assert.match(admin, /Bán: \$\{selling \? 'Đang bán' : salePaused \? 'Tạm dừng' : 'Đã tắt hệ thống'\}/);
 });
