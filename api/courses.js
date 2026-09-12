@@ -265,6 +265,89 @@ export default async function handler(req, res) {
 
       let data;
       if (req.method === 'POST') {
+        const { data: existingBySlug, error: slugLookupError } = await supabase
+          .from('courses')
+          .select('id,slug,title,image_url,raw_data,expected_start_date,delivery_mode,telegram_chat_id,telegram_chat_title,telegram_invite_ttl_hours,is_published,active,sort_order,price,description,teacher_name')
+          .eq('slug', slug)
+          .maybeSingle();
+        if (slugLookupError) throw slugLookupError;
+
+        if (existingBySlug) {
+          const existingMode = mode(existingBySlug.delivery_mode);
+          if (existingMode !== deliveryMode) {
+            return res.status(409).json({
+              error: `Slug này đã thuộc khóa ở chế độ ${existingMode}. Không thể tự chuyển sang ${deliveryMode}.`,
+              code: 'mode_conflict'
+            });
+          }
+
+          if (deliveryMode === 'v5') {
+            // Case 2: V5 course was created first by LMS V5.
+            // Attach and enrich Commerce-managed fields while strictly preserving existing canonical identity,
+            // V5 release lifecycle, is_published, configs, lessons, posts, assets, and enrollments.
+            const updatePayload = {
+              title: courseName || existingBySlug.title,
+              price: body.price !== undefined ? body.price : existingBySlug.price,
+              image_url: String(body.imageUrl || '').trim() || existingBySlug.image_url || '',
+              expected_start_date: hasOwn(body, 'expected_start_date') ? normalizeExpectedStartDate(body.expected_start_date) : existingBySlug.expected_start_date,
+              sort_order: body.sort_order !== undefined ? (Number.parseInt(body.sort_order, 10) || 0) : (existingBySlug.sort_order || 0),
+              description: body.description !== undefined ? body.description : (existingBySlug.description || ''),
+              teacher_name: body.teacher_name !== undefined ? body.teacher_name : (existingBySlug.teacher_name || ''),
+              raw_data: {
+                ...(existingBySlug.raw_data || {}),
+                ...rawDataPatch
+              }
+            };
+
+            // Sale state: safe default off-sale unless explicitly controlled and validated
+            if (hasOwn(body, 'active') && body.active === true) {
+              const readiness = await getV5Readiness(existingBySlug.id);
+              if (!readiness.ready) {
+                return res.status(409).json({
+                  error: 'Khóa V5 chưa có canonical Published release hợp lệ nên chưa thể chuyển Sẵn sàng/Bật bán.',
+                  code: readiness.reason || 'v5_not_ready'
+                });
+              }
+              updatePayload.active = true;
+            } else if (hasOwn(body, 'active') && body.active === false) {
+              updatePayload.active = false;
+            } else {
+              // Default safe: preserve existing sale status (do not activate blindly)
+              updatePayload.active = existingBySlug.active === true;
+            }
+
+            const { data: updatedData, error: updateError } = await supabase
+              .from('courses')
+              .update(updatePayload)
+              .eq('id', existingBySlug.id)
+              .select()
+              .single();
+            if (updateError) throw updateError;
+            data = updatedData;
+
+            const syncResults = { lms: 'SKIPPED_SHARED_DB', portal: 'SKIPPED_V5', error: null };
+            await supabase.from('courses').update({
+              sync_lms_status: syncResults.lms,
+              sync_portal_status: syncResults.portal,
+              sync_error: null
+            }).eq('id', data.id);
+
+            return res.status(200).json({
+              success: true,
+              operation: 'attached_existing_v5_course',
+              courseId: data.id,
+              slug: data.slug,
+              data: {
+                ...data,
+                syncResults,
+                telegramConnected: false
+              }
+            });
+          } else {
+            return res.status(409).json({ error: 'Slug khóa học đã tồn tại.' });
+          }
+        }
+
         if (deliveryMode === 'v5') {
           base.active = false;
           base.is_published = false;
