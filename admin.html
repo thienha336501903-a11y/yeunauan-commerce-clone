@@ -2047,7 +2047,7 @@
             await loadCourses();
             await refreshV4WorkflowStatus();
           } else if (deliveryMode === 'v5' && savedCourseId) {
-            showToast(id ? 'Đã cập nhật thông tin bán LMS V5.' : 'Đã tạo vỏ khóa LMS V5 ở trạng thái Draft.');
+            showToast(id ? 'Đã cập nhật thông tin bán LMS V5.' : (data?.operation === 'attached_existing_v5_course' ? 'Đã tìm thấy khóa V5 cùng slug. Thông tin bán hàng đã được liên kết với khóa hiện có.' : 'Đã tạo vỏ khóa LMS V5 ở trạng thái Draft.'));
             await loadCourses();
             await refreshV5ModalState(slug);
           } else if (deliveryMode === 'telegram' && !telegramChatId && savedCourseId) {
