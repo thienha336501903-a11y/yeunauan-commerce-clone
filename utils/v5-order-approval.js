@@ -36,7 +36,7 @@ async function v5OrderReadiness(order, { requireSale = true } = {}) {
 }
 
 export async function v5ApprovalReadiness(order) {
-  return v5OrderReadiness(order, { requireSale: true });
+  return v5OrderReadiness(order, { requireSale: false });
 }
 
 export async function v5ExistingAccessReadiness(order) {
