@@ -18,8 +18,12 @@ async function v5OrderReadiness(order, { requireSale = true } = {}) {
   if (!course || String(course.delivery_mode || '').toLowerCase() !== 'v5') {
     return { ok: false, code: 'v5_course_not_found', error: 'Khóa V5 của đơn hàng không còn hợp lệ.' };
   }
+  // V5 Pre-order decoupling: allow approving orders and restoring access before content is published
   if (course.is_published !== true) {
-    return { ok: false, code: 'v5_course_unpublished', error: 'Khóa V5 chưa Publish hoặc đã Unpublish.' };
+    if (requireSale && course.active !== true) {
+      return { ok: false, code: 'v5_course_not_for_sale', error: 'Khóa V5 hiện chưa mở bán.' };
+    }
+    return { ok: true, course, release: null, preOrder: true };
   }
   if (requireSale && course.active !== true) {
     return { ok: false, code: 'v5_course_not_for_sale', error: 'Khóa V5 hiện chưa mở bán.' };

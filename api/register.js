@@ -65,16 +65,18 @@ export default async function handler(req, res) {
       return res.status(409).json({ error: 'Khóa học V4 chưa sẵn sàng nội dung nên chưa thể nhận đăng ký.' });
     }
     if (deliveryMode === 'v5') {
-      if (courseRec.active !== true || courseRec.is_published !== true) {
-        return res.status(409).json({ error: 'Khóa học V5 chưa mở bán hoặc chưa Publish nên chưa thể nhận đăng ký.' });
+      if (courseRec.active !== true) {
+        return res.status(409).json({ error: 'Khóa học V5 chưa mở bán nên chưa thể nhận đăng ký.' });
       }
-      const readiness = await getV5Readiness(courseRec.id);
-      if (!readiness.ready) {
-        console.warn('[register] V5 order blocked by canonical readiness:', courseSlug, readiness.reason);
-        return res.status(409).json({
-          error: 'Khóa học V5 chưa có release Published hợp lệ nên chưa thể nhận đăng ký.',
-          code: readiness.reason || 'v5_not_ready'
-        });
+      if (courseRec.is_published === true) {
+        const readiness = await getV5Readiness(courseRec.id);
+        if (!readiness.ready) {
+          console.warn('[register] V5 order blocked by canonical readiness:', courseSlug, readiness.reason);
+          return res.status(409).json({
+            error: 'Khóa học V5 chưa có release Published hợp lệ nên chưa thể nhận đăng ký.',
+            code: readiness.reason || 'v5_not_ready'
+          });
+        }
       }
     }
     const telegramChatId = deliveryMode === 'telegram' ? String(courseRec.telegram_chat_id || '').trim() : '';

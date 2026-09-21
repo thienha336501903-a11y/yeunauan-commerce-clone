@@ -35,12 +35,13 @@ test('V4 checkout is fail-closed until content is published', () => {
   assert.match(register, /if \(deliveryMode === 'telegram'\) \{[\s\S]*createOrderInvite/);
 });
 
-test('V5 checkout is fail-closed until sale is active and canonical content is published', () => {
+test('V5 checkout allows pre-order when sale is active and validates readiness if published', () => {
   const register = read('api/register.js');
-  assert.match(register, /if \(deliveryMode === 'v5'\) \{[\s\S]*courseRec\.active !== true \|\| courseRec\.is_published !== true/);
+  assert.match(register, /if \(deliveryMode === 'v5'\) \{[\s\S]*courseRec\.active !== true/);
+  assert.match(register, /courseRec\.is_published === true/);
   assert.match(register, /getV5Readiness\(courseRec\.id\)/);
   assert.match(register, /if \(!readiness\.ready\)/);
-  assert.match(register, /Khóa học V5 chưa mở bán hoặc chưa Publish nên chưa thể nhận đăng ký/);
+  assert.match(register, /Khóa học V5 chưa mở bán nên chưa thể nhận đăng ký/);
   assert.match(register, /SKIPPED_V5/);
 });
 

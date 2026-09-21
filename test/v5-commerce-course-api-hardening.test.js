@@ -10,8 +10,8 @@ test('admin writes use strict delivery-mode validation instead of silently coerc
   assert.match(source, /hasOwn\(body, 'deliveryMode'\) \|\| hasOwn\(body, 'delivery_mode'\)/);
 });
 
-test('new V5 shells are forced off-sale and unpublished', () => {
-  assert.match(source, /if \(deliveryMode === 'v5'\) \{\s*base\.active = false;\s*base\.is_published = false;/);
+test('new V5 shells allow pre-order sale while preserving unpublished content status', () => {
+  assert.match(source, /if \(deliveryMode === 'v5'\) \{\s*base\.active = body\.active !== undefined \? body\.active === true : true;\s*base\.is_published = false;/);
 });
 
 test('existing V5 mode cannot be downgraded or generic-converted', () => {
@@ -21,10 +21,10 @@ test('existing V5 mode cannot be downgraded or generic-converted', () => {
   assert.match(source, /Không chuyển khóa hiện hữu sang V5 bằng chỉnh sửa Commerce/);
 });
 
-test('V5 readiness gates both ready/sale flags against canonical release state', () => {
+test('V5 readiness gates published state against canonical release state without blocking pre-order sales', () => {
   assert.match(source, /getV5Readiness\(existing\.id\)/);
-  assert.match(source, /effectivePublished \|\| effectiveActive/);
-  assert.match(source, /canonical Published release hợp lệ/);
+  assert.match(source, /if \(deliveryMode === 'v5' && effectivePublished\)/);
+  assert.doesNotMatch(source, /effectivePublished \|\| effectiveActive/);
 });
 
 test('existing V5 PUT is shared-DB only while V5 POST shell creation keeps the course bridge', () => {

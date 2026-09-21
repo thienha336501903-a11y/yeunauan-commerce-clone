@@ -49,7 +49,7 @@ async function handleV5AdminReadiness(req, res) {
       status: readiness.release.status,
       created_at: readiness.release.created_at
     } : null,
-    canSell: readiness.ready === true && isCourseForSale(course) && course.is_published === true
+    canSell: isCourseForSale(course)
   });
 }
 
@@ -85,13 +85,12 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: `Khóa học V4 chưa sẵn sàng với slug: ${courseSlug}` });
     }
     if (deliveryMode === 'v5') {
-      if (course.is_published !== true) {
-        return res.status(404).json({ error: `Khóa học V5 chưa Publish với slug: ${courseSlug}` });
-      }
-      const readiness = await getV5Readiness(course.id);
-      if (!readiness.ready) {
-        console.warn('[config] V5 storefront blocked by canonical readiness:', courseSlug, readiness.reason);
-        return res.status(404).json({ error: `Khóa học V5 chưa sẵn sàng với slug: ${courseSlug}` });
+      if (course.is_published === true) {
+        const readiness = await getV5Readiness(course.id);
+        if (!readiness.ready) {
+          console.warn('[config] V5 storefront blocked by canonical readiness:', courseSlug, readiness.reason);
+          return res.status(404).json({ error: `Khóa học V5 chưa sẵn sàng với slug: ${courseSlug}` });
+        }
       }
     }
 

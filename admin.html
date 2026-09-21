@@ -997,8 +997,8 @@
       try {
         const readiness = await getV5AdminReadiness(courseSlug);
         node.innerText = readiness.canonicalReady
-          ? '✓ Published' + (readiness.release?.version ? ' · Release ' + readiness.release.version : '') + (readiness.canSell ? ' · Đang bán' : ' · Có thể bật bán tại Commerce')
-          : 'Draft / chưa có Published release hợp lệ';
+          ? '✓ Đã Publish' + (readiness.release?.version ? ' · Bản phát hành #' + readiness.release.version : '') + (readiness.canSell ? ' · Đang bán' : ' · Có thể bật bán tại Commerce')
+          : 'Chưa Publish bài học (Có thể bật bán chờ ngày khai giảng)';
       } catch (error) {
         node.innerText = error.message || 'Không kiểm tra được trạng thái V5';
       }
@@ -1761,7 +1761,6 @@
         document.getElementById('courseActiveInput').checked = false;
       }
       if (mode === 'v5') {
-        if (!document.getElementById('courseId')?.value) document.getElementById('courseActiveInput').checked = false;
         refreshV5ModalState(document.getElementById('courseSlugInput')?.value || '');
       }
       updateV4StepGuide();
@@ -2082,12 +2081,12 @@
         try {
           const readiness = await getV5AdminReadiness(course.slug);
           if (!readiness.canonicalReady) {
-            alert('Khóa LMS V5 chưa có Published release hợp lệ. Hãy Publish tại V5 Channel trước khi bật bán.');
-            return;
+            const allowPreOrder = confirm('Khóa LMS V5 chưa Publish bài học. Bạn có muốn bật bán trước ngày khai giảng (Pre-order) không?');
+            if (!allowPreOrder) return;
           }
         } catch (error) {
-          alert(error.message || 'Không kiểm tra được trạng thái LMS V5.');
-          return;
+          const allowPreOrder = confirm('Chưa kiểm tra được trạng thái canonical V5 (' + (error.message || '') + '). Bạn có muốn bật bán trước ngày khai giảng không?');
+          if (!allowPreOrder) return;
         }
       }
 

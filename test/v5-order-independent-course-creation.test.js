@@ -25,8 +25,8 @@ test('Commerce POST preserves canonical identity, V5 delivery mode and is_publis
   assert.doesNotMatch(coursesSource, /updatePayload[\s\S]*?id:\s*crypto/);
 });
 
-test('Commerce POST preserves off-sale status and validates readiness if activation requested', () => {
-  assert.match(coursesSource, /const readiness = await getV5Readiness\(existingBySlug\.id\);/);
+test('Commerce POST allows pre-order sale activation on attached V5 course', () => {
+  assert.match(coursesSource, /updatePayload\.active = true;/);
   assert.match(coursesSource, /updatePayload\.active = existingBySlug\.active === true;/);
 });
 
