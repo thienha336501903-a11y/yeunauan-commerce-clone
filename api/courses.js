@@ -301,13 +301,6 @@ export default async function handler(req, res) {
 
             // Sale state: safe default off-sale unless explicitly controlled and validated
             if (hasOwn(body, 'active') && body.active === true) {
-              const readiness = await getV5Readiness(existingBySlug.id);
-              if (!readiness.ready) {
-                return res.status(409).json({
-                  error: 'Khóa V5 chưa có canonical Published release hợp lệ nên chưa thể chuyển Sẵn sàng/Bật bán.',
-                  code: readiness.reason || 'v5_not_ready'
-                });
-              }
               updatePayload.active = true;
             } else if (hasOwn(body, 'active') && body.active === false) {
               updatePayload.active = false;
@@ -349,7 +342,7 @@ export default async function handler(req, res) {
         }
 
         if (deliveryMode === 'v5') {
-          base.active = false;
+          base.active = body.active !== undefined ? body.active === true : true;
           base.is_published = false;
         } else {
           base.active = body.active !== undefined ? body.active === true : true;
@@ -443,11 +436,11 @@ export default async function handler(req, res) {
           delete base.raw_data.v4SellBeforePublishAcknowledged;
         }
 
-        if (deliveryMode === 'v5' && (effectivePublished || effectiveActive)) {
+        if (deliveryMode === 'v5' && effectivePublished) {
           const readiness = await getV5Readiness(existing.id);
           if (!readiness.ready) {
             return res.status(409).json({
-              error: 'Khóa V5 chưa có canonical Published release hợp lệ nên chưa thể chuyển Sẵn sàng/Bật bán.',
+              error: 'Khóa V5 chưa có canonical Published release hợp lệ nên chưa thể chuyển Sẵn sàng.',
               code: readiness.reason || 'v5_not_ready'
             });
           }
