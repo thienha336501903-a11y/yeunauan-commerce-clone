@@ -11,7 +11,7 @@ test('admin writes use strict delivery-mode validation instead of silently coerc
 });
 
 test('new V5 shells allow pre-order sale while preserving unpublished content status', () => {
-  assert.match(source, /if \(deliveryMode === 'v5'\) \{\s*base\.active = body\.active !== undefined \? body\.active === true : true;\s*base\.is_published = false;/);
+  assert.match(source, /if \(deliveryMode === 'v5'\) \{\s*base\.active = body\.active === true;\s*base\.is_published = false;/);
 });
 
 test('existing V5 mode cannot be downgraded or generic-converted', () => {

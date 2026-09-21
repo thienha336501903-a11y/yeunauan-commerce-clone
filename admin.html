@@ -1761,6 +1761,7 @@
         document.getElementById('courseActiveInput').checked = false;
       }
       if (mode === 'v5') {
+        if (!document.getElementById('courseId')?.value) document.getElementById('courseActiveInput').checked = false;
         refreshV5ModalState(document.getElementById('courseSlugInput')?.value || '');
       }
       updateV4StepGuide();

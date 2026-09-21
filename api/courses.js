@@ -342,7 +342,7 @@ export default async function handler(req, res) {
         }
 
         if (deliveryMode === 'v5') {
-          base.active = body.active !== undefined ? body.active === true : true;
+          base.active = body.active === true;
           base.is_published = false;
         } else {
           base.active = body.active !== undefined ? body.active === true : true;
