@@ -404,6 +404,7 @@
             <svg class="w-5 h-5 text-pink-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"></path></svg>
             Thông Tin Chuyển Khoản Học Phí
           </h4>
+          <p id="bankAutoFillHint" class="hidden text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mb-4 font-medium">Đã tự điền theo thông tin chuyển khoản của khóa gần nhất. Bạn có thể chỉnh sửa cho khóa này.</p>
           
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
             <div>
@@ -1840,6 +1841,34 @@
       }
     }
 
+    function hasReusablePaymentInfo(course) {
+      if (!course || typeof course !== 'object') return false;
+      const bankAccount = String(course.bankAccount || '').trim();
+      if (!bankAccount) return false;
+      const bankName = String(course.bankName || '').trim();
+      const bankOwner = String(course.bankOwner || '').trim();
+      const qrImageUrl = String(course.qrImageUrl || '').trim();
+      return Boolean(bankName || bankOwner || qrImageUrl);
+    }
+
+    function parseCourseDate(course) {
+      if (!course || !course.created_at) return 0;
+      const t = new Date(course.created_at).getTime();
+      return Number.isNaN(t) ? 0 : t;
+    }
+
+    function latestReusablePaymentCourse(courses) {
+      if (!Array.isArray(courses) || courses.length === 0) return null;
+      const sorted = [...courses].sort((a, b) => {
+        const diff = parseCourseDate(b) - parseCourseDate(a);
+        if (diff !== 0) return diff;
+        const idA = String((a && a.id) || '');
+        const idB = String((b && b.id) || '');
+        return idB.localeCompare(idA);
+      });
+      return sorted.find(hasReusablePaymentInfo) || null;
+    }
+
     function openCourseModal(course = null) {
       const modal = document.getElementById("courseModal");
       const form = document.getElementById("courseForm");
@@ -1884,6 +1913,8 @@
         document.getElementById("bankOwnerInput").value = course.bankOwner || "";
         document.getElementById("transferNoteInput").value = course.transferNote || "";
         document.getElementById("qrImageUrlInput").value = course.qrImageUrl || "";
+        const bankHint = document.getElementById("bankAutoFillHint");
+        if (bankHint) bankHint.classList.add("hidden");
       } else {
         // Create Mode
         document.getElementById("modalTitle").innerText = "Thêm Khóa Học Mới";
@@ -1905,22 +1936,23 @@
         toggleTelegramFields();
         updateTelegramConnectUi();
 
-        // Auto-fill bank details from the most recently created course
-        if (allCourses && allCourses.length > 0) {
-          const sorted = [...allCourses].sort((a, b) => {
-            const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
-            const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
-            return dateB - dateA;
-          });
-          
-          const latestCourse = sorted[0];
-          if (latestCourse) {
-            document.getElementById("bankNameInput").value = latestCourse.bankName || "";
-            document.getElementById("bankAccountInput").value = latestCourse.bankAccount || "";
-            document.getElementById("bankOwnerInput").value = latestCourse.bankOwner || "";
-            document.getElementById("transferNoteInput").value = latestCourse.transferNote || "";
-            document.getElementById("qrImageUrlInput").value = latestCourse.qrImageUrl || "";
-          }
+        // Auto-fill bank details from the most recently created course with valid payment info
+        const bankHint = document.getElementById("bankAutoFillHint");
+        const sourceCourse = latestReusablePaymentCourse(allCourses);
+        if (sourceCourse) {
+          document.getElementById("bankNameInput").value = sourceCourse.bankName || "";
+          document.getElementById("bankAccountInput").value = sourceCourse.bankAccount || "";
+          document.getElementById("bankOwnerInput").value = sourceCourse.bankOwner || "";
+          document.getElementById("transferNoteInput").value = sourceCourse.transferNote || "";
+          document.getElementById("qrImageUrlInput").value = sourceCourse.qrImageUrl || "";
+          if (bankHint) bankHint.classList.remove("hidden");
+        } else {
+          document.getElementById("bankNameInput").value = "";
+          document.getElementById("bankAccountInput").value = "";
+          document.getElementById("bankOwnerInput").value = "";
+          document.getElementById("transferNoteInput").value = "";
+          document.getElementById("qrImageUrlInput").value = "";
+          if (bankHint) bankHint.classList.add("hidden");
         }
       }
     }
