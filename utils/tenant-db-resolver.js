@@ -1,6 +1,7 @@
 // utils/tenant-db-resolver.js
 // System B Milestone B4 — Scoped Tenant Data Access & TenantDbResolver
 // Authoritative Plan: SYSTEM_B_MULTI_AGENCY_MASTER_IMPLEMENTATION_PLAN_V1_1.md
+// Milestone M0B.1 Hardened Implementation
 
 import { supabase as defaultSupabase } from "./supabase.js";
 import { resolveTenant, isTrustedTenantContext, getTrustedHost } from "./tenant-resolver.js";
@@ -17,6 +18,39 @@ export function assertServerEnvironment() {
 }
 
 /**
+ * Validates and extracts a trusted TenantContext.
+ * Accepts:
+ *   1. An HTTP Request object -> calls resolveTenant(req)
+ *   2. A pre-resolved branded TenantContext -> verifies via isTrustedTenantContext(ctx)
+ * REJECTS plain unbranded objects like { agencyId: "..." }.
+ */
+export async function assertTrustedTenantInput(reqOrTenantContext, options = {}) {
+  if (!reqOrTenantContext) {
+    throw new Error("TenantContext or Request is required.");
+  }
+
+  // If it's an HTTP request (has headers property)
+  if (reqOrTenantContext.headers || typeof reqOrTenantContext.getHeader === "function") {
+    const resolveResult = await resolveTenant(reqOrTenantContext, options);
+    if (!resolveResult.ok || !resolveResult.tenant) {
+      const err = new Error(resolveResult.error || "Failed to resolve trusted tenant from request.");
+      err.status = resolveResult.status || 404;
+      err.code = resolveResult.code || "unknown_tenant";
+      throw err;
+    }
+    return resolveResult.tenant;
+  }
+
+  // If it's a pre-resolved TenantContext, must satisfy isTrustedTenantContext
+  if (isTrustedTenantContext(reqOrTenantContext)) {
+    return reqOrTenantContext;
+  }
+
+  // Reject unbranded/fabricated objects
+  throw new Error("SECURITY VIOLATION: TenantContext must be derived from trusted tenant resolver. Plain or unbranded objects are strictly rejected.");
+}
+
+/**
  * TenantDbResolver: Resolves database connection and client for a given tenant context.
  * In current architecture, all tenants map to Main Supabase project (yyiavtiwtekkocqpephr).
  * Provides an interface abstraction for future dedicated tenant routing without architectural changes.
@@ -29,7 +63,6 @@ export class TenantDbResolver {
     if (!tenantContext || !tenantContext.agencyId) {
       throw new Error("TenantDbResolver requires a valid tenantContext with agencyId.");
     }
-    // Return provided client or default server client
     return options.supabaseClient || defaultSupabase;
   }
 }
@@ -38,18 +71,20 @@ export class TenantDbResolver {
  * Tier 1: Public Catalog Repository
  * Unauthenticated / public reads for a tenant's published storefront, offerings, and bank accounts.
  * Strictly bounded by agency_id = tenantContext.agencyId AND is_published = true.
+ * Requires authentic TenantContext or Request.
  */
-export function createPublicCatalogRepo(tenantContext, options = {}) {
-  if (!tenantContext || !tenantContext.agencyId) {
-    throw new Error("PublicCatalogRepo requires a valid tenantContext.");
-  }
-
+export async function createPublicCatalogRepo(reqOrTenantContext, options = {}) {
+  const tenantContext = await assertTrustedTenantInput(reqOrTenantContext, options);
   const client = TenantDbResolver.resolveDbClient(tenantContext, options);
   const agencyId = tenantContext.agencyId;
 
   return {
     getAgencyId() {
       return agencyId;
+    },
+
+    getTenantContext() {
+      return tenantContext;
     },
 
     async getAgencyInfo() {
@@ -140,7 +175,7 @@ export async function createMemberReadRepo(req, options = {}) {
     async getMyOrders() {
       const { data, error } = await client
         .from("agency_orders")
-        .select("id, agency_id, membership_id, offering_id, amount_vnd, payment_status, bank_code, account_number, account_holder, transfer_content, created_at, updated_at")
+        .select("id, agency_id, membership_id, offering_id, order_code, total_amount_vnd, status, snapshot_bank_code, snapshot_account_number, snapshot_account_holder, snapshot_transfer_content, created_at, updated_at")
         .eq("agency_id", tenant.agencyId)
         .eq("membership_id", membership.id)
         .order("created_at", { ascending: false });
@@ -151,8 +186,8 @@ export async function createMemberReadRepo(req, options = {}) {
 
     async getMyEntitlements() {
       const { data, error } = await client
-        .from("agency_entitlements")
-        .select("id, agency_id, membership_id, canonical_course_id, status, granted_at, expires_at")
+        .from("student_entitlements")
+        .select("id, agency_id, membership_id, canonical_course_id, status, expires_at, created_at")
         .eq("agency_id", tenant.agencyId)
         .eq("membership_id", membership.id)
         .eq("status", "active");
@@ -178,9 +213,11 @@ export async function createMemberReadRepo(req, options = {}) {
 
 /**
  * Tier 3: Agency Write Repository
- * Privileged mutations for agency staff and owners (e.g., managing offerings, orders, banks).
+ * Privileged mutations for agency staff and owners (e.g., managing offerings, banks).
  * Enforces requireAgencyRole: verified caller must have staff or owner role in the request tenant.
  * Guarantees all writes are strictly bound to tenant.agencyId; caller-supplied agencyId is ignored.
+ * Note: Generic updateOrderStatus has been REMOVED per Work finding D4; order status transitions
+ * are strictly managed via atomic RPCs in agencyOrderOperations.
  */
 export async function createAgencyWriteRepo(req, allowedRoles = ["agency_staff", "agency_owner"], options = {}) {
   assertServerEnvironment();
@@ -274,34 +311,6 @@ export async function createAgencyWriteRepo(req, allowedRoles = ["agency_staff",
 
       if (error) throw error;
       return data;
-    },
-
-    async updateOrderStatus(orderId, newStatus, reason = null) {
-      if (!orderId || !newStatus) throw new Error("orderId and newStatus are required.");
-
-      const allowedStatuses = ["pending_payment", "paid", "cancelled", "refunded"];
-      if (!allowedStatuses.includes(newStatus)) {
-        throw new Error(`Invalid order status: ${newStatus}. Allowed: ${allowedStatuses.join(", ")}`);
-      }
-
-      const payload = {
-        payment_status: newStatus,
-        updated_at: new Date().toISOString()
-      };
-      if (reason) {
-        payload.audit_notes = reason;
-      }
-
-      const { data, error } = await client
-        .from("agency_orders")
-        .update(payload)
-        .eq("id", orderId)
-        .eq("agency_id", agencyId) // Scoped to verified agency
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data;
     }
   };
 
@@ -311,13 +320,11 @@ export async function createAgencyWriteRepo(req, allowedRoles = ["agency_staff",
 /**
  * Tier 4: Platform Core Read Repository
  * Read-only access to canonical curriculum (canonical_courses, canonical_lessons).
- * Scoped to ensure canonical items are linked to the tenant's licensed offerings.
+ * Enforces B4.3: PlatformCoreRead must prove the requested canonical course is actually
+ * licensed to the current tenant via agency_offering_items. Arbitrary ID access is denied.
  */
-export function createPlatformCoreReadRepo(tenantContext, options = {}) {
-  if (!tenantContext || !tenantContext.agencyId) {
-    throw new Error("PlatformCoreReadRepo requires a valid tenantContext.");
-  }
-
+export async function createPlatformCoreReadRepo(reqOrTenantContext, options = {}) {
+  const tenantContext = await assertTrustedTenantInput(reqOrTenantContext, options);
   const client = TenantDbResolver.resolveDbClient(tenantContext, options);
   const agencyId = tenantContext.agencyId;
 
@@ -325,7 +332,8 @@ export function createPlatformCoreReadRepo(tenantContext, options = {}) {
     async getCanonicalCourseByCode(courseCode) {
       if (!courseCode) return null;
 
-      const { data, error } = await client
+      // 1. Fetch canonical course
+      const { data: course, error } = await client
         .from("canonical_courses")
         .select("id, course_id, code, default_title, status, curriculum_metadata")
         .eq("code", courseCode.trim())
@@ -333,12 +341,49 @@ export function createPlatformCoreReadRepo(tenantContext, options = {}) {
         .maybeSingle();
 
       if (error) throw error;
-      return data;
+      if (!course) return null;
+
+      // 2. Enforce scope: Prove course is licensed through an offering of this agency
+      const { data: licensedItem, error: licError } = await client
+        .from("agency_offering_items")
+        .select("id")
+        .eq("agency_id", agencyId)
+        .eq("canonical_id", course.id)
+        .limit(1)
+        .maybeSingle();
+
+      if (licError) throw licError;
+      if (!licensedItem) {
+        const scopeErr = new Error(`Access denied: Course '${courseCode}' is not licensed to current agency.`);
+        scopeErr.status = 403;
+        scopeErr.code = "course_not_licensed";
+        throw scopeErr;
+      }
+
+      return course;
     },
 
     async getCanonicalLessons(canonicalCourseId) {
       if (!canonicalCourseId) return [];
 
+      // 1. Enforce scope: Prove course is licensed through an offering of this agency
+      const { data: licensedItem, error: licError } = await client
+        .from("agency_offering_items")
+        .select("id")
+        .eq("agency_id", agencyId)
+        .eq("canonical_id", canonicalCourseId)
+        .limit(1)
+        .maybeSingle();
+
+      if (licError) throw licError;
+      if (!licensedItem) {
+        const scopeErr = new Error(`Access denied: Canonical course '${canonicalCourseId}' is not licensed to current agency.`);
+        scopeErr.status = 403;
+        scopeErr.code = "course_not_licensed";
+        throw scopeErr;
+      }
+
+      // 2. Fetch canonical lessons
       const { data, error } = await client
         .from("canonical_lessons")
         .select("id, canonical_course_id, v5_lesson_id, title, sort_order, is_free_preview, duration_seconds")
@@ -352,39 +397,50 @@ export function createPlatformCoreReadRepo(tenantContext, options = {}) {
 }
 
 /**
- * Server-only Privileged Agency Mutation Wrapper.
- * Bounds service_role execution strictly by:
- * - verified request tenant
- * - verified user/session
- * - active membership
- * - role allowlist
- * - same-agency boundary
+ * Scoped Agency Order Operations (replaces raw service client escape).
+ * Exposes only narrow, strictly bounded operations for orders:
+ * - createOrder
+ * - approveOrder
+ * - refundOrder
+ * Caller NEVER receives raw service-role Supabase client.
  */
-export async function executePrivilegedAgencyMutation(req, allowedRoles, operationContract, options = {}) {
-  assertServerEnvironment();
+export const agencyOrderOperations = Object.freeze({
+  async createOrder(req, payload, options = {}) {
+    assertServerEnvironment();
+    const { checkoutOffering } = await import("./agency-commerce.js");
+    return checkoutOffering(req, payload, options);
+  },
 
-  if (typeof operationContract !== "function") {
-    throw new Error("operationContract must be an executable function.");
+  async approveOrder(req, orderId, options = {}) {
+    assertServerEnvironment();
+    const { approveAgencyOrder } = await import("./agency-commerce.js");
+    return approveAgencyOrder(req, orderId, options);
+  },
+
+  async refundOrder(req, orderId, reason, options = {}) {
+    assertServerEnvironment();
+    const { refundAgencyOrder } = await import("./agency-commerce.js");
+    return refundAgencyOrder(req, orderId, reason, options);
   }
+});
 
-  const authResult = await requireAgencyRole(req, allowedRoles, options);
-  if (!authResult.ok) {
-    return { ok: false, ...authResult };
+/**
+ * Scoped Agency Homework Operations (replaces raw service client escape).
+ * Exposes only narrow, strictly bounded operations for homework:
+ * - submitHomework
+ * - gradeHomework
+ * Caller NEVER receives raw service-role Supabase client.
+ */
+export const agencyHomeworkOperations = Object.freeze({
+  async submitHomework(req, payload, options = {}) {
+    assertServerEnvironment();
+    const { submitAgencyHomework } = await import("./agency-homework.js");
+    return submitAgencyHomework(req, payload, options);
+  },
+
+  async gradeHomework(req, payload, options = {}) {
+    assertServerEnvironment();
+    const { gradeAgencyHomework } = await import("./agency-homework.js");
+    return gradeAgencyHomework(req, payload, options);
   }
-
-  const { user, membership, tenant } = authResult;
-  const client = TenantDbResolver.resolveDbClient(tenant, options);
-
-  try {
-    const result = await operationContract(client, tenant, user, membership);
-    return { ok: true, result, tenant, user };
-  } catch (err) {
-    console.error("[tenant-db-resolver] Privileged mutation error:", err);
-    return {
-      ok: false,
-      status: 500,
-      code: "privileged_mutation_error",
-      error: err.message || "Failed to execute privileged tenant mutation."
-    };
-  }
-}
+});

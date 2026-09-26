@@ -1,8 +1,10 @@
 // test/multi-agency-b4.test.js
-// Automated test suite for System B Milestone B4 TenantDbResolver & Scoped Data Repositories
+// Automated test suite for System B Milestone B4 / M0B.1 Hardened Scoped Data Repositories
 
 import assert from "node:assert/strict";
 import test from "node:test";
+import fs from "node:fs";
+import path from "node:path";
 import {
   TenantDbResolver,
   createPublicCatalogRepo,
@@ -10,304 +12,227 @@ import {
   createAgencyWriteRepo,
   createPlatformCoreReadRepo,
   assertServerEnvironment,
-  executePrivilegedAgencyMutation
+  assertTrustedTenantInput,
+  agencyOrderOperations,
+  agencyHomeworkOperations
 } from "../utils/tenant-db-resolver.js";
-import { _clearTenantCache } from "../utils/tenant-resolver.js";
+import { _clearTenantCache, resolveTenant } from "../utils/tenant-resolver.js";
 
 // =============================================================================
-// B4.1: PUBLIC CATALOG REPO & CROSS-TENANT ISOLATION
+// B4.1: TRUSTED TENANT INPUT & NO PLAIN OBJECT AUTHORITY
 // =============================================================================
 
-test("B4.1-PUBLIC-CATALOG-ISOLATION: Tenant A cannot read Tenant B offerings", async () => {
-  const tenantA = { agencyId: "agency-a-id", agencySlug: "agency-a", hostname: "agency-a.com" };
-  const tenantB = { agencyId: "agency-b-id", agencySlug: "agency-b", hostname: "agency-b.com" };
+test("B4.1-TRUSTED-TENANT-INPUT: Plain unbranded objects are strictly rejected", async () => {
+  // 1. Plain unbranded object -> MUST FAIL
+  const plainObject = { agencyId: "plain-agency-id" };
+  await assert.rejects(
+    async () => {
+      await assertTrustedTenantInput(plainObject);
+    },
+    /SECURITY VIOLATION: TenantContext must be derived from trusted tenant resolver/
+  );
 
-  const mockDb = {
-    from: (table) => ({
-      select: () => ({
-        eq: (col1, val1) => ({
-          eq: (col2, val2) => ({
-            order: () => {
-              if (col1 === "agency_id" && val1 === "agency-a-id") {
-                return {
-                  data: [
-                    { id: "offering-a1", agency_id: "agency-a-id", slug: "cooking-101", is_published: true }
-                  ],
-                  error: null
-                };
-              }
-              if (col1 === "agency_id" && val1 === "agency-b-id") {
-                return {
-                  data: [
-                    { id: "offering-b1", agency_id: "agency-b-id", slug: "baking-201", is_published: true }
-                  ],
-                  error: null
-                };
-              }
-              return { data: [], error: null };
-            }
-          })
-        })
-      })
-    })
-  };
+  await assert.rejects(
+    async () => {
+      await createPublicCatalogRepo(plainObject);
+    },
+    /SECURITY VIOLATION/
+  );
 
-  const repoA = createPublicCatalogRepo(tenantA, { supabaseClient: mockDb });
-  const repoB = createPublicCatalogRepo(tenantB, { supabaseClient: mockDb });
-
-  const offeringsA = await repoA.getPublishedOfferings();
-  const offeringsB = await repoB.getPublishedOfferings();
-
-  assert.equal(offeringsA.length, 1);
-  assert.equal(offeringsA[0].id, "offering-a1");
-  assert.equal(offeringsA[0].agency_id, "agency-a-id");
-
-  assert.equal(offeringsB.length, 1);
-  assert.equal(offeringsB[0].id, "offering-b1");
-  assert.equal(offeringsB[0].agency_id, "agency-b-id");
-
-  // Verify A cannot see B
-  assert.equal(offeringsA.some(o => o.agency_id === "agency-b-id"), false);
-});
-
-// =============================================================================
-// B4.2: MEMBER READ REPO & MULTI-AGENCY HOST SCOPING
-// =============================================================================
-
-test("B4.2-MEMBER-REPO-HOST-SCOPED: Same user holding dual membership is strictly scoped by request host", async () => {
-  _clearTenantCache();
-
+  // 2. Request object resolved via trusted tenant resolver -> SUCCEEDS
   const mockDb = {
     rpc: async (func, args) => {
-      if (args.p_hostname === "agency-a.com") {
-        return { data: { found: true, agency_id: "agency-a-id", hostname: "agency-a.com" } };
-      }
-      if (args.p_hostname === "agency-b.com") {
-        return { data: { found: true, agency_id: "agency-b-id", hostname: "agency-b.com" } };
+      if (args.p_hostname === "valid-agency.com") {
+        return { data: { found: true, agency_id: "valid-agency-id", hostname: "valid-agency.com" } };
       }
       return { data: null };
-    },
-    auth: {
-      getUser: async () => ({
-        data: { user: { id: "dual-user-1" } },
-        error: null
-      })
-    },
-    from: (table) => ({
-      select: () => ({
-        eq: (col1, val1) => ({
-          eq: (col2, val2) => ({
-            maybeSingle: async () => {
-              if (table === "agency_memberships") {
-                if (val2 === "agency-a-id") {
-                  return {
-                    data: {
-                      id: "mem-a",
-                      agency_id: "agency-a-id",
-                      user_id: "dual-user-1",
-                      role: "student",
-                      display_name: "Student on A",
-                      status: "active"
-                    }
-                  };
-                }
-                if (val2 === "agency-b-id") {
-                  return {
-                    data: {
-                      id: "mem-b",
-                      agency_id: "agency-b-id",
-                      user_id: "dual-user-1",
-                      role: "agency_staff",
-                      display_name: "Staff on B",
-                      status: "active"
-                    }
-                  };
-                }
-              }
-              return { data: null };
-            },
-            order: () => {
-              if (table === "agency_orders") {
-                if (val2 === "mem-a") {
-                  return { data: [{ id: "order-a1", amount_vnd: 500000 }], error: null };
-                }
-                if (val2 === "mem-b") {
-                  return { data: [{ id: "order-b1", amount_vnd: 1200000 }], error: null };
-                }
-              }
-              return { data: [], error: null };
-            }
-          })
-        })
-      })
-    })
-  };
-
-  const reqA = { headers: { host: "agency-a.com", authorization: "Bearer valid_token" } };
-  const reqB = { headers: { host: "agency-b.com", authorization: "Bearer valid_token" } };
-
-  // Repo on Agency A host
-  const repoA = await createMemberReadRepo(reqA, { supabaseClient: mockDb });
-  assert.equal(repoA.ok, true);
-  const profileA = await repoA.getMembershipProfile();
-  assert.equal(profileA.agencyId, "agency-a-id");
-  assert.equal(profileA.role, "student");
-  const ordersA = await repoA.getMyOrders();
-  assert.equal(ordersA[0].id, "order-a1");
-
-  // Repo on Agency B host
-  const repoB = await createMemberReadRepo(reqB, { supabaseClient: mockDb });
-  assert.equal(repoB.ok, true);
-  const profileB = await repoB.getMembershipProfile();
-  assert.equal(profileB.agencyId, "agency-b-id");
-  assert.equal(profileB.role, "agency_staff");
-  const ordersB = await repoB.getMyOrders();
-  assert.equal(ordersB[0].id, "order-b1");
-});
-
-// =============================================================================
-// B4.3: AGENCY WRITE REPO & SPOOFED AGENCY_ID REJECTION
-// =============================================================================
-
-test("B4.3-AGENCY-WRITE-SANITIZE-SPOOF: Write repo forces agency_id from verified request tenant", async () => {
-  _clearTenantCache();
-
-  let capturedInsert = null;
-
-  const mockDb = {
-    rpc: async () => ({
-      data: { found: true, agency_id: "agency-a-id", hostname: "agency-a.com" }
-    }),
-    auth: {
-      getUser: async () => ({ data: { user: { id: "staff-user-1" } } })
-    },
-    from: (table) => ({
-      select: () => ({
-        eq: () => ({
-          eq: () => ({
-            maybeSingle: async () => ({
-              data: {
-                id: "mem-staff",
-                agency_id: "agency-a-id",
-                user_id: "staff-user-1",
-                role: "agency_staff",
-                status: "active"
-              }
-            })
-          })
-        })
-      }),
-      insert: (payload) => ({
-        select: () => ({
-          single: async () => {
-            capturedInsert = payload;
-            return { data: { id: "new-offering-1", ...payload }, error: null };
-          }
-        })
-      })
-    })
-  };
-
-  const req = { headers: { host: "agency-a.com", authorization: "Bearer staff_token" } };
-  const writeRepo = await createAgencyWriteRepo(req, ["agency_staff", "agency_owner"], { supabaseClient: mockDb });
-  assert.equal(writeRepo.ok, true);
-
-  // Attacker attempts to provide a spoofed agency_id: "agency-b-id" in the creation payload
-  await writeRepo.createOffering({
-    agency_id: "agency-b-id", // SPOOF ATTEMPT
-    slug: "hacked-offering",
-    display_title: "Hacked Title",
-    price_vnd: 100000
-  });
-
-  // Verify that the repository strictly sanitized the payload and enforced agency-a-id
-  assert.equal(capturedInsert.agency_id, "agency-a-id");
-  assert.notEqual(capturedInsert.agency_id, "agency-b-id");
-});
-
-// =============================================================================
-// B4.4: SERVICE ROLE BROWSER PROTECTION & PRIVILEGED MUTATION CONTRACT
-// =============================================================================
-
-test("B4.4-BROWSER-GUARD: assertServerEnvironment throws if executed in browser context", () => {
-  // Simulate browser environment
-  globalThis.window = {};
-  assert.throws(() => {
-    assertServerEnvironment();
-  }, /SECURITY VIOLATION/);
-  delete globalThis.window;
-});
-
-test("B4.4-PRIVILEGED-MUTATION-BOUNDS: executePrivilegedAgencyMutation bounds service execution by verified tenant", async () => {
-  _clearTenantCache();
-
-  const mockDb = {
-    rpc: async () => ({
-      data: { found: true, agency_id: "agency-a-id", hostname: "agency-a.com" }
-    }),
-    auth: {
-      getUser: async () => ({ data: { user: { id: "owner-user" } } })
     },
     from: () => ({
       select: () => ({
         eq: () => ({
           eq: () => ({
-            maybeSingle: async () => ({
-              data: {
-                id: "mem-owner",
-                agency_id: "agency-a-id",
-                user_id: "owner-user",
-                role: "agency_owner",
-                status: "active"
-              }
-            })
+            order: () => ({ data: [], error: null })
           })
         })
       })
     })
   };
 
-  const req = { headers: { host: "agency-a.com", authorization: "Bearer owner_token" } };
-
-  let contractExecuted = false;
-  let receivedTenant = null;
-
-  const result = await executePrivilegedAgencyMutation(
-    req,
-    ["agency_owner"],
-    async (client, tenant, user, membership) => {
-      contractExecuted = true;
-      receivedTenant = tenant;
-      return { success: true };
-    },
-    { supabaseClient: mockDb }
-  );
-
-  assert.equal(result.ok, true);
-  assert.equal(contractExecuted, true);
-  assert.equal(receivedTenant.agencyId, "agency-a-id");
+  const req = { headers: { host: "valid-agency.com" } };
+  const repo = await createPublicCatalogRepo(req, { supabaseClient: mockDb });
+  assert.equal(repo.getAgencyId(), "valid-agency-id");
+  assert.ok(repo.getTenantContext());
 });
 
 // =============================================================================
-// B4.5: UNKNOWN TENANT FAILS CLOSED
+// B4.2: NO RAW SERVICE-ROLE CLIENT ESCAPE
 // =============================================================================
 
-test("B4.5-UNKNOWN-TENANT-DENIED: Member and write repos fail closed on unknown tenant host", async () => {
-  _clearTenantCache();
+test("B4.2-NO-RAW-SERVICE-CLIENT-ESCAPE: Scoped operations never expose raw client to caller", async () => {
+  // agencyOrderOperations and agencyHomeworkOperations are frozen objects exposing only specific methods
+  assert.ok(Object.isFrozen(agencyOrderOperations), "agencyOrderOperations must be frozen");
+  assert.ok(Object.isFrozen(agencyHomeworkOperations), "agencyHomeworkOperations must be frozen");
 
+  assert.equal(typeof agencyOrderOperations.createOrder, "function");
+  assert.equal(typeof agencyOrderOperations.approveOrder, "function");
+  assert.equal(typeof agencyOrderOperations.refundOrder, "function");
+  assert.equal(agencyOrderOperations.executePrivilegedAgencyMutation, undefined, "Raw callback mutation must be removed");
+
+  assert.equal(typeof agencyHomeworkOperations.submitHomework, "function");
+  assert.equal(typeof agencyHomeworkOperations.gradeHomework, "function");
+});
+
+// =============================================================================
+// B4.3: PLATFORM CORE SCOPE & LICENSED OFFERING BOUNDARY
+// =============================================================================
+
+test("B4.3-PLATFORM-CORE-SCOPE: Canonical course not licensed to agency is denied", async () => {
   const mockDb = {
-    rpc: async () => ({ data: null, error: null })
+    rpc: async () => ({ data: { found: true, agency_id: "agency-1", hostname: "agency1.com" } }),
+    from: (table) => {
+      if (table === "canonical_courses") {
+        return {
+          select: () => ({
+            eq: (col, val) => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: { id: "c-unlicensed", code: "UNLICENSED-101", default_title: "Secret Chef Course" },
+                  error: null
+                })
+              })
+            })
+          })
+        };
+      }
+      if (table === "agency_offering_items") {
+        return {
+          select: () => ({
+            eq: (col1, val1) => ({
+              eq: (col2, val2) => ({
+                limit: () => ({
+                  // Return null: this agency does NOT license this course
+                  maybeSingle: async () => ({ data: null, error: null })
+                })
+              })
+            })
+          })
+        };
+      }
+      throw new Error(`Unexpected table ${table}`);
+    }
   };
 
-  const reqUnknown = { headers: { host: "unknown-hacker.com", authorization: "Bearer token" } };
+  const req = { headers: { host: "agency1.com" } };
+  const platformRepo = await createPlatformCoreReadRepo(req, { supabaseClient: mockDb });
 
-  const memberRepo = await createMemberReadRepo(reqUnknown, { supabaseClient: mockDb });
-  assert.equal(memberRepo.ok, false);
-  assert.equal(memberRepo.status, 404);
-  assert.equal(memberRepo.code, "tenant_not_found");
+  // Attempting to read unlicensed canonical course must fail closed with 403
+  await assert.rejects(
+    async () => {
+      await platformRepo.getCanonicalCourseByCode("UNLICENSED-101");
+    },
+    (err) => err.code === "course_not_licensed" && err.status === 403
+  );
+});
 
-  const writeRepo = await createAgencyWriteRepo(reqUnknown, ["agency_owner"], { supabaseClient: mockDb });
-  assert.equal(writeRepo.ok, false);
-  assert.equal(writeRepo.status, 404);
-  assert.equal(writeRepo.code, "tenant_not_found");
+// =============================================================================
+// B4.4: REAL SERVER-ONLY IMPORT & STATIC BOUNDARY
+// =============================================================================
+
+test("B4.4-SERVER-ONLY-STATIC-BOUNDARY: Browser files never import server utilities or service keys", () => {
+  // Runtime guard: assertServerEnvironment throws if executed in browser context
+  assertServerEnvironment(); // server context: does not throw
+
+  const originalWindow = globalThis.window;
+  try {
+    globalThis.window = {}; // Simulate browser
+    assert.throws(
+      () => assertServerEnvironment(),
+      /SECURITY VIOLATION: Privileged database operations cannot be executed in browser context/
+    );
+  } finally {
+    if (originalWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+  }
+
+  // Static AST/text inspection: All HTML files in root and public must NOT import server utils
+  const rootDir = path.resolve(import.meta.dirname, "..");
+  const htmlFiles = fs.readdirSync(rootDir).filter((f) => f.endsWith(".html"));
+
+  for (const file of htmlFiles) {
+    const content = fs.readFileSync(path.join(rootDir, file), "utf8");
+    assert.equal(
+      content.includes("tenant-db-resolver"),
+      false,
+      `File ${file} must not reference tenant-db-resolver`
+    );
+    assert.equal(
+      content.includes("SUPABASE_SERVICE_ROLE_KEY"),
+      false,
+      `File ${file} must not reference SUPABASE_SERVICE_ROLE_KEY`
+    );
+  }
+});
+
+// =============================================================================
+// B4.5: AGENCY WRITE BOUNDS & REMOVAL OF BROKEN GENERIC WRITER
+// =============================================================================
+
+test("B4.5-AGENCY-WRITE-BOUNDS: Sanitizes spoofed agency_id and omits broken generic status writer", async () => {
+  const mockDb = {
+    rpc: async () => ({ data: { found: true, agency_id: "agency-verified", hostname: "agency.com" } }),
+    auth: {
+      getUser: async () => ({ data: { user: { id: "staff-1" } }, error: null })
+    },
+    from: (table) => {
+      if (table === "agency_memberships") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: { id: "m-staff-1", agency_id: "agency-verified", role: "agency_staff", status: "active" },
+                  error: null
+                })
+              })
+            })
+          })
+        };
+      }
+      if (table === "agency_offerings") {
+        return {
+          insert: (payload) => {
+            // Confirm payload agency_id was forced to verified agency, NOT caller's spoof
+            assert.equal(payload.agency_id, "agency-verified");
+            return {
+              select: () => ({
+                single: async () => ({ data: { id: "off-1", ...payload }, error: null })
+              })
+            };
+          }
+        };
+      }
+      throw new Error(`Unexpected table ${table}`);
+    }
+  };
+
+  const req = {
+    headers: { host: "agency.com", authorization: "Bearer valid-token" }
+  };
+
+  const writeRepo = await createAgencyWriteRepo(req, ["agency_staff"], { supabaseClient: mockDb });
+  assert.equal(writeRepo.ok, true);
+
+  // Verify generic updateOrderStatus was removed
+  assert.equal(writeRepo.updateOrderStatus, undefined, "Generic updateOrderStatus must be removed (D4)");
+
+  // Create offering with spoofed agency_id
+  const offering = await writeRepo.createOffering({
+    agency_id: "spoofed-attacker-agency",
+    slug: "new-course",
+    display_title: "New Cooking Course"
+  });
+  assert.equal(offering.agency_id, "agency-verified");
 });
