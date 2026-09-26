@@ -64,7 +64,8 @@ Following the authoritative ChatGPT Work adjudication of 16 blocking findings, a
 9. `f90f507` — `test(ingress): acceptance harness and vercel final head ingress evidence`
 10. `da13e3f` — `feat(m0d): entrypoint dependency checker and cutover matrix`
 11. `535eadd` — `docs(m0e): retirement inventory and concrete rollback plan`
-12. (Current) — `docs: pre-m0c remediation v2 consolidated report and scorecards`
+12. `d507b8d` — `docs: pre-m0c remediation v2 consolidated report and scorecards`
+13. `4eaa021` — `fix(tenant): resolve agency ui profile from agency_ui_profiles table`
 
 ### Commerce Repository (`thienha336501903-a11y/yeunauan-commerce-clone`):
 1. `0c4c650` — `feat(b4): final tenant db resolver scoped security fix`
@@ -78,7 +79,8 @@ Following the authoritative ChatGPT Work adjudication of 16 blocking findings, a
 9. `1a96704` — `test(ingress): acceptance harness and vercel final head ingress evidence`
 10. `23319fa` — `feat(m0d): entrypoint dependency checker and cutover matrix`
 11. `6e73747` — `docs(m0e): retirement inventory and concrete rollback plan`
-12. (Current) — `docs: pre-m0c remediation v2 consolidated report and scorecards`
+12. `573acef` — `docs: pre-m0c remediation v2 consolidated report and scorecards`
+13. `0466379` — `fix(tenant): resolve agency ui profile from agency_ui_profiles table`
 
 ---
 
@@ -86,7 +88,7 @@ Following the authoritative ChatGPT Work adjudication of 16 blocking findings, a
 
 | Test Suite / Script | Repositories Tested | Pass / Fail Count | Key Validations |
 |---|---|---|---|
-| `test/b4-tenant-db-resolver.test.js` | LMS & Commerce | **4 / 4 PASS** | Untrusted `{ agencyId }` rejected; raw service client blocked; canonical ID scoping enforced. |
+| `test/b4-tenant-db-resolver.test.js` | LMS & Commerce | **5 / 5 PASS** | Untrusted `{ agencyId }` rejected; raw service client blocked; canonical ID scoping enforced; `getAgencyInfo` correctly joins `agency_ui_profiles`. |
 | `test/multi-agency-b5-real-db.test.js` | LMS & Commerce | **7 / 7 PASS** | 2 independent PG connections; forced lock overlap; Scenario 1 (Approval first) & Scenario 2 (Refund first) zero deadlocks. |
 | `test/b6-routing-and-playback.test.js` | LMS | **5 / 5 PASS** | Overlapping host returns 409 `DENY`; explicit legacy routing; missing lesson fails closed; cross-course mismatch rejected. |
 | `test/b6-commerce-routing.test.js` | Commerce | **4 / 4 PASS** | Agency host blocked from legacy orders; legacy courses route blocked on agency domain; unknown host 404. |
@@ -95,6 +97,7 @@ Following the authoritative ChatGPT Work adjudication of 16 blocking findings, a
 | `test/synthetic-agency-provisioning.test.js` | LMS & Commerce | **9 / 9 PASS** | Full lifecycle: Plan -> Apply -> Idempotency -> Validator -> Commerce -> Auth -> Refund -> Deprovision. |
 | `test/second-tenant-isolation.test.js` | LMS & Commerce | **9 / 9 PASS** | Tenant Alpha & Beta; pre-write domain collision detection; cross-tenant auth/order/entitlement/playback isolation verified. |
 | `test/m0d-dependency-checker.test.js` | LMS & Commerce | **7 / 7 PASS** | All 7 surfaces audited from real entrypoints; injected legacy leaks detected; 8 cutover gates pass. |
+| `scripts/test-phase-i-ingress.js` | LMS & Commerce | **9 / 9 PASS** | Vercel preview deployment commit SHAs verified (`4eaa021` / `0466379`); tenant identity verified; `/api/config` business route verified; spoofed legacy routes rejected. |
 | `scripts/test-m0b1-phase-a-containment.js` | LMS & Commerce | **14 / 14 PASS** | All 7 privileged RPC signatures denied to anon and authenticated; positive service_role execution verified. |
 | `scripts/verify-pre-m0c-acceptance.js` | LMS & Commerce | **12 / 12 PASS** | Pre-M0C semantic categorization: `AGENCY_RECORD`, `HOST`, `MEMBERSHIP`, `CATALOG`, `CHECKOUT`, `ORDER`, `ENTITLEMENT`, `LEARNER`, `HOMEWORK` cleanly reported as `NOT_PROVISIONED`; `PLAYBACK_AUTHORIZATION` reported as `DEFERRED`; `AUTH`, `LEGACY_FALLBACK` reported as `PASS`. |
 | `scripts/rehearse-m0e-retirement.js` | LMS & Commerce | **PASS** | Disposable fixture archived and restored without impacting multi-agency operational gates. |
@@ -152,8 +155,11 @@ LEGACY_DESTRUCTIVE_MUTATIONS = 0
 
 NEW_MIGRATIONS = 20260926210000_multi_agency_b5_order_model_and_lock_order_hardening.sql
 LMS_BASE_SHA = 80db3c448d322e7ec10e3cf9fafda93409ccf5c2
-LMS_FINAL_HEAD_SHA = [RECORDED_UPON_COMMIT_12]
+LMS_FINAL_HEAD_SHA = 4eaa0216a628e897ab32f5c3ff0a397fa96b4eea
 COMMERCE_BASE_SHA = 64e9245fabb8db0460bfffe05fd4826424bef84c
-COMMERCE_FINAL_HEAD_SHA = [RECORDED_UPON_COMMIT_12]
+COMMERCE_FINAL_HEAD_SHA = 0466379ff41a2e244f20a9a98d016fad828dea21
+
+ALL_20_FINDINGS_ADDRESSED = YES
+READY_FOR_ONE_FINAL_WORK_REVIEW = YES
 ==================================================
 ```
