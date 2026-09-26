@@ -2,158 +2,193 @@
  * utils/agency-homework.js
  *
  * Minimal Tenant Homework MVP Module.
- * Milestone B7:
+ * Milestone B7 / M0B.1 Hardened:
  * - Tenant/member scoped submission metadata
- * - Lesson / canonical course association
+ * - Lesson / canonical course association with canonical_lesson_id foreign key validation
  * - Submission lifecycle (draft -> submitted -> in_review -> evaluated / rejected)
  * - Staff feedback and grading
  * - Scoped isolation: Students see only own work; Staff see tenant work; Cross-tenant strictly denied.
  */
 
-import { assertServerEnvironment } from "./tenant-db-resolver.js";
+import { assertServerEnvironment, assertTrustedTenantInput } from "./tenant-db-resolver.js";
+import { requireAgencyMembership, requireAgencyRole } from "./agency-auth.js";
+import { supabase as defaultSupabase } from "./supabase.js";
 
 /**
- * Submits a new homework submission or draft.
+ * Submits a new homework submission.
  * Requires active student membership and active entitlement to the canonical course.
+ * B7.2: Canonical lesson must be validated against canonical_course_id in canonical_lessons.
  */
-export async function submitAgencyHomework({
-  tenant,
-  membership,
-  courseId,
-  lessonId,
-  title,
-  content = {},
-  dbClient
-}) {
+export async function submitAgencyHomework(reqOrContext, payload = {}, options = {}) {
   assertServerEnvironment();
 
-  if (!tenant?.agencyId) {
-    throw new Error("Missing authoritative tenant context");
+  let tenant, membership, client;
+
+  // If passed an HTTP request, authenticate caller
+  if (reqOrContext.headers || typeof reqOrContext.getHeader === "function") {
+    const authResult = await requireAgencyMembership(reqOrContext, options);
+    if (!authResult.ok) {
+      return authResult;
+    }
+    tenant = authResult.tenant;
+    membership = authResult.membership;
+    client = options.supabaseClient || defaultSupabase;
+  } else {
+    // If called with explicit context object
+    tenant = await assertTrustedTenantInput(reqOrContext.tenant || reqOrContext, options);
+    membership = reqOrContext.membership;
+    client = options.supabaseClient || defaultSupabase;
   }
+
   if (!membership?.id || membership.agency_id !== tenant.agencyId) {
-    throw new Error("Membership does not belong to current tenant");
+    const err = new Error("Membership does not belong to current tenant");
+    err.status = 403;
+    err.code = "forbidden_membership";
+    throw err;
   }
+
+  const courseId = payload.courseId || payload.canonicalCourseId;
+  const canonicalLessonId = payload.canonicalLessonId || payload.lessonId;
+  const title = payload.title || payload.submissionTitle;
+  const content = payload.content || payload.submissionContent || {};
+
   if (!courseId) {
-    throw new Error("courseId is required");
+    const err = new Error("courseId is required");
+    err.status = 400;
+    err.code = "missing_course_id";
+    throw err;
   }
-  if (!lessonId) {
-    throw new Error("lessonId is required");
+  if (!canonicalLessonId) {
+    const err = new Error("canonicalLessonId is required");
+    err.status = 400;
+    err.code = "missing_lesson_id";
+    throw err;
   }
   if (!title || !title.trim()) {
-    throw new Error("title is required");
+    const err = new Error("title is required");
+    err.status = 400;
+    err.code = "missing_title";
+    throw err;
   }
 
-  // 1. Verify active entitlement
-  const { data: entitlement, error: entError } = await dbClient
-    .from("student_entitlements")
-    .select("id, status, expires_at")
-    .eq("agency_id", tenant.agencyId)
-    .eq("membership_id", membership.id)
-    .eq("canonical_course_id", courseId)
-    .eq("status", "active")
-    .maybeSingle();
+  // Call hardened RPC with canonical lesson FK validation
+  const { data, error } = await client.rpc("submit_agency_homework", {
+    p_agency_id: tenant.agencyId,
+    p_membership_id: membership.id,
+    p_canonical_course_id: courseId,
+    p_canonical_lesson_id: canonicalLessonId,
+    p_title: title.trim(),
+    p_content: content
+  });
 
-  if (entError || !entitlement) {
-    const error = new Error("Active entitlement required to submit homework");
-    error.status = 403;
-    error.code = "entitlement_required";
-    throw error;
+  if (error) {
+    console.error("[agency-homework] submit error:", error);
+    const err = new Error(error.message);
+    err.status = 500;
+    err.code = "submit_error";
+    throw err;
   }
 
-  if (entitlement.expires_at && new Date(entitlement.expires_at) < new Date()) {
-    const error = new Error("Entitlement has expired");
-    error.status = 403;
-    error.code = "entitlement_expired";
-    throw error;
+  if (!data.success) {
+    const err = new Error(data.error || "Failed to submit homework");
+    err.status = data.code === "entitlement_required" ? 403 : 400;
+    err.code = data.code;
+    throw err;
   }
 
-  // 2. Insert homework submission
-  const insertPayload = {
-    agency_id: tenant.agencyId,
-    membership_id: membership.id,
-    canonical_course_id: courseId,
-    lesson_id: String(lessonId).trim(),
-    submission_title: String(title).trim(),
-    submission_content: content,
-    status: "submitted",
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
+  return {
+    ok: true,
+    submissionId: data.submission_id,
+    status: data.status,
+    agencyId: tenant.agencyId,
+    membershipId: membership.id,
+    canonicalCourseId: courseId,
+    canonicalLessonId
   };
-
-  const { data: submission, error: insertError } = await dbClient
-    .from("agency_homework_submissions")
-    .insert(insertPayload)
-    .select()
-    .single();
-
-  if (insertError) {
-    throw new Error(`Failed to create homework submission: ${insertError.message}`);
-  }
-
-  return submission;
 }
 
 /**
  * Grades a homework submission.
  * Requires agency_staff or agency_owner role within the same tenant.
  */
-export async function gradeAgencyHomework({
-  tenant,
-  staffMembership,
-  submissionId,
-  status = "evaluated",
-  feedback,
-  score,
-  dbClient
-}) {
+export async function gradeAgencyHomework(reqOrContext, payload = {}, options = {}) {
   assertServerEnvironment();
 
-  if (!tenant?.agencyId) {
-    throw new Error("Missing authoritative tenant context");
+  let tenant, staffMembership, client;
+
+  if (reqOrContext.headers || typeof reqOrContext.getHeader === "function") {
+    const roleResult = await requireAgencyRole(reqOrContext, ["agency_staff", "agency_owner"], options);
+    if (!roleResult.ok) {
+      return roleResult;
+    }
+    tenant = roleResult.tenant;
+    staffMembership = roleResult.membership;
+    client = options.supabaseClient || defaultSupabase;
+  } else {
+    tenant = await assertTrustedTenantInput(reqOrContext.tenant || reqOrContext, options);
+    staffMembership = reqOrContext.staffMembership;
+    client = options.supabaseClient || defaultSupabase;
   }
+
   if (!staffMembership?.id || staffMembership.agency_id !== tenant.agencyId) {
-    throw new Error("Staff membership does not belong to current tenant");
+    const err = new Error("Staff membership does not belong to current tenant");
+    err.status = 403;
+    err.code = "forbidden_membership";
+    throw err;
   }
   if (!["agency_staff", "agency_owner"].includes(staffMembership.role)) {
-    const error = new Error("Only agency staff or owners can grade homework");
-    error.status = 403;
-    error.code = "forbidden_role";
-    throw error;
+    const err = new Error("Only agency staff or owners can grade homework");
+    err.status = 403;
+    err.code = "forbidden_role";
+    throw err;
   }
+
+  const { submissionId, status = "evaluated", feedback, score } = payload;
   if (!submissionId) {
-    throw new Error("submissionId is required");
+    const err = new Error("submissionId is required");
+    err.status = 400;
+    err.code = "missing_submission_id";
+    throw err;
   }
 
   const validStatuses = ["in_review", "evaluated", "rejected"];
   if (!validStatuses.includes(status)) {
-    throw new Error(`Invalid grading status '${status}'. Must be one of: ${validStatuses.join(", ")}`);
+    const err = new Error(`Invalid grading status '${status}'. Must be one of: ${validStatuses.join(", ")}`);
+    err.status = 400;
+    err.code = "invalid_status";
+    throw err;
   }
 
-  const updatePayload = {
-    status,
-    staff_feedback: feedback !== undefined ? String(feedback).trim() : null,
-    staff_score: score !== undefined ? Number(score) : null,
-    reviewed_by_membership_id: staffMembership.id,
-    reviewed_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
+  const { data, error } = await client.rpc("grade_agency_homework", {
+    p_agency_id: tenant.agencyId,
+    p_staff_membership_id: staffMembership.id,
+    p_submission_id: submissionId,
+    p_status: status,
+    p_feedback: feedback !== undefined ? String(feedback).trim() : null,
+    p_score: score !== undefined ? Number(score) : null
+  });
+
+  if (error) {
+    console.error("[agency-homework] grade error:", error);
+    const err = new Error(error.message);
+    err.status = 500;
+    err.code = "grade_error";
+    throw err;
+  }
+
+  if (!data.success) {
+    const err = new Error(data.error || "Failed to grade homework");
+    err.status = data.code === "submission_not_found" ? 404 : 403;
+    err.code = data.code;
+    throw err;
+  }
+
+  return {
+    ok: true,
+    submissionId: data.submission_id,
+    status: data.status,
+    gradedBy: staffMembership.id
   };
-
-  const { data: updated, error: updateError } = await dbClient
-    .from("agency_homework_submissions")
-    .update(updatePayload)
-    .eq("id", submissionId)
-    .eq("agency_id", tenant.agencyId)
-    .select()
-    .single();
-
-  if (updateError || !updated) {
-    const error = new Error("Homework submission not found in current agency");
-    error.status = 404;
-    error.code = "submission_not_found";
-    throw error;
-  }
-
-  return updated;
 }
 
 /**
@@ -162,25 +197,32 @@ export async function gradeAgencyHomework({
  * - Students see only their own submissions.
  * - Staff/owners see all submissions within current agency.
  */
-export async function listAgencyHomework({
-  tenant,
-  membership,
-  courseId,
-  status,
-  dbClient
-}) {
+export async function listAgencyHomework(reqOrContext, filters = {}, options = {}) {
   assertServerEnvironment();
 
-  if (!tenant?.agencyId) {
-    throw new Error("Missing authoritative tenant context");
+  let tenant, membership, client;
+
+  if (reqOrContext.headers || typeof reqOrContext.getHeader === "function") {
+    const authResult = await requireAgencyMembership(reqOrContext, options);
+    if (!authResult.ok) {
+      return authResult;
+    }
+    tenant = authResult.tenant;
+    membership = authResult.membership;
+    client = options.supabaseClient || defaultSupabase;
+  } else {
+    tenant = await assertTrustedTenantInput(reqOrContext.tenant || reqOrContext, options);
+    membership = reqOrContext.membership;
+    client = options.supabaseClient || defaultSupabase;
   }
+
   if (!membership?.id || membership.agency_id !== tenant.agencyId) {
     throw new Error("Membership does not belong to current tenant");
   }
 
-  let query = dbClient
+  let query = client
     .from("agency_homework_submissions")
-    .select("*")
+    .select("id, agency_id, membership_id, canonical_course_id, canonical_lesson_id, submission_title, submission_content, status, staff_feedback, staff_score, reviewed_at, created_at, updated_at")
     .eq("agency_id", tenant.agencyId);
 
   // If student, strictly filter by membership_id
@@ -189,11 +231,14 @@ export async function listAgencyHomework({
     query = query.eq("membership_id", membership.id);
   }
 
-  if (courseId) {
-    query = query.eq("canonical_course_id", courseId);
+  if (filters.courseId) {
+    query = query.eq("canonical_course_id", filters.courseId);
   }
-  if (status) {
-    query = query.eq("status", status);
+  if (filters.canonicalLessonId) {
+    query = query.eq("canonical_lesson_id", filters.canonicalLessonId);
+  }
+  if (filters.status) {
+    query = query.eq("status", filters.status);
   }
 
   query = query.order("created_at", { ascending: false });
