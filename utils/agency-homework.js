@@ -2,50 +2,50 @@
  * utils/agency-homework.js
  *
  * Minimal Tenant Homework MVP Module.
- * Milestone B7 / M0B.1 Hardened:
- * - Tenant/member scoped submission metadata
- * - Lesson / canonical course association with canonical_lesson_id foreign key validation
- * - Submission lifecycle (draft -> submitted -> in_review -> evaluated / rejected)
- * - Staff feedback and grading
+ * Milestone B7 / Pre-M0C Remediation V2 Hardened:
+ * - Server-only write path strictly bound to request auth chain (req -> auth.uid() -> current agency -> active membership)
+ * - Untrusted caller-provided membership objects are STRICTLY REJECTED (Finding 7B)
+ * - Canonical lesson foreign key validation and course matching
+ * - Student submission requires active course entitlement
+ * - Staff grading requires staff/owner role within the verified agency
  * - Scoped isolation: Students see only own work; Staff see tenant work; Cross-tenant strictly denied.
  */
 
-import { assertServerEnvironment, assertTrustedTenantInput } from "./tenant-db-resolver.js";
+import { assertServerEnvironment } from "./tenant-db-resolver.js";
 import { requireAgencyMembership, requireAgencyRole } from "./agency-auth.js";
 import { supabase as defaultSupabase } from "./supabase.js";
 
 /**
+ * Asserts request input and resolves verified membership and tenant via auth chain.
+ * Rejects unverified caller-supplied objects.
+ */
+function assertRequestInput(req) {
+  if (!req || (!req.headers && typeof req.getHeader !== "function")) {
+    const err = new Error("SECURITY VIOLATION: Operation requires a valid HTTP Request with verified authentication headers. Caller-provided membership objects are prohibited.");
+    err.status = 401;
+    err.code = "request_auth_required";
+    throw err;
+  }
+}
+
+/**
  * Submits a new homework submission.
+ * Derives caller identity strictly from: request -> auth user -> current agency -> active membership.
  * Requires active student membership and active entitlement to the canonical course.
  * B7.2: Canonical lesson must be validated against canonical_course_id in canonical_lessons.
  */
-export async function submitAgencyHomework(reqOrContext, payload = {}, options = {}) {
+export async function submitAgencyHomework(req, payload = {}, options = {}) {
   assertServerEnvironment();
+  assertRequestInput(req);
 
-  let tenant, membership, client;
-
-  // If passed an HTTP request, authenticate caller
-  if (reqOrContext.headers || typeof reqOrContext.getHeader === "function") {
-    const authResult = await requireAgencyMembership(reqOrContext, options);
-    if (!authResult.ok) {
-      return authResult;
-    }
-    tenant = authResult.tenant;
-    membership = authResult.membership;
-    client = options.supabaseClient || defaultSupabase;
-  } else {
-    // If called with explicit context object
-    tenant = await assertTrustedTenantInput(reqOrContext.tenant || reqOrContext, options);
-    membership = reqOrContext.membership;
-    client = options.supabaseClient || defaultSupabase;
+  // Authenticate caller through trusted auth chain
+  const authResult = await requireAgencyMembership(req, options);
+  if (!authResult.ok) {
+    return authResult;
   }
 
-  if (!membership?.id || membership.agency_id !== tenant.agencyId) {
-    const err = new Error("Membership does not belong to current tenant");
-    err.status = 403;
-    err.code = "forbidden_membership";
-    throw err;
-  }
+  const { tenant, membership } = authResult;
+  const client = options.supabaseClient || defaultSupabase;
 
   const courseId = payload.courseId || payload.canonicalCourseId;
   const canonicalLessonId = payload.canonicalLessonId || payload.lessonId;
@@ -71,7 +71,7 @@ export async function submitAgencyHomework(reqOrContext, payload = {}, options =
     throw err;
   }
 
-  // Call hardened RPC with canonical lesson FK validation
+  // Call hardened RPC with canonical lesson FK validation and entitlement verification
   const { data, error } = await client.rpc("submit_agency_homework", {
     p_agency_id: tenant.agencyId,
     p_membership_id: membership.id,
@@ -109,39 +109,19 @@ export async function submitAgencyHomework(reqOrContext, payload = {}, options =
 
 /**
  * Grades a homework submission.
- * Requires agency_staff or agency_owner role within the same tenant.
+ * Derives staff identity strictly from request -> verified role (agency_staff or agency_owner) in tenant.
  */
-export async function gradeAgencyHomework(reqOrContext, payload = {}, options = {}) {
+export async function gradeAgencyHomework(req, payload = {}, options = {}) {
   assertServerEnvironment();
+  assertRequestInput(req);
 
-  let tenant, staffMembership, client;
-
-  if (reqOrContext.headers || typeof reqOrContext.getHeader === "function") {
-    const roleResult = await requireAgencyRole(reqOrContext, ["agency_staff", "agency_owner"], options);
-    if (!roleResult.ok) {
-      return roleResult;
-    }
-    tenant = roleResult.tenant;
-    staffMembership = roleResult.membership;
-    client = options.supabaseClient || defaultSupabase;
-  } else {
-    tenant = await assertTrustedTenantInput(reqOrContext.tenant || reqOrContext, options);
-    staffMembership = reqOrContext.staffMembership;
-    client = options.supabaseClient || defaultSupabase;
+  const roleResult = await requireAgencyRole(req, ["agency_staff", "agency_owner"], options);
+  if (!roleResult.ok) {
+    return roleResult;
   }
 
-  if (!staffMembership?.id || staffMembership.agency_id !== tenant.agencyId) {
-    const err = new Error("Staff membership does not belong to current tenant");
-    err.status = 403;
-    err.code = "forbidden_membership";
-    throw err;
-  }
-  if (!["agency_staff", "agency_owner"].includes(staffMembership.role)) {
-    const err = new Error("Only agency staff or owners can grade homework");
-    err.status = 403;
-    err.code = "forbidden_role";
-    throw err;
-  }
+  const { tenant, membership: staffMembership } = roleResult;
+  const client = options.supabaseClient || defaultSupabase;
 
   const { submissionId, status = "evaluated", feedback, score } = payload;
   if (!submissionId) {
@@ -197,28 +177,17 @@ export async function gradeAgencyHomework(reqOrContext, payload = {}, options = 
  * - Students see only their own submissions.
  * - Staff/owners see all submissions within current agency.
  */
-export async function listAgencyHomework(reqOrContext, filters = {}, options = {}) {
+export async function listAgencyHomework(req, filters = {}, options = {}) {
   assertServerEnvironment();
+  assertRequestInput(req);
 
-  let tenant, membership, client;
-
-  if (reqOrContext.headers || typeof reqOrContext.getHeader === "function") {
-    const authResult = await requireAgencyMembership(reqOrContext, options);
-    if (!authResult.ok) {
-      return authResult;
-    }
-    tenant = authResult.tenant;
-    membership = authResult.membership;
-    client = options.supabaseClient || defaultSupabase;
-  } else {
-    tenant = await assertTrustedTenantInput(reqOrContext.tenant || reqOrContext, options);
-    membership = reqOrContext.membership;
-    client = options.supabaseClient || defaultSupabase;
+  const authResult = await requireAgencyMembership(req, options);
+  if (!authResult.ok) {
+    return authResult;
   }
 
-  if (!membership?.id || membership.agency_id !== tenant.agencyId) {
-    throw new Error("Membership does not belong to current tenant");
-  }
+  const { tenant, membership } = authResult;
+  const client = options.supabaseClient || defaultSupabase;
 
   let query = client
     .from("agency_homework_submissions")
