@@ -10,14 +10,38 @@ import {
   refundAgencyOrder,
   generateVietQrUrl
 } from "../utils/agency-commerce.js";
-import { _clearTenantCache } from "../utils/tenant-resolver.js";
+import { _clearTenantCache, resolveTenant } from "../utils/tenant-resolver.js";
+
+async function getTestTenantContext(agencyId = "agency-1", hostname = "agency-1.com") {
+  _clearTenantCache();
+  const mockDb = {
+    rpc: async (fn) => {
+      if (fn === "resolve_agency_domain") {
+        return {
+          data: {
+            found: true,
+            agency_id: agencyId,
+            hostname,
+            agency_slug: "test-agency",
+            agency_name: "Test Agency"
+          },
+          error: null
+        };
+      }
+      return { data: null, error: null };
+    }
+  };
+  const res = await resolveTenant({ headers: { host: hostname } }, { supabaseClient: mockDb });
+  return res.tenant;
+}
 
 // =============================================================================
 // B5.1: AUTHORITATIVE QUOTE & ATOMIC CHECKOUT
 // =============================================================================
 
 test("B5.1-AUTHORITATIVE-QUOTE: Quote derives prices strictly from database records", async () => {
-  const tenant = { agencyId: "agency-1", hostname: "agency-1.com" };
+  const tenant = await getTestTenantContext("agency-1", "agency-1.com");
+
 
   const mockDb = {
     from: (table) => ({

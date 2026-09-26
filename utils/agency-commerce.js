@@ -1,11 +1,12 @@
 // utils/agency-commerce.js
 // System B Milestone B5 — Agency Commerce, Authoritative Quote, Bank Snapshot & Grant Lifecycle
 // Authoritative Plan: SYSTEM_B_MULTI_AGENCY_MASTER_IMPLEMENTATION_PLAN_V1_1.md
+// Milestone M0B.1 Hardened Implementation
 
 import { supabase as defaultSupabase } from "./supabase.js";
 import { resolveTenant } from "./tenant-resolver.js";
 import { requireAgencyMembership, requireAgencyRole } from "./agency-auth.js";
-import { TenantDbResolver, assertServerEnvironment } from "./tenant-db-resolver.js";
+import { TenantDbResolver, assertServerEnvironment, assertTrustedTenantInput } from "./tenant-db-resolver.js";
 
 /**
  * Generates VietQR payment URL.
@@ -19,7 +20,8 @@ export function generateVietQrUrl(bankCode, accountNumber, amount, transferConte
 /**
  * Returns public commerce configuration for a tenant storefront.
  */
-export async function getAgencyCommerceConfig(tenantContext, options = {}) {
+export async function getAgencyCommerceConfig(reqOrTenantContext, options = {}) {
+  const tenantContext = await assertTrustedTenantInput(reqOrTenantContext, options);
   const client = TenantDbResolver.resolveDbClient(tenantContext, options);
   const agencyId = tenantContext.agencyId;
 
@@ -58,7 +60,8 @@ export async function getAgencyCommerceConfig(tenantContext, options = {}) {
  * Prices and discounts are derived strictly from database records.
  * Browser-supplied prices are completely ignored.
  */
-export async function getAuthoritativeQuote(tenantContext, offeringSlug, options = {}) {
+export async function getAuthoritativeQuote(reqOrTenantContext, offeringSlug, options = {}) {
+  const tenantContext = await assertTrustedTenantInput(reqOrTenantContext, options);
   const client = TenantDbResolver.resolveDbClient(tenantContext, options);
 
   const { data: offering, error } = await client
@@ -105,7 +108,8 @@ export async function getAuthoritativeQuote(tenantContext, offeringSlug, options
 /**
  * Initiates checkout for an offering.
  * Strict owner rule: VERIFIED LOGIN REQUIRED BEFORE CHECKOUT (No guest checkout).
- * Resolves authoritative price and bank snapshot.
+ * Server-side bank selection: Browser does NOT select bank account ID;
+ * Server derives active/default bank authoritatively from database routing rule.
  * Creates pending order with immutable bank details and VietQR payment information.
  */
 export async function checkoutOffering(req, checkoutPayload, options = {}) {
@@ -120,24 +124,24 @@ export async function checkoutOffering(req, checkoutPayload, options = {}) {
   const { user, membership, tenant } = authResult;
   const client = TenantDbResolver.resolveDbClient(tenant, options);
 
-  const { offeringId, bankAccountId, idempotencyOrderCode } = checkoutPayload || {};
-  if (!offeringId || !bankAccountId) {
+  const { offeringId, idempotencyOrderCode } = checkoutPayload || {};
+  if (!offeringId) {
     return {
       ok: false,
       status: 400,
       code: "invalid_checkout_payload",
-      error: "offeringId and bankAccountId are required for checkout."
+      error: "offeringId is required for checkout."
     };
   }
 
   const orderCode = idempotencyOrderCode || `ORD-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 1000)}`;
 
-  // 2. Call authoritative checkout RPC
+  // 2. Call authoritative checkout RPC (bank is auto-derived server-side)
   const { data, error } = await client.rpc("checkout_agency_offering", {
     p_agency_id: tenant.agencyId,
     p_membership_id: membership.id,
     p_offering_id: offeringId,
-    p_bank_account_id: bankAccountId,
+    p_bank_account_id: checkoutPayload?.bankAccountId || null,
     p_idempotency_order_code: orderCode
   });
 
@@ -147,10 +151,11 @@ export async function checkoutOffering(req, checkoutPayload, options = {}) {
   }
 
   if (!data.ok) {
-    return { ok: false, status: 400, code: data.code, error: data.error };
+    const status = data.code === "idempotency_ownership_conflict" ? 409 : 400;
+    return { ok: false, status, code: data.code, error: data.error };
   }
 
-  // 3. Generate VietQR URL
+  // 3. Generate VietQR URL from stored immutable snapshot
   const vietQrUrl = generateVietQrUrl(
     data.bank_code,
     data.account_number,
@@ -178,7 +183,7 @@ export async function checkoutOffering(req, checkoutPayload, options = {}) {
 /**
  * Approves a pending agency order and grants course entitlements.
  * Only agency staff or agency owner can approve orders.
- * Transactional and idempotent.
+ * Transactional, deterministic lock order, and idempotent.
  */
 export async function approveAgencyOrder(req, orderId, options = {}) {
   assertServerEnvironment();
@@ -218,8 +223,9 @@ export async function approveAgencyOrder(req, orderId, options = {}) {
 
 /**
  * Refunds an order and revokes associated entitlement grants.
+ * Strict state machine: Only completed/approved orders can be refunded.
  * Only agency staff or agency owner can refund orders.
- * Recomputes effective entitlements.
+ * Recomputes effective entitlements with row-level parent locking.
  */
 export async function refundAgencyOrder(req, orderId, reason = "Customer refund", options = {}) {
   assertServerEnvironment();
