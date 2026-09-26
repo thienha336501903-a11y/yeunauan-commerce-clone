@@ -1,0 +1,97 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "System B Generic Agency Provisioning Manifest Template",
+  "description": "Deterministic manifest template for onboarding future agencies (e.g. Agency B, Agency C) without code modifications.",
+  "agency": {
+    "slug": "{{AGENCY_SLUG}}",
+    "name": "{{AGENCY_DISPLAY_NAME}}",
+    "status": "active"
+  },
+  "domains": [
+    {
+      "hostname": "{{COMMERCE_DOMAIN}}",
+      "is_primary": true,
+      "ssl_status": "active"
+    },
+    {
+      "hostname": "{{LMS_DOMAIN}}",
+      "is_primary": false,
+      "ssl_status": "active"
+    }
+  ],
+  "ui": {
+    "brand_name": "{{BRAND_NAME}}",
+    "logo_url": "{{LOGO_URL}}",
+    "favicon_url": "{{FAVICON_URL}}",
+    "storefront_variant": "{{STOREFRONT_VARIANT:-classic_culinary}}",
+    "checkout_variant": "{{CHECKOUT_VARIANT:-one_page_qr}}",
+    "admin_variant": "{{ADMIN_VARIANT:-standard_agency}}",
+    "learner_variant": "{{LEARNER_VARIANT:-card_dashboard}}",
+    "learning_variant": "{{LEARNING_VARIANT:-cinema_player}}",
+    "homework_variant": "{{HOMEWORK_VARIANT:-photo_submission}}",
+    "design_tokens": {
+      "primaryColor": "{{PRIMARY_COLOR:-#e11d48}}",
+      "secondaryColor": "{{SECONDARY_COLOR:-#4b5563}}",
+      "fontFamily": "{{FONT_FAMILY:-Inter, sans-serif}}",
+      "borderRadius": "{{BORDER_RADIUS:-8px}}"
+    },
+    "feature_flags": {
+      "enableReviews": true,
+      "enableDeviceLock": true,
+      "enableHomework": true,
+      "enableCommunity": false
+    }
+  },
+  "bank_accounts": [
+    {
+      "bank_code": "{{BANK_CODE}}",
+      "account_number": "{{ACCOUNT_NUMBER}}",
+      "account_holder": "{{ACCOUNT_HOLDER}}",
+      "branch": "{{BRANCH}}",
+      "is_default": true,
+      "is_active": true
+    }
+  ],
+  "learning": {
+    "courses": [
+      {
+        "code": "{{CANONICAL_COURSE_CODE}}",
+        "title": "{{CANONICAL_COURSE_TITLE}}",
+        "course_id": "{{V5_BASE_COURSE_ID}}",
+        "lessons": [
+          {
+            "title": "{{LESSON_1_TITLE}}",
+            "sort_order": 1,
+            "is_free_preview": true
+          }
+        ]
+      }
+    ]
+  },
+  "offerings": [
+    {
+      "slug": "{{OFFERING_SLUG}}",
+      "display_title": "{{OFFERING_TITLE}}",
+      "display_description": "{{OFFERING_DESCRIPTION}}",
+      "price_vnd": 0,
+      "sale_price_vnd": 0,
+      "is_published": true,
+      "sort_order": 1,
+      "items": [
+        {
+          "canonical_course_code": "{{CANONICAL_COURSE_CODE}}",
+          "item_type": "canonical_course",
+          "sort_order": 1
+        }
+      ]
+    }
+  ],
+  "principals": [
+    {
+      "email": "{{OWNER_EMAIL}}",
+      "role": "agency_owner",
+      "display_name": "{{OWNER_NAME}}",
+      "status": "active"
+    }
+  ]
+}
