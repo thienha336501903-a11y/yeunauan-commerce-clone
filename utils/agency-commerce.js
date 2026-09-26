@@ -1,12 +1,12 @@
 // utils/agency-commerce.js
 // System B Milestone B5 — Agency Commerce, Authoritative Quote, Bank Snapshot & Grant Lifecycle
 // Authoritative Plan: SYSTEM_B_MULTI_AGENCY_MASTER_IMPLEMENTATION_PLAN_V1_1.md
-// Milestone M0B.1 Hardened Implementation
+// Milestone M0B.1 / Pre-M0C Remediation V2 Hardened Implementation
 
 import { supabase as defaultSupabase } from "./supabase.js";
-import { resolveTenant } from "./tenant-resolver.js";
+import { resolveTenant, isTrustedTenantContext } from "./tenant-resolver.js";
 import { requireAgencyMembership, requireAgencyRole } from "./agency-auth.js";
-import { TenantDbResolver, assertServerEnvironment, assertTrustedTenantInput } from "./tenant-db-resolver.js";
+import { assertServerEnvironment, assertTrustedTenantInput } from "./tenant-db-resolver.js";
 
 /**
  * Generates VietQR payment URL.
@@ -18,11 +18,23 @@ export function generateVietQrUrl(bankCode, accountNumber, amount, transferConte
 }
 
 /**
+ * Internal private helper for acquiring database client.
+ * Enforces server environment and trusted TenantContext.
+ */
+function _getCommerceDbClient(tenantContext, options = {}) {
+  assertServerEnvironment();
+  if (!tenantContext || !isTrustedTenantContext(tenantContext)) {
+    throw new Error("SECURITY VIOLATION: Commerce operations require a verified TenantContext issued by tenant-resolver.");
+  }
+  return options.supabaseClient || defaultSupabase;
+}
+
+/**
  * Returns public commerce configuration for a tenant storefront.
  */
 export async function getAgencyCommerceConfig(reqOrTenantContext, options = {}) {
   const tenantContext = await assertTrustedTenantInput(reqOrTenantContext, options);
-  const client = TenantDbResolver.resolveDbClient(tenantContext, options);
+  const client = _getCommerceDbClient(tenantContext, options);
   const agencyId = tenantContext.agencyId;
 
   const [agencyRes, banksRes, offeringsRes] = await Promise.all([
@@ -62,7 +74,7 @@ export async function getAgencyCommerceConfig(reqOrTenantContext, options = {}) 
  */
 export async function getAuthoritativeQuote(reqOrTenantContext, offeringSlug, options = {}) {
   const tenantContext = await assertTrustedTenantInput(reqOrTenantContext, options);
-  const client = TenantDbResolver.resolveDbClient(tenantContext, options);
+  const client = _getCommerceDbClient(tenantContext, options);
 
   const { data: offering, error } = await client
     .from("agency_offerings")
@@ -122,7 +134,7 @@ export async function checkoutOffering(req, checkoutPayload, options = {}) {
   }
 
   const { user, membership, tenant } = authResult;
-  const client = TenantDbResolver.resolveDbClient(tenant, options);
+  const client = _getCommerceDbClient(tenant, options);
 
   const { offeringId, idempotencyOrderCode } = checkoutPayload || {};
   if (!offeringId) {
@@ -134,6 +146,7 @@ export async function checkoutOffering(req, checkoutPayload, options = {}) {
     };
   }
 
+  // B5 2A: Browser has zero authority over bank destination. Client bankAccountId is ignored.
   const orderCode = idempotencyOrderCode || `ORD-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 1000)}`;
 
   // 2. Call authoritative checkout RPC (bank is auto-derived server-side)
@@ -141,7 +154,7 @@ export async function checkoutOffering(req, checkoutPayload, options = {}) {
     p_agency_id: tenant.agencyId,
     p_membership_id: membership.id,
     p_offering_id: offeringId,
-    p_bank_account_id: checkoutPayload?.bankAccountId || null,
+    p_bank_account_id: null, // Strictly server-routed bank account
     p_idempotency_order_code: orderCode
   });
 
@@ -195,7 +208,7 @@ export async function approveAgencyOrder(req, orderId, options = {}) {
   }
 
   const { membership, tenant } = roleResult;
-  const client = TenantDbResolver.resolveDbClient(tenant, options);
+  const client = _getCommerceDbClient(tenant, options);
 
   const { data, error } = await client.rpc("approve_agency_order", {
     p_agency_id: tenant.agencyId,
@@ -236,7 +249,7 @@ export async function refundAgencyOrder(req, orderId, reason = "Customer refund"
   }
 
   const { tenant } = roleResult;
-  const client = TenantDbResolver.resolveDbClient(tenant, options);
+  const client = _getCommerceDbClient(tenant, options);
 
   const { data, error } = await client.rpc("refund_agency_order", {
     p_agency_id: tenant.agencyId,

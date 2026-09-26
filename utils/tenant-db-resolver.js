@@ -1,7 +1,7 @@
 // utils/tenant-db-resolver.js
 // System B Milestone B4 — Scoped Tenant Data Access & TenantDbResolver
 // Authoritative Plan: SYSTEM_B_MULTI_AGENCY_MASTER_IMPLEMENTATION_PLAN_V1_1.md
-// Milestone M0B.1 Hardened Implementation
+// Milestone M0B.1 / Pre-M0C Remediation V2 Hardened Implementation
 
 import { supabase as defaultSupabase } from "./supabase.js";
 import { resolveTenant, isTrustedTenantContext, getTrustedHost } from "./tenant-resolver.js";
@@ -51,19 +51,26 @@ export async function assertTrustedTenantInput(reqOrTenantContext, options = {})
 }
 
 /**
- * TenantDbResolver: Resolves database connection and client for a given tenant context.
- * In current architecture, all tenants map to Main Supabase project (yyiavtiwtekkocqpephr).
- * Provides an interface abstraction for future dedicated tenant routing without architectural changes.
+ * Private, non-exported helper to acquire client strictly within verified scoped repositories.
+ * Enforces server environment and trusted branded TenantContext.
+ * NEVER exposed directly to callers.
+ */
+function _getScopedDbClient(tenantContext, options = {}) {
+  assertServerEnvironment();
+  if (!tenantContext || !isTrustedTenantContext(tenantContext)) {
+    throw new Error("SECURITY VIOLATION: Scoped database operations require a trusted TenantContext issued by tenant-resolver. Plain or fabricated objects are strictly rejected.");
+  }
+  return options.supabaseClient || defaultSupabase;
+}
+
+/**
+ * TenantDbResolver:
+ * Architectural guard: Generic resolveDbClient is STRICTLY PROHIBITED.
+ * Callers must use narrow repositories or scoped operations.
  */
 export class TenantDbResolver {
-  /**
-   * Resolves the database client for the verified tenant context.
-   */
-  static resolveDbClient(tenantContext, options = {}) {
-    if (!tenantContext || !tenantContext.agencyId) {
-      throw new Error("TenantDbResolver requires a valid tenantContext with agencyId.");
-    }
-    return options.supabaseClient || defaultSupabase;
+  static resolveDbClient() {
+    throw new Error("SECURITY VIOLATION: Generic resolveDbClient is prohibited. Privileged database access must be performed via scoped repositories (createPublicCatalogRepo, createMemberReadRepo, createAgencyWriteRepo, createPlatformCoreReadRepo) or narrow operations (agencyOrderOperations, agencyHomeworkOperations).");
   }
 }
 
@@ -74,8 +81,9 @@ export class TenantDbResolver {
  * Requires authentic TenantContext or Request.
  */
 export async function createPublicCatalogRepo(reqOrTenantContext, options = {}) {
+  assertServerEnvironment();
   const tenantContext = await assertTrustedTenantInput(reqOrTenantContext, options);
-  const client = TenantDbResolver.resolveDbClient(tenantContext, options);
+  const client = _getScopedDbClient(tenantContext, options);
   const agencyId = tenantContext.agencyId;
 
   return {
@@ -145,13 +153,14 @@ export async function createPublicCatalogRepo(reqOrTenantContext, options = {}) 
  * Enforces requireAgencyMembership: user must be authenticated, active, and bound to request host.
  */
 export async function createMemberReadRepo(req, options = {}) {
+  assertServerEnvironment();
   const authResult = await requireAgencyMembership(req, options);
   if (!authResult.ok) {
     return { ok: false, ...authResult };
   }
 
   const { user, membership, tenant } = authResult;
-  const client = TenantDbResolver.resolveDbClient(tenant, options);
+  const client = _getScopedDbClient(tenant, options);
 
   const repo = {
     ok: true,
@@ -216,8 +225,6 @@ export async function createMemberReadRepo(req, options = {}) {
  * Privileged mutations for agency staff and owners (e.g., managing offerings, banks).
  * Enforces requireAgencyRole: verified caller must have staff or owner role in the request tenant.
  * Guarantees all writes are strictly bound to tenant.agencyId; caller-supplied agencyId is ignored.
- * Note: Generic updateOrderStatus has been REMOVED per Work finding D4; order status transitions
- * are strictly managed via atomic RPCs in agencyOrderOperations.
  */
 export async function createAgencyWriteRepo(req, allowedRoles = ["agency_staff", "agency_owner"], options = {}) {
   assertServerEnvironment();
@@ -228,7 +235,7 @@ export async function createAgencyWriteRepo(req, allowedRoles = ["agency_staff",
   }
 
   const { user, membership, tenant } = authResult;
-  const client = TenantDbResolver.resolveDbClient(tenant, options);
+  const client = _getScopedDbClient(tenant, options);
   const agencyId = tenant.agencyId;
 
   const repo = {
@@ -321,11 +328,13 @@ export async function createAgencyWriteRepo(req, allowedRoles = ["agency_staff",
  * Tier 4: Platform Core Read Repository
  * Read-only access to canonical curriculum (canonical_courses, canonical_lessons).
  * Enforces B4.3: PlatformCoreRead must prove the requested canonical course is actually
- * licensed to the current tenant via agency_offering_items. Arbitrary ID access is denied.
+ * licensed to the current tenant via agency_offering_items.canonical_course_id.
+ * Arbitrary ID access is denied.
  */
 export async function createPlatformCoreReadRepo(reqOrTenantContext, options = {}) {
+  assertServerEnvironment();
   const tenantContext = await assertTrustedTenantInput(reqOrTenantContext, options);
-  const client = TenantDbResolver.resolveDbClient(tenantContext, options);
+  const client = _getScopedDbClient(tenantContext, options);
   const agencyId = tenantContext.agencyId;
 
   return {
@@ -344,11 +353,12 @@ export async function createPlatformCoreReadRepo(reqOrTenantContext, options = {
       if (!course) return null;
 
       // 2. Enforce scope: Prove course is licensed through an offering of this agency
+      // B4 FIX: Query agency_offering_items.canonical_course_id (NOT canonical_id)
       const { data: licensedItem, error: licError } = await client
         .from("agency_offering_items")
         .select("id")
         .eq("agency_id", agencyId)
-        .eq("canonical_id", course.id)
+        .eq("canonical_course_id", course.id)
         .limit(1)
         .maybeSingle();
 
@@ -367,11 +377,12 @@ export async function createPlatformCoreReadRepo(reqOrTenantContext, options = {
       if (!canonicalCourseId) return [];
 
       // 1. Enforce scope: Prove course is licensed through an offering of this agency
+      // B4 FIX: Query agency_offering_items.canonical_course_id (NOT canonical_id)
       const { data: licensedItem, error: licError } = await client
         .from("agency_offering_items")
         .select("id")
         .eq("agency_id", agencyId)
-        .eq("canonical_id", canonicalCourseId)
+        .eq("canonical_course_id", canonicalCourseId)
         .limit(1)
         .maybeSingle();
 
