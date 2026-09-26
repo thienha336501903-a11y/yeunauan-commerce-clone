@@ -5,6 +5,8 @@ import { syncV4EnrollmentToLms } from '../utils/v4-sync-helpers.js';
 import { approveV5Order, resyncV5Order, revokeV5Order } from '../utils/v5-order-approval.js';
 import { enforceSameOriginAdminRequest } from '../utils/admin-cors.js';
 
+import { resolveRequestRoute } from '../utils/agency-routing.js';
+
 const VALID_ORDER_STATUSES = new Set(['Chờ duyệt', 'Đã duyệt', 'Từ chối']);
 const TEST_TITLE_PREFIX = '__clone_factory_test';
 const TEST_SLUG_PATTERN = /^clone-factory-test(?:-|$)/;
@@ -13,6 +15,18 @@ const TEST_ORPHAN_BILL_CONFIRMATION = 'DELETE_CLONE_FACTORY_TEST_ORPHAN_BILL';
 const isUuid = value => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
 
 export default async function handler(req, res) {
+  // Phase 5B: Host dispatch before running legacy handler
+  const routeDecision = await resolveRequestRoute(req);
+  if (routeDecision.route === "DENY") {
+    return res.status(routeDecision.status || 403).json({ error: routeDecision.error, code: routeDecision.code });
+  }
+  if (routeDecision.route === "AGENCY") {
+    return res.status(403).json({
+      error: "Quản lý đơn hàng Legacy không được phép trên tên miền Agency.",
+      code: "agency_legacy_order_prohibited"
+    });
+  }
+
   if (!enforceSameOriginAdminRequest(req, res, ['GET', 'PUT', 'DELETE', 'OPTIONS'])) return;
   const adminPassword = req.headers['x-admin-password'];
   const systemPassword = process.env.ADMIN_PASSWORD;

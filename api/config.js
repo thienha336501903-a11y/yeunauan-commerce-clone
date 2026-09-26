@@ -4,6 +4,8 @@ import { cloneConfig } from '../utils/clone-config.js';
 import { getV5Readiness } from '../utils/v5-readiness.js';
 import { enforceSameOriginAdminRequest } from '../utils/admin-cors.js';
 import { isCourseForSale, isSalePaused } from '../utils/sale-state.js';
+import { resolveRequestRoute } from '../utils/agency-routing.js';
+import { getAgencyCommerceConfig } from '../utils/agency-commerce.js';
 
 const validSlug = value => /^[a-z0-9_-]+$/.test(String(value || '').trim());
 
@@ -54,6 +56,23 @@ async function handleV5AdminReadiness(req, res) {
 }
 
 export default async function handler(req, res) {
+  // Phase 5B: Host dispatch before running legacy handler
+  const routeDecision = await resolveRequestRoute(req);
+  if (routeDecision.route === "DENY") {
+    return res.status(routeDecision.status || 403).json({ error: routeDecision.error, code: routeDecision.code });
+  }
+  if (routeDecision.route === "AGENCY") {
+    const configResult = await getAgencyCommerceConfig(req);
+    if (!configResult.ok) {
+      return res.status(configResult.status || 500).json({ error: configResult.error, code: configResult.code });
+    }
+    return res.status(200).json({
+      success: true,
+      agency: configResult.agency,
+      banks: configResult.banks,
+      offerings: configResult.offerings
+    });
+  }
   try {
     const runtime = cloneConfig();
     if (String(req.query?.adminReadiness || '') === '1') {
