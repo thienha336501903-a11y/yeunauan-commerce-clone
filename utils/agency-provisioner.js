@@ -7,6 +7,7 @@
 //   3. Zero Secrets: Manifests must never contain secret keys, service tokens, or private keys.
 //   4. Deterministic Validation: Fails closed across all 11 required readiness checks.
 
+import crypto from "node:crypto";
 import { supabase as defaultSupabase } from "./supabase.js";
 
 // Protected agency slugs that cannot be deprovisioned or overwritten arbitrarily
@@ -571,9 +572,23 @@ export async function applyAgencyProvisioning(manifest, options = {}) {
         userId = await options.resolveUserId(p.email);
       }
       if (!userId) {
-        // Deterministic synthetic fallback for rehearsal if flag enabled
         if (options.allowSyntheticPrincipals) {
-          userId = p.synthetic_user_id || "00000000-0000-0000-0000-" + slug.slice(0, 12).padEnd(12, "0");
+          if (client.auth?.admin?.createUser) {
+            const { data: newUser, error: createUErr } = await client.auth.admin.createUser({
+              email: p.email,
+              email_confirm: true
+            });
+            if (!createUErr && newUser?.user?.id) {
+              userId = newUser.user.id;
+            } else {
+              const { data: uList } = await client.auth.admin.listUsers();
+              const match = uList?.users?.find((u) => u.email === p.email);
+              if (match) userId = match.id;
+            }
+          }
+          if (!userId) {
+            userId = p.synthetic_user_id || crypto.randomUUID();
+          }
         } else {
           throw new Error(`Principal resolution error: User ID could not be resolved for principal '${p.email}'.`);
         }
