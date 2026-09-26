@@ -1,5 +1,5 @@
 // utils/agency-auth.js
-// System B Milestone B2.1 — Global Identity & Agency Membership Authorization
+// System B Milestone B2.2 — Global Identity & Agency Membership Authorization
 // Authoritative Plan: SYSTEM_B_MULTI_AGENCY_MASTER_IMPLEMENTATION_PLAN_V1_1.md
 
 import { supabase as defaultSupabase } from "./supabase.js";
@@ -7,6 +7,9 @@ import { getTrustedHost, isTrustedTenantContext, resolveTenant } from "./tenant-
 
 const LEGACY_COOKIE_NAMES = ["admin_session_token", "student_session_token", "lms_session_id"];
 const SUPABASE_COOKIE_NAMES = ["sb-access-token", "supabase-auth-token", "sb-auth-token"];
+
+// B2.2: Strict role enum definition
+const VALID_AGENCY_ROLES = new Set(["student", "agency_staff", "agency_owner"]);
 
 /**
  * Parses cookies from request headers.
@@ -62,7 +65,6 @@ export function extractAuthToken(req) {
   for (const sbCookie of SUPABASE_COOKIE_NAMES) {
     if (cookies[sbCookie]) {
       const val = cookies[sbCookie];
-      // Sometimes Supabase stores JSON array or string
       if (val.startsWith("[")) {
         try {
           const parsed = JSON.parse(val);
@@ -109,7 +111,6 @@ export async function requireAuthenticatedUser(req, options = {}) {
   }
 
   try {
-    // Validate JWT session against Supabase Auth
     const { data, error } = await client.auth.getUser(token);
 
     if (error || !data || !data.user || !data.user.id) {
@@ -139,17 +140,20 @@ export async function requireAuthenticatedUser(req, options = {}) {
 
 /**
  * Validates that authenticated user has an active membership in the resolved agency.
- * BLOCKER 1: Enforces strict request binding and rejects fabricated tenant contexts.
- * Context must be issued by tenant-resolver AND match the hostname derived from the SAME request.
+ * B2.2 Rules:
+ * - Authorization MUST resolve the CURRENT tenant from the CURRENT request.
+ * - Any retained branded TenantContext is only a consistency assertion, never final authority.
+ * - Stale contexts from domain remaps (same host A -> B) are strictly rejected.
+ * - Fabricated contexts { agencyId } are rejected.
  * Returns { ok: true, user, membership, tenant } or { ok: false, status, code, error }.
  */
 export async function requireAgencyMembership(req, tenantContextOrOptions, options = {}) {
-  let tenantContext = null;
+  let callerContext = null;
   let opts = options;
 
   if (tenantContextOrOptions && typeof tenantContextOrOptions === "object") {
     if (isTrustedTenantContext(tenantContextOrOptions)) {
-      tenantContext = tenantContextOrOptions;
+      callerContext = tenantContextOrOptions;
     } else if (tenantContextOrOptions.agencyId) {
       // Fabricated / plain object with agencyId rejected immediately!
       return {
@@ -163,50 +167,49 @@ export async function requireAgencyMembership(req, tenantContextOrOptions, optio
     }
   }
 
-  // If no trusted context was provided, resolve tenant from request
-  if (!tenantContext) {
-    const resolved = await resolveTenant(req, opts);
-    if (!resolved.ok) {
-      return resolved;
+  // 1. Authoritative resolution: Always resolve CURRENT tenant from CURRENT request
+  const resolveResult = await resolveTenant(req, opts);
+  if (!resolveResult.ok) {
+    return resolveResult;
+  }
+  const currentTenant = resolveResult.tenant;
+
+  // 2. Consistency assertion: if a retained context was passed, ensure it matches current tenant
+  if (callerContext) {
+    if (callerContext.hostname !== currentTenant.hostname) {
+      return {
+        ok: false,
+        status: 403,
+        code: "tenant_host_mismatch",
+        error: `Tenant context hostname (${callerContext.hostname}) does not match current request host (${currentTenant.hostname}).`
+      };
     }
-    tenantContext = resolved.tenant;
-  }
-
-  // Verify that context hostname matches the trusted host of the SAME request
-  const requestHost = getTrustedHost(req);
-  if (!requestHost) {
-    return {
-      ok: false,
-      status: 400,
-      code: "invalid_host",
-      error: "Request host is invalid, malformed, or ambiguous."
-    };
-  }
-
-  if (tenantContext.hostname !== requestHost) {
-    return {
-      ok: false,
-      status: 403,
-      code: "tenant_host_mismatch",
-      error: `Tenant context hostname (${tenantContext.hostname}) does not match request host (${requestHost}).`
-    };
+    // Check for domain remap: old context pointing to Agency A when host remapped to Agency B
+    if (callerContext.agencyId !== currentTenant.agencyId) {
+      return {
+        ok: false,
+        status: 403,
+        code: "stale_tenant_context",
+        error: "Retained tenant context does not match current tenant resolution for host (domain remap detected)."
+      };
+    }
   }
 
   const client = opts.supabaseClient || defaultSupabase;
 
-  // 1. Authenticate user principal
+  // 3. Authenticate user principal
   const authResult = await requireAuthenticatedUser(req, opts);
   if (!authResult.ok) return authResult;
 
   const user = authResult.user;
 
   try {
-    // 2. Query agency_memberships strictly by auth.users.id AND tenantContext.agencyId
+    // 4. Query agency_memberships strictly by auth.users.id AND currentTenant.agencyId
     const { data: membership, error } = await client
       .from("agency_memberships")
       .select("id, agency_id, user_id, role, display_name, phone, status, created_at")
       .eq("user_id", user.id)
-      .eq("agency_id", tenantContext.agencyId)
+      .eq("agency_id", currentTenant.agencyId)
       .maybeSingle();
 
     if (error) {
@@ -228,7 +231,7 @@ export async function requireAgencyMembership(req, tenantContextOrOptions, optio
       };
     }
 
-    // 3. Verify active status (reject suspended / banned memberships)
+    // 5. Verify active status (reject suspended / banned memberships)
     if (membership.status !== "active") {
       return {
         ok: false,
@@ -238,12 +241,12 @@ export async function requireAgencyMembership(req, tenantContextOrOptions, optio
       };
     }
 
-    // 4. Return authorized membership bound to request and verified tenant
+    // 6. Return authorized membership bound to request and CURRENT verified tenant
     return {
       ok: true,
       user,
       membership,
-      tenant: tenantContext
+      tenant: currentTenant
     };
   } catch (err) {
     console.error("[agency-auth] Unexpected membership error:", err);
@@ -258,17 +261,16 @@ export async function requireAgencyMembership(req, tenantContextOrOptions, optio
 
 /**
  * Validates that authenticated user has one of the allowed roles in the resolved agency.
- * BLOCKER 2: allowedRoles MUST be a non-empty explicit array of valid role strings.
- * Missing, empty, or non-array allowedRoles immediately fails closed.
+ * B2.2 Rules:
+ * - allowedRoles MUST be a non-empty explicit array of valid role strings.
+ * - Missing, empty, or non-array allowedRoles immediately fails closed.
+ * - Rejects any unknown role value (only 'student', 'agency_staff', 'agency_owner' are valid).
  */
 export async function requireAgencyRole(req, tenantContextOrRoles, allowedRolesOrOptions, maybeOptions = {}) {
   let tenantContext = null;
   let allowedRoles = null;
   let options = maybeOptions;
 
-  // Support both:
-  // 1) requireAgencyRole(req, tenantContext, allowedRoles, options)
-  // 2) requireAgencyRole(req, allowedRoles, options)
   if (Array.isArray(tenantContextOrRoles)) {
     allowedRoles = tenantContextOrRoles;
     options = allowedRolesOrOptions || {};
@@ -278,7 +280,7 @@ export async function requireAgencyRole(req, tenantContextOrRoles, allowedRolesO
     options = maybeOptions || {};
   }
 
-  // BLOCKER 2: Fail closed immediately if allowedRoles is missing, empty, or invalid
+  // 1. Fail closed if allowedRoles is missing, empty, or not an array
   if (
     !Array.isArray(allowedRoles) ||
     allowedRoles.length === 0 ||
@@ -290,6 +292,18 @@ export async function requireAgencyRole(req, tenantContextOrRoles, allowedRolesO
       code: "invalid_role_configuration",
       error: "requireAgencyRole requires a non-empty explicit allowedRoles array. For general membership, use requireAgencyMembership()."
     };
+  }
+
+  // 2. Reject any unknown role value. Valid roles only: student, agency_staff, agency_owner
+  for (const role of allowedRoles) {
+    if (!VALID_AGENCY_ROLES.has(role)) {
+      return {
+        ok: false,
+        status: 500,
+        code: "invalid_role_configuration",
+        error: `Invalid role '${role}' in allowedRoles. Permitted roles are: ${Array.from(VALID_AGENCY_ROLES).join(", ")}.`
+      };
+    }
   }
 
   const memberResult = await requireAgencyMembership(req, tenantContext, options);

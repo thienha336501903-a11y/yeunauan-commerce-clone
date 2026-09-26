@@ -97,14 +97,14 @@ test("B3.1-HOST-AUTH: Host header is tenant authority (Requirement 6)", () => {
   };
   assert.equal(getTrustedHost(reqAbsent), "agency-a.example");
 
-  // Case D: host valid, x-forwarded-host empty string => resolve from host
+  // Case D: host valid, x-forwarded-host present but empty string => DENY (Requirement 4)
   const reqEmptyForwarded = {
     headers: {
       host: "agency-a.example",
       "x-forwarded-host": ""
     }
   };
-  assert.equal(getTrustedHost(reqEmptyForwarded), "agency-a.example");
+  assert.equal(getTrustedHost(reqEmptyForwarded), null);
 });
 
 test("B3.1-FORWARDED-CONFLICT: Conflicting forwarded host denied (Requirement 7)", () => {
@@ -655,3 +655,170 @@ test("B2.1-MEMBERSHIP-SUSPENDED: Suspended membership is denied (MEMBER_SUSPENDE
   assert.equal(result.status, 403);
   assert.equal(result.code, "membership_suspended");
 });
+
+// =============================================================================
+// B3.2 & B2.2 REGRESSION TESTS (WORK FINDINGS 1-5)
+// =============================================================================
+
+test("B3.2-EMPTY-OR-WHITESPACE-FORWARDED-HOST: Present-but-empty/whitespace/null/non-string x-forwarded-host fails closed (never falls back to host)", () => {
+  // Empty string
+  const reqEmpty = {
+    headers: {
+      host: "agency-a.example",
+      "x-forwarded-host": ""
+    }
+  };
+  assert.equal(getTrustedHost(reqEmpty), null);
+
+  // Whitespace only
+  const reqWhitespace = {
+    headers: {
+      host: "agency-a.example",
+      "x-forwarded-host": "   "
+    }
+  };
+  assert.equal(getTrustedHost(reqWhitespace), null);
+
+  // Null
+  const reqNull = {
+    headers: {
+      host: "agency-a.example",
+      "x-forwarded-host": null
+    }
+  };
+  assert.equal(getTrustedHost(reqNull), null);
+
+  // Non-string (e.g. number or object)
+  const reqNum = {
+    headers: {
+      host: "agency-a.example",
+      "x-forwarded-host": 12345
+    }
+  };
+  assert.equal(getTrustedHost(reqNum), null);
+});
+
+test("B2.2-UNKNOWN-ROLE-REJECTED: requireAgencyRole rejects any unknown role value (only student, agency_staff, agency_owner allowed)", async () => {
+  _clearTenantCache();
+  const mockSupabase = {
+    rpc: async () => ({
+      data: { found: true, agency_id: "agency-a-id", hostname: "agency-a.com" }
+    }),
+    auth: {
+      getUser: async () => ({ data: { user: { id: "user-1" } } })
+    },
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({
+              data: {
+                id: "mem-1",
+                agency_id: "agency-a-id",
+                user_id: "user-1",
+                role: "agency_owner",
+                status: "active"
+              }
+            })
+          })
+        })
+      })
+    })
+  };
+
+  const req = { headers: { host: "agency-a.com", authorization: "Bearer token" } };
+
+  // Unknown role 'admin'
+  const resAdmin = await requireAgencyRole(req, ["admin"], { supabaseClient: mockSupabase });
+  assert.equal(resAdmin.ok, false);
+  assert.equal(resAdmin.status, 500);
+  assert.equal(resAdmin.code, "invalid_role_configuration");
+
+  // Unknown role 'superadmin'
+  const resSuper = await requireAgencyRole(req, ["superadmin"], { supabaseClient: mockSupabase });
+  assert.equal(resSuper.ok, false);
+  assert.equal(resSuper.status, 500);
+  assert.equal(resSuper.code, "invalid_role_configuration");
+
+  // Valid role combined with unknown role
+  const resMixed = await requireAgencyRole(req, ["student", "super_user"], { supabaseClient: mockSupabase });
+  assert.equal(resMixed.ok, false);
+  assert.equal(resMixed.status, 500);
+  assert.equal(resMixed.code, "invalid_role_configuration");
+});
+
+test("B2.2-DOMAIN-REMAP-STALE-CONTEXT-DENIED: Retained TenantContext after same-host Agency A -> Agency B remap does not authorize Agency A", async () => {
+  _clearTenantCache();
+
+  // State 1: host 'remap.agency.vn' points to Agency A
+  let currentDbAgencyId = "agency-a-id";
+  const mockSupabase = {
+    rpc: async (func, args) => {
+      if (args.p_hostname === "remap.agency.vn") {
+        return {
+          data: {
+            found: true,
+            agency_id: currentDbAgencyId,
+            agency_slug: currentDbAgencyId === "agency-a-id" ? "agency-a" : "agency-b",
+            hostname: "remap.agency.vn"
+          }
+        };
+      }
+      return { data: null };
+    },
+    auth: {
+      getUser: async () => ({ data: { user: { id: "user-1" } } })
+    },
+    from: () => ({
+      select: () => ({
+        eq: (col1, uid) => ({
+          eq: (col2, agencyId) => ({
+            maybeSingle: async () => {
+              // User has active membership in Agency A ONLY
+              if (agencyId === "agency-a-id") {
+                return {
+                  data: {
+                    id: "mem-a",
+                    agency_id: "agency-a-id",
+                    user_id: uid,
+                    role: "student",
+                    status: "active"
+                  }
+                };
+              }
+              return { data: null };
+            }
+          })
+        })
+      })
+    })
+  };
+
+  const req = { headers: { host: "remap.agency.vn", authorization: "Bearer token" } };
+
+  // Step 1: Resolve context at T0 for Agency A
+  const resT0 = await resolveTenant(req, { supabaseClient: mockSupabase });
+  assert.equal(resT0.ok, true);
+  const oldTenantAContext = resT0.tenant;
+  assert.equal(oldTenantAContext.agencyId, "agency-a-id");
+
+  // Step 2: In the database, domain is now remapped to Agency B!
+  _clearTenantCache();
+  currentDbAgencyId = "agency-b-id";
+
+  // Step 3: Presenting old retained context for Agency A on the same host must be REJECTED!
+  const staleAttempt = await requireAgencyMembership(req, oldTenantAContext, { supabaseClient: mockSupabase });
+  assert.equal(staleAttempt.ok, false);
+  assert.equal(staleAttempt.status, 403);
+  assert.equal(staleAttempt.code, "stale_tenant_context");
+
+  // Step 4: Normal request to the host resolves current Agency B, where user has no membership -> denied
+  const currentAttempt = await requireAgencyMembership(req, { supabaseClient: mockSupabase });
+  assert.equal(currentAttempt.ok, false);
+  assert.equal(currentAttempt.status, 403);
+  assert.equal(currentAttempt.code, "membership_not_found");
+
+  const currentResolution = await resolveTenant(req, { supabaseClient: mockSupabase });
+  assert.equal(currentResolution.tenant.agencyId, "agency-b-id");
+});
+

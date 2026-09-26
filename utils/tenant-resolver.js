@@ -1,5 +1,5 @@
 // utils/tenant-resolver.js
-// System B Milestone B3.1 — Trusted Host / Tenant Resolver
+// System B Milestone B3.2 — Trusted Host / Tenant Resolver
 // Authoritative Plan: SYSTEM_B_MULTI_AGENCY_MASTER_IMPLEMENTATION_PLAN_V1_1.md
 
 import { supabase as defaultSupabase } from "./supabase.js";
@@ -37,7 +37,6 @@ export function normalizeHost(rawHost) {
   if (/\s/.test(trimmed)) return null;
 
   // Reject ambiguous / prohibited characters
-  // Comma (multiple values), slashes, backslashes, scheme markers, userinfo, query/fragment, IPv6 brackets
   if (
     trimmed.includes(",") ||
     trimmed.includes("/") ||
@@ -72,7 +71,6 @@ export function normalizeHost(rawHost) {
   }
 
   // Trailing dot normalization (RFC FQDN root dot)
-  // Strip at most one trailing dot AFTER ensuring it's not ".." or empty
   if (hostPart.endsWith(".")) {
     if (hostPart.endsWith("..")) return null;
     hostPart = hostPart.slice(0, -1);
@@ -89,8 +87,6 @@ export function normalizeHost(rawHost) {
   }
 
   // RFC 1123 domain name validation:
-  // Each label 1-63 alphanumeric/hyphen chars, cannot start or end with hyphen.
-  // Must contain at least two labels separated by dots.
   const domainRegex = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
   if (!domainRegex.test(hostPart)) {
     return null;
@@ -101,29 +97,22 @@ export function normalizeHost(rawHost) {
 
 /**
  * Extracts and normalizes the trusted host from request headers.
- * BLOCKER 3: Host header is the sole tenant authority.
- * If x-forwarded-host is present:
- * - Validate it.
- * - If x-forwarded-host conflicts with host => DENY (return null).
- * - If x-forwarded-host is malformed => DENY (return null).
- * - Never let x-forwarded-host override host.
- * If x-forwarded-host is absent:
- * - Host header is validated and used.
- * Multiple/array-valued Host or x-forwarded-host => DENY (return null).
+ * B3.2 Rules:
+ * - Host header is the sole tenant authority.
+ * - If x-forwarded-host is present in headers:
+ *   - Must be non-empty, non-whitespace string (empty/whitespace/null/non-string => DENY).
+ *   - Must normalize and match host header.
+ *   - Any mismatch or malformation => DENY (never fall back to Host).
+ * - If x-forwarded-host is completely absent:
+ *   - Host header is used.
+ * - Array-valued host or forwarded host => DENY.
  */
 export function getTrustedHost(req) {
   if (!req || !req.headers) return null;
 
-  // Header spoof guards: reject/ignore untrusted headers
-  // Headers such as x-agency-id, x-agency-slug, x-trusted-agency-id, x-tenant-*
-  // are never consulted.
-
   const rawHostHeader = req.headers["host"];
   // Reject array-valued host header
-  if (Array.isArray(rawHostHeader)) {
-    return null;
-  }
-  if (typeof rawHostHeader !== "string") {
+  if (Array.isArray(rawHostHeader) || typeof rawHostHeader !== "string") {
     return null;
   }
 
@@ -132,31 +121,34 @@ export function getTrustedHost(req) {
     return null;
   }
 
-  // Inspect x-forwarded-host
-  const rawForwardedHeader = req.headers["x-forwarded-host"];
+  // Check if x-forwarded-host is present in request headers
+  const hasForwarded = Object.prototype.hasOwnProperty.call(req.headers, "x-forwarded-host") ||
+    Object.prototype.hasOwnProperty.call(req.headers, "X-Forwarded-Host");
 
-  // If x-forwarded-host is present:
-  if (rawForwardedHeader !== undefined && rawForwardedHeader !== null) {
-    // Array-valued x-forwarded-host must be rejected immediately
-    if (Array.isArray(rawForwardedHeader)) {
+  if (hasForwarded) {
+    const rawForwarded = req.headers["x-forwarded-host"] !== undefined
+      ? req.headers["x-forwarded-host"]
+      : req.headers["X-Forwarded-Host"];
+
+    // B3.2: Present-but-null/non-string/array => DENY
+    if (typeof rawForwarded !== "string") {
       return null;
     }
-    if (typeof rawForwardedHeader !== "string") {
+
+    // B3.2: Present-but-empty/whitespace => DENY (never silently fall back to Host)
+    const trimmed = rawForwarded.trim();
+    if (!trimmed) {
       return null;
     }
 
-    const trimmedForwarded = rawForwardedHeader.trim();
-    if (trimmedForwarded.length > 0) {
-      // Must validate forwarded host
-      const normalizedForwarded = normalizeHost(trimmedForwarded);
-      // Malformed forwarded host => DENY (do not silently fall back to host)
-      if (!normalizedForwarded) {
-        return null;
-      }
-      // Conflicting forwarded host => DENY
-      if (normalizedForwarded !== normalizedHost) {
-        return null;
-      }
+    const normalizedForwarded = normalizeHost(trimmed);
+    if (!normalizedForwarded) {
+      return null;
+    }
+
+    // Must match host
+    if (normalizedForwarded !== normalizedHost) {
+      return null;
     }
   }
 
