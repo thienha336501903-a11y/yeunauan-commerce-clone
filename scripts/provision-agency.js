@@ -2,17 +2,19 @@
 // scripts/provision-agency.js
 // CLI tool for System B Multi-Agency Provisioning Lifecycle (Plan / Apply / Validate / Deprovision)
 // Authoritative Plan: SYSTEM_B_MULTI_AGENCY_MASTER_IMPLEMENTATION_PLAN_V1_1.md
+// Milestone M0B.1 / Pre-M0C Remediation V2 Hardening
 // Invariants:
 //   - Zero Secrets: Never prints or logs credentials or service keys.
 //   - Idempotent: Safe to execute repeatedly in Plan or Apply mode.
 //   - Fails closed on schema violation or domain collisions.
+//   - Protected Agencies ("yeunauan", "agency-a") can NEVER be deprovisioned.
 
 import fs from "node:fs";
 import path from "node:path";
 import {
   planAgencyProvisioning,
   applyAgencyProvisioning,
-  validateAgencyProvisioning,
+  verifyAgencyReadiness,
   deprovisionAgency,
   validateManifest
 } from "../utils/agency-provisioner.js";
@@ -24,7 +26,8 @@ function parseArgs() {
     manifestPath: null,
     slug: null,
     confirm: false,
-    synthetic: false
+    synthetic: false,
+    rehearsalRunId: null
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -39,6 +42,8 @@ function parseArgs() {
       options.confirm = true;
     } else if (arg === "--synthetic") {
       options.synthetic = true;
+    } else if (arg === "--rehearsal-run-id" && args[i + 1]) {
+      options.rehearsalRunId = args[++i];
     }
   }
 
@@ -86,7 +91,8 @@ async function main() {
         }
         console.log(`[PROVISION-AGENCY] Applying provisioning for slug: ${manifest.agency?.slug}...`);
         const result = await applyAgencyProvisioning(manifest, {
-          allowSyntheticPrincipals: options.synthetic
+          isSynthetic: options.synthetic,
+          rehearsalRunId: options.rehearsalRunId
         });
         console.log(JSON.stringify(result, null, 2));
         break;
@@ -99,7 +105,7 @@ async function main() {
           process.exit(1);
         }
         console.log(`[PROVISION-AGENCY] Validating readiness for slug: ${targetSlug}...`);
-        const result = await validateAgencyProvisioning(targetSlug, manifest);
+        const result = await verifyAgencyReadiness(targetSlug);
         console.log(JSON.stringify(result, null, 2));
         if (!result.ok) {
           process.exit(2);
@@ -117,10 +123,15 @@ async function main() {
           console.error("[ERROR] --confirm flag is required to execute deprovisioning.");
           process.exit(1);
         }
-        console.log(`[PROVISION-AGENCY] Deprovisioning slug: ${targetSlug}...`);
+        if (!options.rehearsalRunId) {
+          console.error("[ERROR] --rehearsal-run-id <run_id> is required for safe deprovisioning.");
+          process.exit(1);
+        }
+        console.log(`[PROVISION-AGENCY] Deprovisioning synthetic test fixture slug: ${targetSlug}...`);
         const result = await deprovisionAgency(targetSlug, {
           confirm: options.confirm,
-          forceSynthetic: options.synthetic
+          isTestTarget: true,
+          rehearsalRunId: options.rehearsalRunId
         });
         console.log(JSON.stringify(result, null, 2));
         break;
