@@ -96,15 +96,42 @@ export async function createPublicCatalogRepo(reqOrTenantContext, options = {}) 
     },
 
     async getAgencyInfo() {
-      const { data, error } = await client
-        .from("agencies")
-        .select("id, slug, name, logo_url, favicon_url, storefront_variant, checkout_variant, learner_variant, learning_variant, design_tokens, feature_flags, status")
-        .eq("id", agencyId)
-        .eq("status", "active")
-        .maybeSingle();
+      const [{ data: agency, error: agencyErr }, { data: profile, error: profileErr }] = await Promise.all([
+        client
+          .from("agencies")
+          .select("id, slug, name, status")
+          .eq("id", agencyId)
+          .eq("status", "active")
+          .maybeSingle(),
+        client
+          .from("agency_ui_profiles")
+          .select("brand_name, logo_url, favicon_url, storefront_variant, checkout_variant, admin_variant, learner_variant, learning_variant, homework_variant, design_tokens, feature_flags")
+          .eq("agency_id", agencyId)
+          .maybeSingle()
+      ]);
 
-      if (error) throw error;
-      return data;
+      if (agencyErr) throw agencyErr;
+      if (profileErr) throw profileErr;
+      if (!agency) return null;
+
+      const p = profile || {};
+      return {
+        id: agency.id,
+        slug: agency.slug,
+        name: agency.name,
+        status: agency.status,
+        brand_name: p.brand_name || agency.name,
+        logo_url: p.logo_url || null,
+        favicon_url: p.favicon_url || null,
+        storefront_variant: p.storefront_variant || "default",
+        checkout_variant: p.checkout_variant || "default",
+        admin_variant: p.admin_variant || "default",
+        learner_variant: p.learner_variant || "default",
+        learning_variant: p.learning_variant || "default",
+        homework_variant: p.homework_variant || "default",
+        design_tokens: p.design_tokens || {},
+        feature_flags: p.feature_flags || {}
+      };
     },
 
     async getPublishedOfferings() {

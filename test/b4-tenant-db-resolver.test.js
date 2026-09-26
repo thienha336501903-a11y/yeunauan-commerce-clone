@@ -291,3 +291,73 @@ test("B4.FINAL-4: Cross-tenant ID substitution denied", async () => {
     (err) => err.code === "course_not_licensed" && err.status === 403
   );
 });
+
+test("B4.FINAL-5: getAgencyInfo correctly joins agency_ui_profiles attributes", async () => {
+  const agencyId = "11111111-1111-1111-1111-111111111111";
+  const mockDb = {
+    rpc: async (func, args) => {
+      if (func === "resolve_agency_domain" && args.p_hostname === "chef-academy.local") {
+        return {
+          data: {
+            found: true,
+            agency_id: agencyId,
+            agency_slug: "chef-academy",
+            agency_name: "Chef Academy",
+            domain_id: "dom-1",
+            domain_status: "active",
+            is_primary: true
+          },
+          error: null
+        };
+      }
+      return { data: null, error: null };
+    },
+    from: (table) => {
+      if (table === "agencies") {
+        return {
+          select: (fields) => {
+            assert.ok(!fields.includes("logo_url"), "agencies table must not query logo_url directly");
+            return {
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: { id: agencyId, slug: "chef-academy", name: "Chef Academy", status: "active" },
+                    error: null
+                  })
+                })
+              })
+            };
+          }
+        };
+      }
+      if (table === "agency_ui_profiles") {
+        return {
+          select: (fields) => {
+            assert.ok(fields.includes("logo_url"), "agency_ui_profiles must provide logo_url");
+            return {
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: {
+                    brand_name: "Chef Academy Premium",
+                    logo_url: "https://example.com/logo.png",
+                    storefront_variant: "classic"
+                  },
+                  error: null
+                })
+              })
+            };
+          }
+        };
+      }
+      throw new Error(`Unexpected table query: ${table}`);
+    }
+  };
+
+  const req = { headers: { host: "chef-academy.local" } };
+  const repo = await createPublicCatalogRepo(req, { supabaseClient: mockDb });
+  const info = await repo.getAgencyInfo();
+  assert.equal(info.id, agencyId);
+  assert.equal(info.brand_name, "Chef Academy Premium");
+  assert.equal(info.logo_url, "https://example.com/logo.png");
+  assert.equal(info.storefront_variant, "classic");
+});

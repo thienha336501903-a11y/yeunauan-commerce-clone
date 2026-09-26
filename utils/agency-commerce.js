@@ -37,11 +37,15 @@ export async function getAgencyCommerceConfig(reqOrTenantContext, options = {}) 
   const client = _getCommerceDbClient(tenantContext, options);
   const agencyId = tenantContext.agencyId;
 
-  const [agencyRes, banksRes, offeringsRes] = await Promise.all([
+  const [agencyRes, profileRes, banksRes, offeringsRes] = await Promise.all([
     client.from("agencies")
-      .select("id, slug, name, logo_url, favicon_url, storefront_variant, checkout_variant, design_tokens, feature_flags")
+      .select("id, slug, name")
       .eq("id", agencyId)
       .eq("status", "active")
+      .maybeSingle(),
+    client.from("agency_ui_profiles")
+      .select("brand_name, logo_url, favicon_url, storefront_variant, checkout_variant, admin_variant, learner_variant, learning_variant, homework_variant, design_tokens, feature_flags")
+      .eq("agency_id", agencyId)
       .maybeSingle(),
     client.from("agency_bank_accounts")
       .select("id, bank_code, account_number, account_holder, branch")
@@ -55,13 +59,32 @@ export async function getAgencyCommerceConfig(reqOrTenantContext, options = {}) 
   ]);
 
   if (agencyRes.error) throw agencyRes.error;
+  if (profileRes.error) throw profileRes.error;
   if (!agencyRes.data) {
     return { ok: false, status: 404, code: "agency_not_found", error: "Agency not found or inactive" };
   }
 
+  const profile = profileRes.data || {};
+  const agencyData = {
+    id: agencyRes.data.id,
+    slug: agencyRes.data.slug,
+    name: agencyRes.data.name,
+    brand_name: profile.brand_name || agencyRes.data.name,
+    logo_url: profile.logo_url || null,
+    favicon_url: profile.favicon_url || null,
+    storefront_variant: profile.storefront_variant || "default",
+    checkout_variant: profile.checkout_variant || "default",
+    admin_variant: profile.admin_variant || "default",
+    learner_variant: profile.learner_variant || "default",
+    learning_variant: profile.learning_variant || "default",
+    homework_variant: profile.homework_variant || "default",
+    design_tokens: profile.design_tokens || {},
+    feature_flags: profile.feature_flags || {}
+  };
+
   return {
     ok: true,
-    agency: agencyRes.data,
+    agency: agencyData,
     banks: banksRes.data || [],
     offerings: offeringsRes.data || []
   };

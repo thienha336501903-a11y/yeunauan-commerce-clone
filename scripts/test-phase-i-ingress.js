@@ -15,8 +15,8 @@ import path from "node:path";
 import { execSync } from "node:child_process";
 import { supabase } from "../utils/supabase.js";
 
-const LMS_PREVIEW_URL = process.env.LMS_PREVIEW_URL || "https://yeunauan-lms-clone-mh2qcxqiu.vercel.app";
-const COMMERCE_PREVIEW_URL = process.env.COMMERCE_PREVIEW_URL || "https://yeunauan-commerce-clone-pl3y8zafs.vercel.app";
+const LMS_PREVIEW_URL = process.env.LMS_PREVIEW_URL || "https://yeunauan-lms-clone-izvm9ukjh.vercel.app";
+const COMMERCE_PREVIEW_URL = process.env.COMMERCE_PREVIEW_URL || "https://yeunauan-commerce-clone-gpbtbatdi.vercel.app";
 
 function getEphemeralSecret(varName, fallbackKey) {
   if (process.env[varName]) return process.env[varName];
@@ -45,7 +45,7 @@ const commerceHost = new URL(COMMERCE_PREVIEW_URL).hostname;
 function getDeploymentCommitSha(url) {
   try {
     const host = new URL(url).hostname;
-    const logs = execSync(`npx vercel inspect ${host} --logs`, { encoding: "utf8", timeout: 15000 });
+    const logs = execSync(`npx vercel inspect ${host} --logs 2>&1`, { shell: true, encoding: "utf8", timeout: 15000 });
     const match = logs.match(/Commit:\s*([a-f0-9]+)/i);
     return match ? match[1] : null;
   } catch (err) {
