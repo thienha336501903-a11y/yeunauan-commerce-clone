@@ -46,23 +46,23 @@ const FUNCTION_CLASSIFICATIONS = {
   // Multi-Agency Student Playback Bridge RPC (Accessible to authenticated students, revoked from anon)
   "v5_authorize_agency_playback(p_agency_id uuid, p_membership_id uuid, p_lesson_id uuid, p_asset_id uuid)": "AUTHENTICATED_PLAYBACK_RPC",
 
-  // V5 Platform Maintenance & Cloner Operations (Internal functions, not public RPCs)
-  "begin_v5_course_retire_purge(p_course_id uuid, p_expected_slug text, p_plan_hash text, p_admin_email text, p_manifest jsonb, p_r2_object_count integer, p_r2_total_bytes bigint)": "INTERNAL_NOT_POSTGREST",
-  "finalize_v5_course_retire_purge(p_operation_id uuid, p_course_id uuid, p_expected_slug text)": "INTERNAL_NOT_POSTGREST",
-  "cleanup_v5_clone_factory_fixture(p_course_id uuid, p_expected_slug text)": "INTERNAL_NOT_POSTGREST",
-  "cleanup_v5_unreleased_draft_course(p_course_id uuid, p_expected_slug text)": "INTERNAL_NOT_POSTGREST",
-  "v5_publish_release_atomic(p_course_id uuid, p_snapshot jsonb, p_created_by text)": "INTERNAL_NOT_POSTGREST",
-  "v5_replace_telegram_media_atomic(p_course_id uuid, p_post_id uuid, p_old_asset_id uuid, p_new_asset_id uuid)": "INTERNAL_NOT_POSTGREST",
-  "claim_v5_telegram_mirror_job(p_agent_id text)": "INTERNAL_NOT_POSTGREST",
-  "finish_v5_telegram_mirror_job(p_job_id uuid, p_agent_id text, p_ok boolean, p_object_key text, p_bytes bigint, p_etag text, p_error text, p_attempt integer)": "INTERNAL_NOT_POSTGREST",
-  "tgcloner_apply_reconcile_snapshot(p_source_id uuid, p_telegram_chat_id text, p_upper_bound_message_id bigint, p_present_message_ids bigint[])": "INTERNAL_NOT_POSTGREST",
-  "tgcloner_dispatch_tick()": "INTERNAL_NOT_POSTGREST",
+  // V5 Platform Maintenance & Cloner Operations (Revoked from PUBLIC, anon, and authenticated — strictly SERVER_ONLY_RPC)
+  "begin_v5_course_retire_purge(p_course_id uuid, p_expected_slug text, p_plan_hash text, p_admin_email text, p_manifest jsonb, p_r2_object_count integer, p_r2_total_bytes bigint)": "SERVER_ONLY_RPC",
+  "finalize_v5_course_retire_purge(p_operation_id uuid, p_course_id uuid, p_expected_slug text)": "SERVER_ONLY_RPC",
+  "cleanup_v5_clone_factory_fixture(p_course_id uuid, p_expected_slug text)": "SERVER_ONLY_RPC",
+  "cleanup_v5_unreleased_draft_course(p_course_id uuid, p_expected_slug text)": "SERVER_ONLY_RPC",
+  "v5_publish_release_atomic(p_course_id uuid, p_snapshot jsonb, p_created_by text)": "SERVER_ONLY_RPC",
+  "v5_replace_telegram_media_atomic(p_course_id uuid, p_post_id uuid, p_old_asset_id uuid, p_new_asset_id uuid)": "SERVER_ONLY_RPC",
+  "claim_v5_telegram_mirror_job(p_agent_id text)": "SERVER_ONLY_RPC",
+  "finish_v5_telegram_mirror_job(p_job_id uuid, p_agent_id text, p_ok boolean, p_object_key text, p_bytes bigint, p_etag text, p_error text, p_attempt integer)": "SERVER_ONLY_RPC",
+  "tgcloner_apply_reconcile_snapshot(p_source_id uuid, p_telegram_chat_id text, p_upper_bound_message_id bigint, p_present_message_ids bigint[])": "SERVER_ONLY_RPC",
+  "tgcloner_dispatch_tick()": "SERVER_ONLY_RPC",
+  "reset_student_session_guard(p_email text, p_admin_email text, p_reason text)": "SERVER_ONLY_RPC",
+  "cleanup_student_account_risk_events(p_retention_days integer)": "SERVER_ONLY_RPC",
 
   // Public / Safe RPCs
   "resolve_agency_domain(p_hostname text)": "PUBLIC_SAFE_RPC",
   "handle_student_session_login(p_email text, p_portal_device_id text, p_new_student_session_id text, p_device_hash text, p_device_label text, p_ip text, p_ip_hash text, p_user_agent text, p_conflict_policy text, p_idle_hours integer)": "PUBLIC_SAFE_RPC",
-  "reset_student_session_guard(p_email text, p_admin_email text, p_reason text)": "PUBLIC_SAFE_RPC",
-  "cleanup_student_account_risk_events(p_retention_days integer)": "PUBLIC_SAFE_RPC",
 
   // Internal Triggers & RLS Policy Functions (Not PostgREST endpoints)
   "current_agency_id()": "INTERNAL_NOT_POSTGREST",
@@ -241,7 +241,19 @@ async function main() {
       { name: "grade_agency_homework", params: { p_agency_id: dummyUuid, p_staff_membership_id: dummyUuid, p_submission_id: dummyUuid, p_status: "evaluated", p_feedback: "Test", p_score: 10 } },
       { name: "set_trusted_agency_context", params: { p_agency_id: dummyUuid } },
       { name: "deprovision_synthetic_agency_atomic", params: { p_agency_id: dummyUuid, p_run_id: dummyUuid } },
-      { name: "provision_agency_manifest_atomic", params: { p_manifest: {}, p_is_synthetic: false, p_rehearsal_run_id: dummyUuid } }
+      { name: "provision_agency_manifest_atomic", params: { p_manifest: {}, p_is_synthetic: false, p_rehearsal_run_id: dummyUuid } },
+      { name: "begin_v5_course_retire_purge", params: { p_course_id: dummyUuid, p_expected_slug: "probe", p_plan_hash: "hash", p_admin_email: "a@b.c", p_manifest: {}, p_r2_object_count: 0, p_r2_total_bytes: 0 } },
+      { name: "finalize_v5_course_retire_purge", params: { p_operation_id: dummyUuid, p_course_id: dummyUuid, p_expected_slug: "probe" } },
+      { name: "cleanup_v5_clone_factory_fixture", params: { p_course_id: dummyUuid, p_expected_slug: "probe" } },
+      { name: "cleanup_v5_unreleased_draft_course", params: { p_course_id: dummyUuid, p_expected_slug: "probe" } },
+      { name: "v5_publish_release_atomic", params: { p_course_id: dummyUuid, p_snapshot: {}, p_created_by: "probe" } },
+      { name: "v5_replace_telegram_media_atomic", params: { p_course_id: dummyUuid, p_post_id: dummyUuid, p_old_asset_id: dummyUuid, p_new_asset_id: dummyUuid } },
+      { name: "claim_v5_telegram_mirror_job", params: { p_agent_id: "probe" } },
+      { name: "finish_v5_telegram_mirror_job", params: { p_job_id: dummyUuid, p_agent_id: "probe", p_ok: true, p_object_key: "k", p_bytes: 0, p_etag: "e", p_error: null, p_attempt: 1 } },
+      { name: "tgcloner_apply_reconcile_snapshot", params: { p_source_id: dummyUuid, p_telegram_chat_id: "probe", p_upper_bound_message_id: 1, p_present_message_ids: [] } },
+      { name: "tgcloner_dispatch_tick", params: {} },
+      { name: "reset_student_session_guard", params: { p_email: "probe@example.com", p_admin_email: "admin@example.com", p_reason: "probe" } },
+      { name: "cleanup_student_account_risk_events", params: { p_retention_days: 30 } }
     ];
 
     console.log("\n--- Testing ANON PostgREST Boundary on SERVER_ONLY_RPC ---");

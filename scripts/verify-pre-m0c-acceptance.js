@@ -21,6 +21,7 @@ import {
   listAgencyHomework
 } from "../utils/agency-homework.js";
 import { _clearTenantCache, resolveTenant } from "../utils/tenant-resolver.js";
+import { resolveRequestRoute } from "../utils/agency-routing.js";
 
 export const MANDATORY_CATEGORIES = [
   "HOST",
@@ -128,6 +129,7 @@ export async function runPreM0cFunctionalHarness(options = {}) {
     // Apply provisioning atomically
     const applyRes = await applyAgencyProvisioning(manifest, {
       isSynthetic: true,
+      isTestTarget: true,
       rehearsalRunId
     });
     agencyId = applyRes.agencyId;
@@ -200,20 +202,29 @@ export async function runPreM0cFunctionalHarness(options = {}) {
     }
 
     // -------------------------------------------------------------------------
-    // 4. CATALOG PROBE: Request-bound catalog query for tenant offerings & items
+    // 4. CATALOG PROBE: Host-bound catalog query for tenant offerings & items
     // -------------------------------------------------------------------------
-    const { data: offerings, error: offErr } = await supabase
-      .from("agency_offerings")
-      .select("id, slug, is_published, agency_offering_items(id, canonical_course_id)")
-      .eq("agency_id", agencyId);
+    let offeringId = null;
+    let canonicalCourseId = null;
 
-    if (offErr || !offerings || offerings.length === 0 || offerings[0].agency_offering_items.length === 0) {
-      results.CATALOG = { status: "FAIL", reason: "Catalog probe found 0 offerings or missing materialized offering items." };
+    const catalogHostRes = await resolveTenant({ headers: { host: hostCommerce } });
+    if (!catalogHostRes.ok || !catalogHostRes.tenant?.agencyId) {
+      results.CATALOG = { status: "FAIL", reason: `Catalog tenant resolution failed: ${catalogHostRes.error}` };
     } else {
-      results.CATALOG = { status: "PASS", details: `Catalog verified with offering '${offerings[0].slug}' and materialized items.` };
+      const { data: offerings, error: offErr } = await anonClient
+        .from("agency_offerings")
+        .select("id, slug, is_published, agency_offering_items(id, canonical_course_id)")
+        .eq("agency_id", catalogHostRes.tenant.agencyId)
+        .eq("is_published", true);
+
+      if (offErr || !offerings || offerings.length === 0 || offerings[0].agency_offering_items.length === 0) {
+        results.CATALOG = { status: "FAIL", reason: "Catalog probe found 0 offerings or missing materialized offering items." };
+      } else {
+        results.CATALOG = { status: "PASS", details: `Host-bound catalog verified with offering '${offerings[0].slug}' and materialized items.` };
+        offeringId = offerings[0].id;
+        canonicalCourseId = offerings[0].agency_offering_items[0].canonical_course_id;
+      }
     }
-    const offeringId = offerings[0].id;
-    const canonicalCourseId = offerings[0].agency_offering_items[0].canonical_course_id;
 
     // -------------------------------------------------------------------------
     // 5. CHECKOUT PROBE: Request-bound checkoutOffering with signed JWT
@@ -303,17 +314,22 @@ export async function runPreM0cFunctionalHarness(options = {}) {
     }
 
     // -------------------------------------------------------------------------
-    // 8. LEARNER PROBE: Request-bound learner progress and course structure
+    // 8. LEARNER PROBE: Authenticated learner course content & progress probe
     // -------------------------------------------------------------------------
-    const { data: lessons } = await supabase
+    const authLearnerClient = createClient(
+      process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      { global: { headers: { Authorization: `Bearer ${studentJwt}` } } }
+    );
+    const { data: lessons, error: lessErr } = await authLearnerClient
       .from("canonical_lessons")
       .select("id, title, v5_lesson_id")
       .eq("canonical_course_id", canonicalCourseId);
 
     if (lessons && lessons.length > 0 && lessons[0].v5_lesson_id) {
-      results.LEARNER = { status: "PASS", details: `Learner course content verified with ${lessons.length} canonical lesson(s) mapped to V5.` };
+      results.LEARNER = { status: "PASS", details: `Authenticated learner course content verified with ${lessons.length} canonical lesson(s) mapped to V5.` };
     } else {
-      results.LEARNER = { status: "FAIL", reason: "Learner course content has 0 lessons or null v5_lesson_id." };
+      results.LEARNER = { status: "FAIL", reason: `Learner course probe failed: ${lessErr?.message || "0 lessons or null v5_lesson_id"}` };
     }
     const canonicalLessonId = lessons?.[0]?.id;
 
@@ -340,13 +356,34 @@ export async function runPreM0cFunctionalHarness(options = {}) {
     }
 
     // -------------------------------------------------------------------------
-    // 10. LEGACY_FALLBACK PROBE: Verify unknown legacy host fails closed without agency bleed
+    // 10. LEGACY_FALLBACK PROBE: Verify routing decisions via resolveRequestRoute
     // -------------------------------------------------------------------------
-    const legacyRes = await resolveTenant({ headers: { host: "unknown-legacy-host.local" } });
-    if (legacyRes.ok === false && legacyRes.code === "tenant_not_found") {
-      results.LEGACY_FALLBACK = { status: "PASS", details: "Unrecognized hosts cleanly fail-closed without agency bleed." };
+    const unknownRoute = await resolveRequestRoute({ headers: { host: "unknown-unmapped-host.local" } });
+    const isUnknownDenied = unknownRoute.route === "DENY" && unknownRoute.status === 404;
+
+    const prevAllowlist = process.env.LEGACY_HOST_ALLOWLIST;
+    process.env.LEGACY_HOST_ALLOWLIST = "explicit-legacy.local";
+    const explicitLegacyRoute = await resolveRequestRoute({ headers: { host: "explicit-legacy.local" } });
+    const isLegacyApproved = explicitLegacyRoute.route === "LEGACY";
+    if (prevAllowlist !== undefined) {
+      process.env.LEGACY_HOST_ALLOWLIST = prevAllowlist;
     } else {
-      results.LEGACY_FALLBACK = { status: "FAIL", reason: `Legacy fallback did not fail closed: ${JSON.stringify(legacyRes)}` };
+      delete process.env.LEGACY_HOST_ALLOWLIST;
+    }
+
+    const agencyRoute = await resolveRequestRoute({ headers: { host: hostCommerce } });
+    const isAgencyRouted = agencyRoute.route === "AGENCY" && agencyRoute.tenant?.agencyId === agencyId;
+
+    if (isUnknownDenied && isLegacyApproved && isAgencyRouted) {
+      results.LEGACY_FALLBACK = {
+        status: "PASS",
+        details: "resolveRequestRoute: Unmapped host -> DENY (404), explicit allowlist -> LEGACY, agency host -> AGENCY."
+      };
+    } else {
+      results.LEGACY_FALLBACK = {
+        status: "FAIL",
+        reason: `resolveRequestRoute failed expected boundary checks: unknown=${JSON.stringify(unknownRoute)}, legacy=${JSON.stringify(explicitLegacyRoute)}, agency=${JSON.stringify(agencyRoute)}`
+      };
     }
 
     // -------------------------------------------------------------------------

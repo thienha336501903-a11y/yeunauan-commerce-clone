@@ -44,6 +44,18 @@ assert.ok(
   "MANDATORY input missing: EXPECTED_COMMERCE_SHA must be provided via environment variable."
 );
 
+const SHA_REGEX = /^[0-9a-f]{40}$/i;
+assert.match(
+  EXPECTED_LMS_SHA,
+  SHA_REGEX,
+  "EXPECTED_LMS_SHA must be an exact 40-character hexadecimal Git commit SHA."
+);
+assert.match(
+  EXPECTED_COMMERCE_SHA,
+  SHA_REGEX,
+  "EXPECTED_COMMERCE_SHA must be an exact 40-character hexadecimal Git commit SHA."
+);
+
 function getEphemeralSecret(varName, fallbackKey) {
   if (process.env[varName]) return process.env[varName];
   if (process.env.VERCEL_AUTOMATION_BYPASS_SECRET) return process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
@@ -71,10 +83,27 @@ const commerceHost = new URL(COMMERCE_PREVIEW_URL).hostname;
 function getDeploymentCommitSha(url) {
   try {
     const host = new URL(url).hostname;
-    const logs = execSync(`npx vercel inspect ${host} --logs 2>&1`, { shell: true, encoding: "utf8", timeout: 20000 });
-    const match = logs.match(/Commit:\s*([a-f0-9]+)/i);
-    return match ? match[1] : null;
+    // Step 1: inspect host/url to get deployment ID
+    const inspectRaw = execSync(`npx vercel inspect ${host} 2>&1`, { shell: true, encoding: "utf8", timeout: 45000 });
+    const idMatch = inspectRaw.match(/id\s+(dpl_[a-zA-Z0-9]+)/i) || inspectRaw.match(/(dpl_[a-zA-Z0-9]+)/i);
+    const dplId = idMatch ? idMatch[1] : null;
+    if (!dplId) {
+      console.warn("Could not find deployment id in vercel inspect output:", inspectRaw);
+      return null;
+    }
+    // Step 2: Query vercel api /v13/deployments/${dplId}
+    const apiRaw = execSync(`npx vercel api /v13/deployments/${dplId} 2>&1`, { shell: true, encoding: "utf8", timeout: 45000 });
+    const jsonStart = apiRaw.indexOf('{');
+    const jsonEnd = apiRaw.lastIndexOf('}');
+    if (jsonStart === -1 || jsonEnd === -1) {
+      console.warn("Could not parse JSON from vercel api output:", apiRaw);
+      return null;
+    }
+    const data = JSON.parse(apiRaw.slice(jsonStart, jsonEnd + 1));
+    const sha = data.meta?.githubCommitSha || data.gitSource?.sha;
+    return sha || null;
   } catch (err) {
+    console.error("Failed to extract deployment commit SHA:", err.message);
     return null;
   }
 }
@@ -96,20 +125,33 @@ async function runPhaseITests() {
   console.log(`LMS Deployed Commit: ${lmsCommit || "unknown"}`);
   console.log(`Commerce Deployed Commit: ${commerceCommit || "unknown"}`);
 
-  assert.ok(lmsCommit, `FAIL: Could not extract Git Commit SHA from LMS deployment logs (${LMS_PREVIEW_URL})`);
-  assert.ok(commerceCommit, `FAIL: Could not extract Git Commit SHA from Commerce deployment logs (${COMMERCE_PREVIEW_URL})`);
+  assert.ok(lmsCommit, `FAIL: Could not extract Git Commit SHA from LMS deployment (${LMS_PREVIEW_URL})`);
+  assert.ok(commerceCommit, `FAIL: Could not extract Git Commit SHA from Commerce deployment (${COMMERCE_PREVIEW_URL})`);
 
-  assert.ok(
-    EXPECTED_LMS_SHA.startsWith(lmsCommit) || lmsCommit.startsWith(EXPECTED_LMS_SHA),
+  assert.match(
+    lmsCommit,
+    SHA_REGEX,
+    `FAIL: LMS deployment SHA is not a 40-character hex SHA: ${lmsCommit}`
+  );
+  assert.match(
+    commerceCommit,
+    SHA_REGEX,
+    `FAIL: Commerce deployment SHA is not a 40-character hex SHA: ${commerceCommit}`
+  );
+
+  assert.equal(
+    lmsCommit.toLowerCase(),
+    EXPECTED_LMS_SHA.toLowerCase(),
     `FAIL: LMS Deployment SHA mismatch! Expected ${EXPECTED_LMS_SHA}, got ${lmsCommit}`
   );
-  console.log("✓ LMS Preview Deployment Commit matches expected Git SHA");
+  console.log("✓ LMS Preview Deployment Commit exactly matches expected Git SHA");
 
-  assert.ok(
-    EXPECTED_COMMERCE_SHA.startsWith(commerceCommit) || commerceCommit.startsWith(EXPECTED_COMMERCE_SHA),
+  assert.equal(
+    commerceCommit.toLowerCase(),
+    EXPECTED_COMMERCE_SHA.toLowerCase(),
     `FAIL: Commerce Deployment SHA mismatch! Expected ${EXPECTED_COMMERCE_SHA}, got ${commerceCommit}`
   );
-  console.log("✓ Commerce Preview Deployment Commit matches expected Git SHA");
+  console.log("✓ Commerce Preview Deployment Commit exactly matches expected Git SHA");
 
   let testAgency = null;
   let lmsDomain = null;

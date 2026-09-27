@@ -5,13 +5,25 @@
 
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
+import http from "node:http";
 import pg from "pg";
 import { createClient } from "@supabase/supabase-js";
 
-// Ensure DATABASE_URL is set for DB tests if not already present
+// Ensure explicit test environment configuration
 if (!process.env.DATABASE_URL) {
-  process.env.DATABASE_URL = "postgres://postgres:postgres@127.0.0.1:54332/postgres";
+  process.env.DATABASE_URL = process.env.PRE_M0C_TEST_DATABASE_URL || "postgres://postgres:postgres@127.0.0.1:54332/postgres";
 }
+if (!process.env.SUPABASE_URL) {
+  process.env.SUPABASE_URL = process.env.PRE_M0C_TEST_SUPABASE_URL || "http://127.0.0.1:54321";
+}
+if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.PRE_M0C_TEST_SERVICE_ROLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJleHAiOjIxMDU4MzUzNjR9.qXZZvKuEYOReC4kHTTjvpZjhge0Mw8Dm-DvXpxzR-uc";
+}
+if (!process.env.SUPABASE_ANON_KEY) {
+  process.env.SUPABASE_ANON_KEY = process.env.PRE_M0C_TEST_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiZXhwIjoyMTA1ODM1MzY0fQ.7vBR3Bhep8Ck2WTYWhonrLM909-qizQ3upTgKBcTqKs";
+}
+process.env.NEXT_PUBLIC_SUPABASE_URL = process.env.SUPABASE_URL;
+process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
 const MANDATORY_ENV_VARS = [
   "SUPABASE_URL",
@@ -20,13 +32,76 @@ const MANDATORY_ENV_VARS = [
   "DATABASE_URL"
 ];
 
+let localGatewayServer = null;
+
+async function ensureLocalGateway() {
+  if (process.env.SUPABASE_URL !== "http://127.0.0.1:54321" && !process.env.SUPABASE_URL.includes("54321")) {
+    return;
+  }
+
+  // Check if port 54321 is already responsive
+  try {
+    const res = await fetch("http://127.0.0.1:54321/rest/v1/", {
+      headers: { apikey: process.env.SUPABASE_ANON_KEY }
+    });
+    if (res.status === 200 || res.status === 404 || res.status === 401) {
+      console.log("  ✓ Local Supabase gateway on port 54321 is already running.");
+      return;
+    }
+  } catch (_) {
+    // Not running, we will start it
+  }
+
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      let targetPort = 54330;
+      if (req.url.startsWith("/auth/v1")) {
+        targetPort = 54331;
+      }
+
+      const proxyReq = http.request({
+        hostname: "127.0.0.1",
+        port: targetPort,
+        path: req.url,
+        method: req.method,
+        headers: req.headers
+      }, (proxyRes) => {
+        res.writeHead(proxyRes.statusCode, proxyRes.headers);
+        proxyRes.pipe(res);
+      });
+
+      proxyReq.on("error", (err) => {
+        res.writeHead(502, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: `Local Gateway Proxy Error: ${err.message}` }));
+      });
+
+      req.pipe(proxyReq);
+    });
+
+    server.listen(54321, "127.0.0.1", () => {
+      console.log("  ✓ Local Supabase test gateway started on 127.0.0.1:54321 (rest:54330, auth:54331)");
+      localGatewayServer = server;
+      resolve();
+    });
+
+    server.on("error", (err) => {
+      if (err.code === "EADDRINUSE") {
+        console.log("  ✓ Port 54321 in use, assuming external gateway active.");
+        resolve();
+      } else {
+        reject(err);
+      }
+    });
+  });
+}
+
 function checkEnvironment() {
   console.log("================================================================================");
   console.log("       PHASE 10: CONSOLIDATED PRE-M0C INTEGRATION GATE EXECUTION");
   console.log("================================================================================");
   console.log(`Execution Timestamp: ${new Date().toISOString()}`);
   console.log("");
-  console.log("[1/7] Validating Mandatory Environment Configurations...");
+  console.log("[1/8] Validating Mandatory Environment Configurations...");
 
   const missing = [];
   for (const envKey of MANDATORY_ENV_VARS) {
@@ -49,7 +124,7 @@ function checkEnvironment() {
 }
 
 async function verifyDatabaseConnectivity() {
-  console.log("\n[2/7] Verifying Direct PostgreSQL Database Connectivity...");
+  console.log("\n[2/8] Verifying Direct PostgreSQL Database Connectivity...");
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
   try {
     await client.connect();
@@ -62,20 +137,83 @@ async function verifyDatabaseConnectivity() {
   }
 }
 
-function runSubProcess(label, command, args) {
+async function verifySentinelRoundTrip() {
+  console.log("\n[3/8] Verifying Sentinel Round-Trip Between PostgreSQL and PostgREST...");
+  const nonce = Date.now().toString().slice(-6);
+  const sentinelSlug = `sentinel-probe-${nonce}`;
+  const sentinelName = `Sentinel Probe ${nonce}`;
+
+  const pgClient = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  await pgClient.connect();
+  let sentinelId = null;
+  try {
+    // 1. Insert via direct PG
+    const res = await pgClient.query(
+      "INSERT INTO public.agencies (slug, name, status) VALUES ($1, $2, 'active') RETURNING id;",
+      [sentinelSlug, sentinelName]
+    );
+    sentinelId = res.rows[0].id;
+
+    // 2. Read back via PostgREST /rest/v1
+    const postgrestUrl = `${process.env.SUPABASE_URL}/rest/v1/agencies?id=eq.${sentinelId}&select=id,slug,name`;
+    const resp = await fetch(postgrestUrl, {
+      headers: {
+        apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`
+      }
+    });
+    if (!resp.ok) {
+      throw new Error(`PostgREST sentinel query failed: HTTP ${resp.status} ${await resp.text()}`);
+    }
+    const rows = await resp.json();
+    if (!rows || rows.length !== 1 || rows[0].slug !== sentinelSlug) {
+      throw new Error(`PostgREST sentinel readback mismatch: expected slug ${sentinelSlug}, got ${JSON.stringify(rows)}`);
+    }
+
+    // 3. Delete via direct PG
+    await pgClient.query("DELETE FROM public.agencies WHERE id = $1;", [sentinelId]);
+
+    // 4. Verify PostgREST reflects deletion
+    const resp2 = await fetch(postgrestUrl, {
+      headers: {
+        apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`
+      }
+    });
+    const rows2 = await resp2.json();
+    if (rows2 && rows2.length > 0) {
+      throw new Error("PostgREST did not immediately reflect deletion of sentinel agency");
+    }
+
+    console.log("  ✓ Sentinel PG -> PostgREST readback and deletion verified.");
+  } finally {
+    if (sentinelId) {
+      try { await pgClient.query("DELETE FROM public.agencies WHERE id = $1;", [sentinelId]); } catch (_) {}
+    }
+    await pgClient.end();
+  }
+}
+
+function runSubProcess(label, command, args, timeoutMs = 90000) {
   return new Promise((resolve, reject) => {
     console.log(`\n--------------------------------------------------------------------------------`);
     console.log(`Running Suite: ${label}`);
-    console.log(`Command: ${command} ${args.join(" ")}`);
+    console.log(`Command: ${command} ${args.join(" ")} (Timeout: ${timeoutMs}ms)`);
     console.log(`--------------------------------------------------------------------------------`);
 
     const child = spawn(command, args, {
       stdio: "inherit",
       shell: true,
-      env: process.env
+      env: { ...process.env }
     });
 
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error(`Suite '${label}' timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
     child.on("close", (code) => {
+      clearTimeout(timer);
       if (code === 0) {
         console.log(`\n  ✓ [PASS] Suite '${label}' succeeded (exit code 0)`);
         resolve();
@@ -86,6 +224,7 @@ function runSubProcess(label, command, args) {
     });
 
     child.on("error", (err) => {
+      clearTimeout(timer);
       console.error(`\n  ✗ [ERROR] Suite '${label}' process error: ${err.message}`);
       reject(err);
     });
@@ -218,7 +357,9 @@ async function verifyB7PostgrestWriteDenials() {
 async function main() {
   try {
     checkEnvironment();
+    await ensureLocalGateway();
     await verifyDatabaseConnectivity();
+    await verifySentinelRoundTrip();
 
     // 1. Suite: B5 Real DB Concurrency & Kernel Lock Contention
     await runSubProcess(
@@ -263,7 +404,7 @@ async function main() {
     console.log("================================================================================");
     console.log("SUMMARY OF EVALUATION:");
     console.log("  - B5 Real Lock Contention: PASS (pg_blocking_pids asserts Transaction 1 contention)");
-    console.log("  - Privileged RPC Lockdown: PASS (10 server-only signatures revoked & PostgREST denied)");
+    console.log("  - Privileged RPC Lockdown: PASS (22 server-only signatures revoked & PostgREST denied)");
     console.log("  - M0C Provisioning Preflight: PASS (Auth principals & V5 releases verified before writes)");
     console.log("  - M0C Atomic Apply: PASS (provision_agency_manifest_atomic with advisory lock)");
     console.log("  - Synthetic Cleanup Safety: PASS (deprovision_synthetic_agency_atomic via fixture registry)");
@@ -275,8 +416,14 @@ async function main() {
     console.log("CONSOLIDATED_TEST_QUALITY = PASS");
     console.log("================================================================================");
 
+    if (localGatewayServer) {
+      localGatewayServer.close();
+    }
     process.exit(0);
   } catch (err) {
+    if (localGatewayServer) {
+      localGatewayServer.close();
+    }
     console.error(`\n[FATAL] Consolidated integration gate failure: ${err.message}`);
     console.log("CONSOLIDATED_TEST_QUALITY = FAIL");
     process.exit(1);

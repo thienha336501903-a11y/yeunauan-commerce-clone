@@ -20,6 +20,25 @@ const PROTECTED_SLUGS = new Set(["yeunauan", "agency-a"]);
 const VALID_MEMBERSHIP_ROLES = new Set(["student", "agency_staff", "agency_owner"]);
 
 /**
+ * Asserts that the current target is an isolated test environment and NEVER
+ * a protected production project (yyiavtiwtekkocqpephr or aqozjkfwzmyfunqvcyjv).
+ */
+export function assertTrustedSyntheticTestTarget(options = {}, client = defaultSupabase) {
+  if (!options.isTestTarget) {
+    throw new Error("SECURITY VIOLATION: Synthetic operation denied. Caller must explicitly assert options.isTestTarget = true.");
+  }
+  const clientUrl = client?.supabaseUrl || process.env.SUPABASE_URL || "";
+  const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || "";
+
+  const forbiddenTargets = ["yyiavtiwtekkocqpephr", "aqozjkfwzmyfunqvcyjv"];
+  for (const forbidden of forbiddenTargets) {
+    if (clientUrl.includes(forbidden) || dbUrl.includes(forbidden)) {
+      throw new Error(`SECURITY VIOLATION: Cannot execute synthetic deprovisioning or synthetic provisioning tests against production project (${forbidden}). Synthetic operations are strictly restricted to isolated test environments.`);
+    }
+  }
+}
+
+/**
  * Validates manifest structure and ensures no secrets are present.
  * Phase 10A: Strict Manifest Preflight.
  */
@@ -251,8 +270,11 @@ export async function planAgencyProvisioning(manifest, options = {}) {
     }
   }
 
-  // 4. Check bank accounts (reads manifest.bank_accounts or manifest.commerce.bank_accounts)
-  const planBankAccounts = manifest.bank_accounts || manifest.commerce?.bank_accounts;
+  // 4. Check bank accounts (strictly reads manifest.bank_accounts; denies manifest.commerce.bank_accounts)
+  if (manifest.commerce?.bank_accounts) {
+    throw new Error("Invalid manifest: 'manifest.commerce.bank_accounts' is forbidden. Use canonical path 'manifest.bank_accounts'.");
+  }
+  const planBankAccounts = manifest.bank_accounts;
   if (planBankAccounts) {
     for (const b of planBankAccounts) {
       if (!existingAgency) {
@@ -388,15 +410,72 @@ export async function preflightAgencyProvisioning(manifest, options = {}) {
   for (const p of manifest.principals) {
     const targetEmail = p.email ? p.email.toLowerCase().trim() : null;
     const targetId = p.user_id || null;
-    const resolved = allAuthUsers.find(u => (targetEmail && u.email?.toLowerCase().trim() === targetEmail) || (targetId && u.id === targetId));
 
-    if (!resolved) {
-      throw new Error(`NOT_READY: Principal '${p.email || p.user_id}' does not exist in auth.users. Production preflight requires existing Auth principals.`);
+    let resolved = null;
+    if (targetId && targetEmail) {
+      resolved = allAuthUsers.find((u) => u.id === targetId);
+      if (!resolved) {
+        throw new Error(`NOT_READY: Principal with user_id '${targetId}' does not exist in auth.users.`);
+      }
+      if (resolved.email?.toLowerCase().trim() !== targetEmail) {
+        throw new Error(
+          `NOT_READY: Principal identity mismatch: user_id '${targetId}' email '${resolved.email}' does not match manifest email '${targetEmail}'.`
+        );
+      }
+    } else if (targetId) {
+      resolved = allAuthUsers.find((u) => u.id === targetId);
+      if (!resolved) {
+        throw new Error(`NOT_READY: Principal with user_id '${targetId}' does not exist in auth.users.`);
+      }
+    } else if (targetEmail) {
+      resolved = allAuthUsers.find((u) => u.email?.toLowerCase().trim() === targetEmail);
+      if (!resolved) {
+        throw new Error(
+          `NOT_READY: Principal '${targetEmail}' does not exist in auth.users. Production preflight requires existing Auth principals.`
+        );
+      }
     }
   }
   checks.PRINCIPALS_RESOLVED = true;
 
-  // 3. Canonical courses conflicts & V5 deep readiness check
+  // 3. Offering Items Resolution & Canonical Course Checks
+  for (const off of manifest.offerings) {
+    for (const item of off.items) {
+      const courseCode = item.canonical_course_code;
+      const courseId = item.canonical_course_id;
+
+      const inManifestCourse = manifest.learning?.courses?.find(
+        (c) => (courseCode && c.code === courseCode) || (courseId && c.id === courseId)
+      );
+
+      let dbCourse = null;
+      if (courseCode) {
+        const { data: cc, error: ccErr } = await client
+          .from("canonical_courses")
+          .select("id, code, course_id, status")
+          .eq("code", courseCode)
+          .maybeSingle();
+        if (ccErr) throw ccErr;
+        dbCourse = cc;
+      } else if (courseId) {
+        const { data: cc, error: ccErr } = await client
+          .from("canonical_courses")
+          .select("id, code, course_id, status")
+          .eq("id", courseId)
+          .maybeSingle();
+        if (ccErr) throw ccErr;
+        dbCourse = cc;
+      }
+
+      if (!inManifestCourse && !dbCourse) {
+        throw new Error(
+          `NOT_READY: Offering '${off.slug}' item '${courseCode || courseId}' cannot be resolved to any canonical course.`
+        );
+      }
+    }
+  }
+
+  // 4. Canonical courses conflicts & V5 deep readiness check
   for (const c of manifest.learning.courses) {
     if (!c.course_id) {
       throw new Error(`NOT_READY: Course '${c.code}' course_id cannot be null.`);
@@ -467,7 +546,11 @@ export async function applyAgencyProvisioning(manifest, options = {}) {
   // 1. Run Complete Preflight Before First Write
   await preflightAgencyProvisioning(manifest, options);
 
-  // 2. Synthetic Marker Safety Check
+  // 2. Synthetic Target & Marker Safety Check
+  if (options.isSynthetic) {
+    assertTrustedSyntheticTestTarget(options, client);
+  }
+
   const { data: existingAgency, error: agLookupErr } = await client
     .from("agencies")
     .select("id, slug")
@@ -489,12 +572,7 @@ export async function applyAgencyProvisioning(manifest, options = {}) {
     }
   }
 
-  // 3. Simulated failure injection for atomic rollback regression tests
-  if (options.injectFailureAt === "final_write") {
-    throw new Error("INJECTED_FAILURE_TEST: Mid-apply failure simulated");
-  }
-
-  // 4. Server-Side Atomic Provisioning RPC
+  // 3. Server-Side Atomic Provisioning RPC
   const { data: rpcResult, error: rpcErr } = await client.rpc("provision_agency_manifest_atomic", {
     p_manifest: manifest,
     p_is_synthetic: !!options.isSynthetic,
@@ -747,16 +825,14 @@ export async function deprovisionAgency(slug, options = {}) {
     throw new Error("deprovisionAgency requires options.confirm = true to execute deletion.");
   }
 
-  // 2. Safe Deprovision Invariant: Must be explicit test target
-  if (!options.isTestTarget) {
-    throw new Error("SECURITY VIOLATION: Deprovisioning is only permitted when options.isTestTarget is explicitly true.");
-  }
+  const client = options.supabaseClient || defaultSupabase;
+
+  // 2. Safe Deprovision Invariant: Must be verified isolated test target
+  assertTrustedSyntheticTestTarget(options, client);
 
   if (!options.rehearsalRunId) {
     throw new Error("SECURITY VIOLATION: Deprovisioning requires options.rehearsalRunId.");
   }
-
-  const client = options.supabaseClient || defaultSupabase;
 
   const { data: agency, error: agErr } = await client
     .from("agencies")

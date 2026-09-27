@@ -187,7 +187,7 @@ test("SECOND-TENANT-ISOLATION: Strict Two-Way Request-Bound Boundary Enforcement
     // 1. PROVISION TENANT ALPHA
     // -------------------------------------------------------------------------
     await t.test("O.1: Provision Tenant Alpha with 6 UI profiles and full readiness", async () => {
-      const resA = await applyAgencyProvisioning(manifestA, { isSynthetic: true, rehearsalRunId });
+      const resA = await applyAgencyProvisioning(manifestA, { isSynthetic: true, isTestTarget: true, rehearsalRunId });
       assert.equal(resA.ok, true);
       agencyIdA = resA.agencyId;
 
@@ -209,9 +209,9 @@ test("SECOND-TENANT-ISOLATION: Strict Two-Way Request-Bound Boundary Enforcement
 
       await assert.rejects(
         async () => {
-          await applyAgencyProvisioning(collisionManifest, { isSynthetic: true, rehearsalRunId });
+          await applyAgencyProvisioning(collisionManifest, { isSynthetic: true, isTestTarget: true, rehearsalRunId });
         },
-        /Domain collision detected/
+        /Domain collision detected|domain_ownership_conflict/
       );
 
       // Verify NO partial agency row was created for Beta!
@@ -223,7 +223,7 @@ test("SECOND-TENANT-ISOLATION: Strict Two-Way Request-Bound Boundary Enforcement
     // 3. PROVISION TENANT BETA
     // -------------------------------------------------------------------------
     await t.test("O.3: Provision Tenant Beta with unique isolated domains and full readiness", async () => {
-      const resB = await applyAgencyProvisioning(manifestB, { isSynthetic: true, rehearsalRunId });
+      const resB = await applyAgencyProvisioning(manifestB, { isSynthetic: true, isTestTarget: true, rehearsalRunId });
       assert.equal(resB.ok, true);
       agencyIdB = resB.agencyId;
       assert.notEqual(agencyIdA, agencyIdB);
@@ -414,6 +414,40 @@ test("SECOND-TENANT-ISOLATION: Strict Two-Way Request-Bound Boundary Enforcement
         p_asset_id: assetIdB
       });
       assert.equal(positivePlaybackB.data?.authorized, true, "Student B on Tenant B with valid asset must be authorized");
+
+      // Positive Request-Bound Order Reads
+      const { data: ordAData, error: ordAErr } = await authUserClientA
+        .from("agency_orders")
+        .select("id, status")
+        .eq("id", orderIdA)
+        .single();
+      assert.ifError(ordAErr);
+      assert.equal(ordAData.id, orderIdA);
+
+      const { data: ordBData, error: ordBErr } = await authUserClientB
+        .from("agency_orders")
+        .select("id, status")
+        .eq("id", orderIdB)
+        .single();
+      assert.ifError(ordBErr);
+      assert.equal(ordBData.id, orderIdB);
+
+      // Positive Request-Bound Entitlement Reads
+      const { data: entAData, error: entAErr } = await authUserClientA
+        .from("student_entitlements")
+        .select("id, status")
+        .eq("agency_id", agencyIdA)
+        .single();
+      assert.ifError(entAErr);
+      assert.equal(entAData.status, "active");
+
+      const { data: entBData, error: entBErr } = await authUserClientB
+        .from("student_entitlements")
+        .select("id, status")
+        .eq("agency_id", agencyIdB)
+        .single();
+      assert.ifError(entBErr);
+      assert.equal(entBData.status, "active");
     });
 
     // -------------------------------------------------------------------------
@@ -455,6 +489,36 @@ test("SECOND-TENANT-ISOLATION: Strict Two-Way Request-Bound Boundary Enforcement
       });
       assert.equal(crossOrderB.ok, false);
       assert.equal(crossOrderB.status, 403);
+
+      // Cross-tenant Order read denial
+      const { data: crossOrdA } = await authUserClientA
+        .from("agency_orders")
+        .select("id")
+        .eq("id", orderIdB)
+        .maybeSingle();
+      assert.equal(crossOrdA, null, "Student A cannot read Tenant B's order");
+
+      const { data: crossOrdB } = await authUserClientB
+        .from("agency_orders")
+        .select("id")
+        .eq("id", orderIdA)
+        .maybeSingle();
+      assert.equal(crossOrdB, null, "Student B cannot read Tenant A's order");
+
+      // Cross-tenant Entitlement read denial
+      const { data: crossEntA } = await authUserClientA
+        .from("student_entitlements")
+        .select("id")
+        .eq("agency_id", agencyIdB)
+        .maybeSingle();
+      assert.equal(crossEntA, null, "Student A cannot read Tenant B's entitlement");
+
+      const { data: crossEntB } = await authUserClientB
+        .from("student_entitlements")
+        .select("id")
+        .eq("agency_id", agencyIdA)
+        .maybeSingle();
+      assert.equal(crossEntB, null, "Student B cannot read Tenant A's entitlement");
 
       // 6.3 Cross-tenant Playback RPC denial with VALID current-release assets
       const authUserClientA = createClient(

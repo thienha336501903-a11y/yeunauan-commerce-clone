@@ -107,6 +107,7 @@ async function main() {
         console.log(`[PROVISION-AGENCY] Applying provisioning for slug: ${manifest.agency?.slug}...`);
         const result = await applyAgencyProvisioning(manifest, {
           isSynthetic: options.synthetic,
+          isTestTarget: options.testTarget,
           rehearsalRunId: options.rehearsalRunId
         });
         console.log(JSON.stringify(result, null, 2));
@@ -142,14 +143,9 @@ async function main() {
           console.error("[ERROR] --rehearsal-run-id <run_id> is required for safe deprovisioning.");
           process.exit(1);
         }
-        const isTestEnvironment = Boolean(
-          options.testTarget ||
-          options.synthetic ||
-          process.env.NODE_ENV === "test"
-        );
         const result = await deprovisionAgency(targetSlug, {
           confirm: options.confirm,
-          isTestTarget: isTestEnvironment,
+          isTestTarget: options.testTarget,
           rehearsalRunId: options.rehearsalRunId
         });
         console.log(JSON.stringify(result, null, 2));

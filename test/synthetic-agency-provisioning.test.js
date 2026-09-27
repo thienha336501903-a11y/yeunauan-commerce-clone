@@ -16,6 +16,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
+import pg from "pg";
 import { supabase } from "../utils/supabase.js";
 import {
   validateManifest,
@@ -203,6 +204,7 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
     await t.test("L.3: Apply mode provisions all entities with trusted synthetic marker", async () => {
       const applyResult = await applyAgencyProvisioning(syntheticManifest, {
         isSynthetic: true,
+        isTestTarget: true,
         rehearsalRunId
       });
       assert.equal(applyResult.ok, true);
@@ -218,10 +220,12 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
       const [secondApply, thirdApply] = await Promise.all([
         applyAgencyProvisioning(syntheticManifest, {
           isSynthetic: true,
+          isTestTarget: true,
           rehearsalRunId
         }),
         applyAgencyProvisioning(syntheticManifest, {
           isSynthetic: true,
+          isTestTarget: true,
           rehearsalRunId
         })
       ]);
@@ -275,7 +279,7 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
 
       await assert.rejects(
         async () => {
-          await applyAgencyProvisioning(normalManifest, { isSynthetic: true, rehearsalRunId });
+          await applyAgencyProvisioning(normalManifest, { isSynthetic: true, isTestTarget: true, rehearsalRunId });
         },
         /cannot be converted to a synthetic rehearsal fixture via --synthetic/
       );
@@ -300,7 +304,7 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
       await supabase.from("agency_ui_profiles").delete().eq("agency_id", normAg.id);
       await supabase.from("agencies").delete().eq("id", normAg.id);
 
-      // 4. Injected mid-apply failure leaves ZERO partial state
+      // 4. Real DB late-failure trigger rollback test (ATOMIC_APPLY_LATE_FAILURE_ROLLBACK)
       const failSlug = `fail-agency-${nonce}`;
       const failManifest = JSON.parse(JSON.stringify(syntheticManifest));
       failManifest.agency.slug = failSlug;
@@ -321,26 +325,97 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
       failManifest.learning.courses[0].course_id = realCourseId;
       failManifest.learning.courses[0].lessons[0].v5_lesson_id = v5LessonId;
       failManifest.offerings[0].items[0].canonical_course_code = `FAIL-CC-${nonce}`;
-      failManifest.principals = [{ email: ownerEmail, role: "agency_owner" }];
+      failManifest.principals = [{ email: ownerEmail, role: "agency_owner", display_name: "FORCED_LATE_FAILURE_PROBE" }];
 
-      let caughtErr = null;
+      const pgClient = new pg.Client({ connectionString: process.env.DATABASE_URL || "postgres://postgres:postgres@127.0.0.1:54332/postgres" });
+      await pgClient.connect();
       try {
-        await applyAgencyProvisioning(failManifest, {
-          isSynthetic: true,
-          rehearsalRunId,
-          injectFailureAt: "final_write"
-        });
-      } catch (e) {
-        caughtErr = e;
-      }
-      assert.ok(caughtErr, "Should have thrown mid-apply failure");
-      assert.match(caughtErr.message || String(caughtErr), /INJECTED_FAILURE_TEST/);
+        await pgClient.query(`
+          CREATE OR REPLACE FUNCTION test_forced_late_failure_fn()
+          RETURNS trigger AS $$
+          BEGIN
+            IF NEW.display_name = 'FORCED_LATE_FAILURE_PROBE' THEN
+              RAISE EXCEPTION 'forced_late_failure: Injected late database failure in transaction';
+            END IF;
+            RETURN NEW;
+          END;
+          $$ LANGUAGE plpgsql;
 
-      // Assert zero partial rows remaining for failSlug
-      const { data: checkFailAg } = await supabase.from("agencies").select("id").eq("slug", failSlug).maybeSingle();
-      assert.equal(checkFailAg, null, "Agency record must be rolled back");
-      const { data: checkFailDom } = await supabase.from("agency_domains").select("id").eq("hostname", `fail-commerce-${nonce}.local`).maybeSingle();
-      assert.equal(checkFailDom, null, "Domain record must be rolled back");
+          DROP TRIGGER IF EXISTS test_forced_late_failure_trg ON public.agency_memberships;
+          CREATE TRIGGER test_forced_late_failure_trg
+          BEFORE INSERT ON public.agency_memberships
+          FOR EACH ROW EXECUTE FUNCTION test_forced_late_failure_fn();
+        `);
+
+        let caughtErr = null;
+        try {
+          await applyAgencyProvisioning(failManifest, {
+            isSynthetic: true,
+            isTestTarget: true,
+            rehearsalRunId
+          });
+        } catch (e) {
+          caughtErr = e;
+        }
+
+        assert.ok(caughtErr, "Should have thrown late database failure");
+        assert.match(caughtErr.message || String(caughtErr), /forced_late_failure/);
+
+        // Verify that 0 rows remain across all tenant tables
+        const [
+          { count: agCount },
+          { count: domCount },
+          { count: memCount },
+          { count: bankCount }
+        ] = await Promise.all([
+          supabase.from("agencies").select("id", { count: "exact", head: true }).eq("slug", failSlug),
+          supabase.from("agency_domains").select("id", { count: "exact", head: true }).eq("hostname", `fail-commerce-${nonce}.local`),
+          supabase.from("agency_memberships").select("id", { count: "exact", head: true }).eq("display_name", "FORCED_LATE_FAILURE_PROBE"),
+          supabase.from("agency_bank_accounts").select("id", { count: "exact", head: true }).eq("account_number", `777${nonce}`)
+        ]);
+
+        assert.equal(agCount || 0, 0, "Agency table must have 0 rows after rollback");
+        assert.equal(domCount || 0, 0, "Domain table must have 0 rows after rollback");
+        assert.equal(memCount || 0, 0, "Membership table must have 0 rows after rollback");
+        assert.equal(bankCount || 0, 0, "Bank table must have 0 rows after rollback");
+      } finally {
+        await pgClient.query(`
+          DROP TRIGGER IF EXISTS test_forced_late_failure_trg ON public.agency_memberships;
+          DROP FUNCTION IF EXISTS test_forced_late_failure_fn();
+        `);
+        await pgClient.end();
+      }
+
+      // 5. Fix 1: Concurrent different-slug domain collision (DOMAIN_OWNERSHIP_IMMUTABLE)
+      // Attempting to claim existing domain from another agency must fail closed and leave zero partial rows
+      const collisionSlug = `coll-agency-${nonce}`;
+      const collisionManifest = JSON.parse(JSON.stringify(syntheticManifest));
+      collisionManifest.agency.slug = collisionSlug;
+      // Re-use syntheticCommerceHost which already belongs to syntheticSlug
+      collisionManifest.domains = [{ hostname: syntheticCommerceHost, is_primary: true }];
+      collisionManifest.bank_accounts[0].account_number = `999${nonce}`;
+      collisionManifest.learning.courses[0].code = `COLL-CC-${nonce}`;
+      collisionManifest.learning.courses[0].course_id = realCourseId;
+      collisionManifest.learning.courses[0].lessons[0].v5_lesson_id = v5LessonId;
+      collisionManifest.offerings[0].items[0].canonical_course_code = `COLL-CC-${nonce}`;
+
+      await assert.rejects(
+        async () => {
+          await applyAgencyProvisioning(collisionManifest, {
+            isSynthetic: true,
+            isTestTarget: true,
+            rehearsalRunId
+          });
+        },
+        /Domain collision detected|domain_ownership_conflict/
+      );
+
+      // Verify domain ownership is unchanged and collisionSlug has 0 rows
+      const { data: domCheck } = await supabase.from("agency_domains").select("agency_id").eq("hostname", syntheticCommerceHost).single();
+      assert.equal(domCheck.agency_id, agencyId, "Domain ownership must remain with original agency");
+
+      const { count: collAgCount } = await supabase.from("agencies").select("id", { count: "exact", head: true }).eq("slug", collisionSlug);
+      assert.equal(collAgCount || 0, 0, "Losing collision tenant must leave 0 rows");
     });
 
     // -------------------------------------------------------------------------
@@ -466,10 +541,25 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
 
       // 6.4 Mutate ALL THREE after checkout:
       // (1) Offering price
-      await supabase.from("agency_offerings").update({ sale_price_vnd: 999999 }).eq("id", offeringId);
+      const { data: updatedOff, error: offUpErr } = await supabase
+        .from("agency_offerings")
+        .update({ sale_price_vnd: 999999 })
+        .eq("id", offeringId)
+        .select("sale_price_vnd")
+        .single();
+      assert.ifError(offUpErr);
+      assert.equal(Number(updatedOff.sale_price_vnd), 999999, "Live offering price must be successfully mutated");
 
       // (2) Default bank account
-      await supabase.from("agency_bank_accounts").update({ bank_code: "BIDV", account_number: "999999999" }).eq("id", bankAccountId);
+      const { data: updatedBank, error: bankUpErr } = await supabase
+        .from("agency_bank_accounts")
+        .update({ bank_code: "BIDV", account_number: "999999999" })
+        .eq("id", bankAccountId)
+        .select("bank_code, account_number")
+        .single();
+      assert.ifError(bankUpErr);
+      assert.equal(updatedBank.bank_code, "BIDV", "Live bank code must be successfully mutated");
+      assert.equal(updatedBank.account_number, "999999999", "Live account number must be successfully mutated");
 
       // (3) Offering items - use a second VALID existing canonical course
       const { data: secondCcList } = await supabase
@@ -490,7 +580,7 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
         sort_order: 2
       }).select("id").single();
       assert.ifError(insItemErr);
-      assert.ok(insItem);
+      assert.ok(insItem, "Offering items mutation must succeed");
 
       // Verify order_items BEFORE retry
       const { data: storedOrderItemsBefore } = await supabase

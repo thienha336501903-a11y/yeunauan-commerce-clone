@@ -503,6 +503,10 @@ test("B5-REAL-DB: Complete Order Model, Lock Order, and Real Concurrency Suite",
       assert.equal(entRes.rows[0].status, "active", "Course 1 entitlement must remain active");
       assert.equal(entRes.rows[1].status, "active", "Course 2 entitlement must remain active");
     } finally {
+      if (signalClient2) signalClient2();
+      if (releaseClient1) releaseClient1();
+      try { await client1.query("ROLLBACK"); } catch (_) {}
+      try { await client2.query("ROLLBACK"); } catch (_) {}
       client1.release();
       client2.release();
       observer.release();
@@ -689,6 +693,51 @@ test("B5-REAL-DB: Complete Order Model, Lock Order, and Real Concurrency Suite",
       assert.equal(entRes.rows.length, 2);
       assert.equal(entRes.rows[0].status, "active");
       assert.equal(entRes.rows[1].status, "active");
+    } finally {
+      if (signalClient2) signalClient2();
+      if (releaseClient1) releaseClient1();
+      try { await client1.query("ROLLBACK"); } catch (_) {}
+      try { await client2.query("ROLLBACK"); } catch (_) {}
+      client1.release();
+      client2.release();
+      observer.release();
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // TEST 8: Deliberate Negative Observation & Bounded Non-Hanging Execution
+  // Proves observer loop terminates strictly at deadline without hanging
+  // ---------------------------------------------------------------------------
+  await t.test("B5.REAL-8: Negative lock contention observation proves bounded non-hanging execution", async () => {
+    const client1 = await pool.connect();
+    const client2 = await pool.connect();
+    const observer = await pool.connect();
+
+    try {
+      const pid1 = (await client1.query("SELECT pg_backend_pid()")).rows[0].pg_backend_pid;
+      const pid2 = (await client2.query("SELECT pg_backend_pid()")).rows[0].pg_backend_pid;
+
+      const startTime = Date.now();
+      const timeoutLimitMs = 150;
+      const deadline = startTime + timeoutLimitMs;
+      let observedBlockers = [];
+      let lockContentionObserved = false;
+
+      while (Date.now() < deadline) {
+        const check = await observer.query("SELECT pg_blocking_pids($1::int) as blockers", [pid2]);
+        const blockers = check.rows[0]?.blockers || [];
+        if (blockers.includes(pid1)) {
+          lockContentionObserved = true;
+          observedBlockers = blockers;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 10));
+      }
+
+      const elapsedMs = Date.now() - startTime;
+      assert.equal(lockContentionObserved, false, "Negative test must NOT observe lock contention");
+      assert.ok(elapsedMs >= timeoutLimitMs, `Must have waited until timeout (${elapsedMs}ms >= ${timeoutLimitMs}ms)`);
+      assert.ok(elapsedMs < timeoutLimitMs + 200, `Execution must remain bounded and not hang (${elapsedMs}ms)`);
     } finally {
       client1.release();
       client2.release();
