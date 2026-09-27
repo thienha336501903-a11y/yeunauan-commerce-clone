@@ -8,6 +8,11 @@ import path from "node:path";
 import pg from "pg";
 import { validateExplicitLoopbackTargetUrls } from "../test/helpers/pre-m0c-test-target.js";
 
+const FORBIDDEN_SYSTEM_IDENTIFIERS = new Set([
+  "7666007964130682852", // Main
+  "7642734024280108049"  // Legacy
+]);
+
 async function main() {
   const { dbUrl, supabaseUrl } = validateExplicitLoopbackTargetUrls();
   const identityFileRaw = String(process.env.PRE_M0C_TEST_DB_IDENTITY_FILE || "").trim();
@@ -32,6 +37,9 @@ async function main() {
         (SELECT count(*)::int FROM public.agency_test_fixtures) AS fixture_count
     `);
     const row = result.rows[0];
+    if (FORBIDDEN_SYSTEM_IDENTIFIERS.has(String(row.system_identifier))) {
+      throw new Error("Refusing bootstrap: connected PostgreSQL cluster is protected Main/Legacy, even if reached through a loopback alias or tunnel.");
+    }
     if (row.guard_table) throw new Error("Refusing bootstrap: test-target guard already exists.");
     if (row.fixture_count !== 0) throw new Error("Refusing bootstrap: synthetic fixture rows already exist.");
 
