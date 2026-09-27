@@ -217,6 +217,42 @@ export async function checkoutOffering(req, checkoutPayload, options = {}) {
 }
 
 /**
+ * Reads one order through the same request-bound tenant + membership authority
+ * used by checkout. Students can read only their own order in the trusted host
+ * tenant; cross-host/cross-membership reads fail closed.
+ */
+export async function getAgencyOrder(req, orderId, options = {}) {
+  assertServerEnvironment();
+
+  const authResult = await requireAgencyMembership(req, options);
+  if (!authResult.ok) return authResult;
+
+  const { membership, tenant } = authResult;
+  const client = _getCommerceDbClient(tenant, options);
+
+  if (!orderId) {
+    return { ok: false, status: 400, code: "missing_order_id", error: "orderId is required." };
+  }
+
+  const { data, error } = await client
+    .from("agency_orders")
+    .select("id, agency_id, membership_id, status, order_code, total_amount_vnd, currency, created_at")
+    .eq("id", orderId)
+    .eq("agency_id", tenant.agencyId)
+    .eq("membership_id", membership.id)
+    .maybeSingle();
+
+  if (error) {
+    return { ok: false, status: 500, code: "order_read_error", error: error.message };
+  }
+  if (!data) {
+    return { ok: false, status: 404, code: "order_not_found", error: "Order not found in current Agency membership." };
+  }
+
+  return { ok: true, status: 200, order: data };
+}
+
+/**
  * Approves a pending agency order and grants course entitlements.
  * Only agency staff or agency owner can approve orders.
  * Transactional, deterministic lock order, and idempotent.
