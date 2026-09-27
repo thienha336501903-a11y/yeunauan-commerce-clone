@@ -25,16 +25,42 @@ import {
 import { requireAgencyMembership } from "../utils/agency-auth.js";
 import {
   checkoutOffering,
-  approveAgencyOrder
+  approveAgencyOrder,
+  getAgencyOrder
 } from "../utils/agency-commerce.js";
 import {
   submitAgencyHomework,
   listAgencyHomework
 } from "../utils/agency-homework.js";
 import { _clearTenantCache } from "../utils/tenant-resolver.js";
+import {
+  handleAgencyV5Play,
+  handleAgencyLearnerDashboard
+} from "../utils/agency-lms-bridge.js";
+import {
+  installPreM0cTestTargetGuard,
+  removePreM0cTestTargetGuard
+} from "./helpers/pre-m0c-test-target.js";
+
+function createCaptureResponse() {
+  const state = { status: 200, body: null, headers: {} };
+  return {
+    state,
+    setHeader(name, value) { state.headers[String(name).toLowerCase()] = value; },
+    status(code) { state.status = code; return this; },
+    json(body) { state.body = body; return body; }
+  };
+}
+
+function makePlaybackProofHeader() {
+  const { publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const publicJwk = publicKey.export({ format: "jwk" });
+  return Buffer.from(JSON.stringify(publicJwk), "utf8").toString("base64url");
+}
 
 test("SECOND-TENANT-ISOLATION: Strict Two-Way Request-Bound Boundary Enforcement Across Tenants", async (t) => {
   const rehearsalRunId = crypto.randomUUID();
+  await installPreM0cTestTargetGuard(rehearsalRunId);
   const nonce = Date.now().toString().slice(-6);
   const slugA = `tenant-a-${nonce}`;
   const slugB = `tenant-b-${nonce}`;
@@ -167,6 +193,8 @@ test("SECOND-TENANT-ISOLATION: Strict Two-Way Request-Bound Boundary Enforcement
   let memberIdB = null;
   let userJwtA = null;
   let userJwtB = null;
+  let authUserClientA = null;
+  let authUserClientB = null;
 
   let offeringIdA = null;
   let offeringIdB = null;
@@ -258,6 +286,11 @@ test("SECOND-TENANT-ISOLATION: Strict Two-Way Request-Bound Boundary Enforcement
       });
       assert.ifError(signinAErr);
       userJwtA = signinA.session.access_token;
+      authUserClientA = createClient(
+        process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
+        process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+        { global: { headers: { Authorization: `Bearer ${userJwtA}` } } }
+      );
 
       const { data: memA, error: memAErr } = await supabase
         .from("agency_memberships")
@@ -290,6 +323,11 @@ test("SECOND-TENANT-ISOLATION: Strict Two-Way Request-Bound Boundary Enforcement
       });
       assert.ifError(signinBErr);
       userJwtB = signinB.session.access_token;
+      authUserClientB = createClient(
+        process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
+        process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+        { global: { headers: { Authorization: `Bearer ${userJwtB}` } } }
+      );
 
       const { data: memB, error: memBErr } = await supabase
         .from("agency_memberships")
@@ -388,66 +426,67 @@ test("SECOND-TENANT-ISOLATION: Strict Two-Way Request-Bound Boundary Enforcement
       const readyB = await verifyAgencyReadiness(slugB);
       assert.equal(readyB.ok, true, "Beta tenant must pass verifyAgencyReadiness");
 
-      // Positive Playback Authorization with valid current-release assets
-      const authUserClientA = createClient(
-        process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
-        process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-        { global: { headers: { Authorization: `Bearer ${userJwtA}` } } }
-      );
-      const positivePlaybackA = await authUserClientA.rpc("v5_authorize_agency_playback", {
-        p_agency_id: agencyIdA,
-        p_membership_id: memberIdA,
-        p_lesson_id: canonicalLessonIdA,
-        p_asset_id: assetIdA
-      });
-      assert.equal(positivePlaybackA.data?.authorized, true, "Student A on Tenant A with valid asset must be authorized");
+      // Positive request-bound ORDER reads through the application seam.
+      const ownOrderA = await getAgencyOrder(reqA, orderIdA);
+      assert.equal(ownOrderA.ok, true);
+      assert.equal(ownOrderA.order.id, orderIdA);
+      const ownOrderB = await getAgencyOrder(reqB, orderIdB);
+      assert.equal(ownOrderB.ok, true);
+      assert.equal(ownOrderB.order.id, orderIdB);
 
-      const authUserClientB = createClient(
-        process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
-        process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-        { global: { headers: { Authorization: `Bearer ${userJwtB}` } } }
-      );
-      const positivePlaybackB = await authUserClientB.rpc("v5_authorize_agency_playback", {
-        p_agency_id: agencyIdB,
-        p_membership_id: memberIdB,
-        p_lesson_id: canonicalLessonIdB,
-        p_asset_id: assetIdB
-      });
-      assert.equal(positivePlaybackB.data?.authorized, true, "Student B on Tenant B with valid asset must be authorized");
+      // Positive learner/entitlement reads through the LMS dashboard application seam.
+      const learnerResA = createCaptureResponse();
+      await handleAgencyLearnerDashboard(reqA, learnerResA);
+      assert.equal(learnerResA.state.status, 200);
+      assert.equal(learnerResA.state.body?.success, true);
+      assert.ok(learnerResA.state.body?.entitlements?.some((ent) => ent.canonical_course_id === canonicalCourseIdA));
 
-      // Positive Request-Bound Order Reads
-      const { data: ordAData, error: ordAErr } = await authUserClientA
-        .from("agency_orders")
-        .select("id, status")
-        .eq("id", orderIdA)
-        .single();
-      assert.ifError(ordAErr);
-      assert.equal(ordAData.id, orderIdA);
+      const learnerResB = createCaptureResponse();
+      await handleAgencyLearnerDashboard(reqB, learnerResB);
+      assert.equal(learnerResB.state.status, 200);
+      assert.equal(learnerResB.state.body?.success, true);
+      assert.ok(learnerResB.state.body?.entitlements?.some((ent) => ent.canonical_course_id === canonicalCourseIdB));
 
-      const { data: ordBData, error: ordBErr } = await authUserClientB
-        .from("agency_orders")
-        .select("id, status")
-        .eq("id", orderIdB)
-        .single();
-      assert.ifError(ordBErr);
-      assert.equal(ordBData.id, orderIdB);
+      // Positive playback through the actual host-bound Agency application seam.
+      const proofA = makePlaybackProofHeader();
+      const playReqA = {
+        method: "GET",
+        headers: {
+          host: hostA2,
+          authorization: `Bearer ${userJwtA}`,
+          "x-v5-playback-key": proofA,
+          "user-agent": "pre-m0c-isolation-test"
+        },
+        query: {
+          course: `CC-ALPHA-${nonce}`,
+          lesson: canonicalLessonIdA,
+          asset: assetIdA
+        }
+      };
+      const playResA = createCaptureResponse();
+      await handleAgencyV5Play(playReqA, playResA);
+      assert.equal(playResA.state.status, 200, `A->A playback failed: ${JSON.stringify(playResA.state.body)}`);
+      assert.equal(playResA.state.body?.success, true);
 
-      // Positive Request-Bound Entitlement Reads
-      const { data: entAData, error: entAErr } = await authUserClientA
-        .from("student_entitlements")
-        .select("id, status")
-        .eq("agency_id", agencyIdA)
-        .single();
-      assert.ifError(entAErr);
-      assert.equal(entAData.status, "active");
-
-      const { data: entBData, error: entBErr } = await authUserClientB
-        .from("student_entitlements")
-        .select("id, status")
-        .eq("agency_id", agencyIdB)
-        .single();
-      assert.ifError(entBErr);
-      assert.equal(entBData.status, "active");
+      const proofB = makePlaybackProofHeader();
+      const playReqB = {
+        method: "GET",
+        headers: {
+          host: hostB2,
+          authorization: `Bearer ${userJwtB}`,
+          "x-v5-playback-key": proofB,
+          "user-agent": "pre-m0c-isolation-test"
+        },
+        query: {
+          course: `CC-BETA-${nonce}`,
+          lesson: canonicalLessonIdB,
+          asset: assetIdB
+        }
+      };
+      const playResB = createCaptureResponse();
+      await handleAgencyV5Play(playReqB, playResB);
+      assert.equal(playResB.state.status, 200, `B->B playback failed: ${JSON.stringify(playResB.state.body)}`);
+      assert.equal(playResB.state.body?.success, true);
     });
 
     // -------------------------------------------------------------------------
@@ -490,65 +529,54 @@ test("SECOND-TENANT-ISOLATION: Strict Two-Way Request-Bound Boundary Enforcement
       assert.equal(crossOrderB.ok, false);
       assert.equal(crossOrderB.status, 403);
 
-      // Cross-tenant Order read denial
-      const { data: crossOrdA } = await authUserClientA
-        .from("agency_orders")
-        .select("id")
-        .eq("id", orderIdB)
-        .maybeSingle();
-      assert.equal(crossOrdA, null, "Student A cannot read Tenant B's order");
+      // Cross-tenant ORDER read denial through the same application seam.
+      const crossOrderReadA = await getAgencyOrder(reqA_on_B, orderIdB);
+      assert.equal(crossOrderReadA.ok, false);
+      assert.equal(crossOrderReadA.status, 403);
 
-      const { data: crossOrdB } = await authUserClientB
-        .from("agency_orders")
-        .select("id")
-        .eq("id", orderIdA)
-        .maybeSingle();
-      assert.equal(crossOrdB, null, "Student B cannot read Tenant A's order");
+      const crossOrderReadB = await getAgencyOrder(reqB_on_A, orderIdA);
+      assert.equal(crossOrderReadB.ok, false);
+      assert.equal(crossOrderReadB.status, 403);
 
-      // Cross-tenant Entitlement read denial
-      const { data: crossEntA } = await authUserClientA
-        .from("student_entitlements")
-        .select("id")
-        .eq("agency_id", agencyIdB)
-        .maybeSingle();
-      assert.equal(crossEntA, null, "Student A cannot read Tenant B's entitlement");
+      // Cross-tenant learner/entitlement denial through LMS application handler.
+      const learnerCrossA = createCaptureResponse();
+      await handleAgencyLearnerDashboard(reqA_on_B, learnerCrossA);
+      assert.equal(learnerCrossA.state.status, 403);
+      const learnerCrossB = createCaptureResponse();
+      await handleAgencyLearnerDashboard(reqB_on_A, learnerCrossB);
+      assert.equal(learnerCrossB.state.status, 403);
 
-      const { data: crossEntB } = await authUserClientB
-        .from("student_entitlements")
-        .select("id")
-        .eq("agency_id", agencyIdA)
-        .maybeSingle();
-      assert.equal(crossEntB, null, "Student B cannot read Tenant A's entitlement");
+      // Cross-tenant playback denial through the host-bound Agency playback seam
+      // using real current-release assets for the destination tenant.
+      const crossPlayReqA = {
+        method: "GET",
+        headers: {
+          host: hostB2,
+          authorization: `Bearer ${userJwtA}`,
+          "x-v5-playback-key": makePlaybackProofHeader(),
+          "user-agent": "pre-m0c-isolation-test"
+        },
+        query: { course: `CC-BETA-${nonce}`, lesson: canonicalLessonIdB, asset: assetIdB }
+      };
+      const crossPlayResA = createCaptureResponse();
+      await handleAgencyV5Play(crossPlayReqA, crossPlayResA);
+      assert.equal(crossPlayResA.state.status, 403);
+      assert.equal(crossPlayResA.state.body?.success, false);
 
-      // 6.3 Cross-tenant Playback RPC denial with VALID current-release assets
-      const authUserClientA = createClient(
-        process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
-        process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-        { global: { headers: { Authorization: `Bearer ${userJwtA}` } } }
-      );
-      const authUserClientB = createClient(
-        process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
-        process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-        { global: { headers: { Authorization: `Bearer ${userJwtB}` } } }
-      );
-
-      // Student A attempting to playback Tenant B's REAL valid asset on Tenant B -> DENIED
-      const crossPlaybackA = await authUserClientA.rpc("v5_authorize_agency_playback", {
-        p_agency_id: agencyIdB,
-        p_membership_id: memberIdA,
-        p_lesson_id: canonicalLessonIdB,
-        p_asset_id: assetIdB
-      });
-      assert.equal(crossPlaybackA.data?.authorized, false, "Cross-tenant playback A on B must be denied");
-
-      // Student B attempting to playback Tenant A's REAL valid asset on Tenant A -> DENIED
-      const crossPlaybackB = await authUserClientB.rpc("v5_authorize_agency_playback", {
-        p_agency_id: agencyIdA,
-        p_membership_id: memberIdB,
-        p_lesson_id: canonicalLessonIdA,
-        p_asset_id: assetIdA
-      });
-      assert.equal(crossPlaybackB.data?.authorized, false, "Cross-tenant playback B on A must be denied");
+      const crossPlayReqB = {
+        method: "GET",
+        headers: {
+          host: hostA2,
+          authorization: `Bearer ${userJwtB}`,
+          "x-v5-playback-key": makePlaybackProofHeader(),
+          "user-agent": "pre-m0c-isolation-test"
+        },
+        query: { course: `CC-ALPHA-${nonce}`, lesson: canonicalLessonIdA, asset: assetIdA }
+      };
+      const crossPlayResB = createCaptureResponse();
+      await handleAgencyV5Play(crossPlayReqB, crossPlayResB);
+      assert.equal(crossPlayResB.state.status, 403);
+      assert.equal(crossPlayResB.state.body?.success, false);
 
       // 6.4 Cross-tenant Homework denial
       // A cannot submit homework to B
@@ -616,5 +644,6 @@ test("SECOND-TENANT-ISOLATION: Strict Two-Way Request-Bound Boundary Enforcement
         }
       } catch (_) {}
     });
+    await removePreM0cTestTargetGuard(rehearsalRunId);
   }
 });
