@@ -379,6 +379,25 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
       const pgClient = new pg.Client({ connectionString: process.env.PRE_M0C_TEST_DATABASE_URL });
       await pgClient.connect();
       try {
+        const rollbackBaseline = (
+          await pgClient.query(`
+            SELECT jsonb_build_object(
+              'agencies', (SELECT count(*) FROM public.agencies),
+              'domains', (SELECT count(*) FROM public.agency_domains),
+              'ui_profiles', (SELECT count(*) FROM public.agency_ui_profiles),
+              'banks', (SELECT count(*) FROM public.agency_bank_accounts),
+              'offerings', (SELECT count(*) FROM public.agency_offerings),
+              'offering_items', (SELECT count(*) FROM public.agency_offering_items),
+              'memberships', (SELECT count(*) FROM public.agency_memberships),
+              'fixtures', (SELECT count(*) FROM public.agency_test_fixtures),
+              'canonical_courses', (SELECT count(*) FROM public.canonical_courses),
+              'canonical_lessons', (SELECT count(*) FROM public.canonical_lessons),
+              'v5_configs', (SELECT count(*) FROM public.v5_course_configs),
+              'v5_releases', (SELECT count(*) FROM public.v5_releases)
+            ) AS state
+          `)
+        ).rows[0].state;
+
         await pgClient.query(`
           CREATE OR REPLACE FUNCTION test_forced_late_failure_fn()
           RETURNS trigger AS $$
@@ -462,6 +481,30 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
         assert.ifError(sharedCfgErr);
         assert.equal(sharedConfig.course_id, realCourseId);
         assert.equal(sharedConfig.status, "published");
+
+        const rollbackAfter = (
+          await pgClient.query(`
+            SELECT jsonb_build_object(
+              'agencies', (SELECT count(*) FROM public.agencies),
+              'domains', (SELECT count(*) FROM public.agency_domains),
+              'ui_profiles', (SELECT count(*) FROM public.agency_ui_profiles),
+              'banks', (SELECT count(*) FROM public.agency_bank_accounts),
+              'offerings', (SELECT count(*) FROM public.agency_offerings),
+              'offering_items', (SELECT count(*) FROM public.agency_offering_items),
+              'memberships', (SELECT count(*) FROM public.agency_memberships),
+              'fixtures', (SELECT count(*) FROM public.agency_test_fixtures),
+              'canonical_courses', (SELECT count(*) FROM public.canonical_courses),
+              'canonical_lessons', (SELECT count(*) FROM public.canonical_lessons),
+              'v5_configs', (SELECT count(*) FROM public.v5_course_configs),
+              'v5_releases', (SELECT count(*) FROM public.v5_releases)
+            ) AS state
+          `)
+        ).rows[0].state;
+        assert.deepEqual(
+          rollbackAfter,
+          rollbackBaseline,
+          "Forced late failure must leave every provisioning-owned and shared canonical/V5 table at its exact pre-call row count"
+        );
       } finally {
         await pgClient.query(`
           DROP TRIGGER IF EXISTS test_forced_late_failure_trg ON public.agency_memberships;
