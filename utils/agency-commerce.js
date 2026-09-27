@@ -236,7 +236,7 @@ export async function getAgencyOrder(req, orderId, options = {}) {
 
   const { data, error } = await client
     .from("agency_orders")
-    .select("id, agency_id, membership_id, status, order_code, total_amount_vnd, currency, created_at")
+    .select("id, agency_id, membership_id, status, order_code, total_amount_vnd, created_at")
     .eq("id", orderId)
     .eq("agency_id", tenant.agencyId)
     .eq("membership_id", membership.id)

@@ -336,7 +336,8 @@ async function verifyB7PostgrestWriteDenials() {
   const { data: userCreated, error: createErr } = await adminClient.auth.admin.createUser({
     email: testEmail,
     password: testPassword,
-    email_confirm: true
+    email_confirm: true,
+    role: "authenticated"
   });
   if (createErr) throw new Error(`Failed to create test user for B7 gate: ${createErr.message}`);
   const testUserId = userCreated.user.id;

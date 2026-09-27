@@ -209,7 +209,8 @@ async function main() {
     const { data: userCreated, error: createError } = await adminClient.auth.admin.createUser({
       email: testEmail,
       password: testPassword,
-      email_confirm: true
+      email_confirm: true,
+      role: "authenticated"
     });
     if (createError) throw createError;
     userId = userCreated.user.id;
@@ -226,7 +227,7 @@ async function main() {
     const userJwt = signinData.session.access_token;
 
     const authUserClient = createClient(SUPABASE_URL, ANON_KEY, {
-      global: { headers: { Authorization: `Bearer ${userJwt}` } },
+      global: { headers: { Authorization: `Bearer ${userJwt}`, apikey: ANON_KEY } },
       auth: { autoRefreshToken: false, persistSession: false }
     });
 

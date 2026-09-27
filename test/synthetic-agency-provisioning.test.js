@@ -370,10 +370,11 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
           is_active: true
         }
       ];
-      failManifest.learning.courses[0].code = `FAIL-CC-${nonce}`;
+      failManifest.learning.courses[0].code = syntheticManifest.learning.courses[0].code;
       failManifest.learning.courses[0].course_id = realCourseId;
       failManifest.learning.courses[0].lessons[0].v5_lesson_id = v5LessonId;
-      failManifest.offerings[0].items[0].canonical_course_code = `FAIL-CC-${nonce}`;
+      failManifest.offerings[0].slug = `fail-offering-${nonce}`;
+      failManifest.offerings[0].items[0].canonical_course_code = syntheticManifest.learning.courses[0].code;
       failManifest.principals = [{ email: ownerEmail, role: "agency_owner", display_name: "FORCED_LATE_FAILURE_PROBE" }];
 
       const pgClient = new pg.Client({ connectionString: process.env.PRE_M0C_TEST_DATABASE_URL });
@@ -529,18 +530,28 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
 
       const raceManifestA = JSON.parse(JSON.stringify(syntheticManifest));
       const raceManifestB = JSON.parse(JSON.stringify(syntheticManifest));
+      const raceCourses = {
+        A: {
+          courseId: "119bc49d-4227-4dde-af9c-f74a66842497",
+          lessonId: "d2dd9349-e112-44d7-8b8f-848fa3cdb396"
+        },
+        B: {
+          courseId: "cf798e25-7672-4fd0-a680-2610d5b82480",
+          lessonId: "bd6919fd-6778-4ab9-adcd-b42c9e7f3e45"
+        }
+      };
       for (const [manifest, raceSlug, suffix] of [[raceManifestA, raceSlugA, "A"], [raceManifestB, raceSlugB, "B"]]) {
         manifest.agency.slug = raceSlug;
         manifest.agency.name = `Race Agency ${suffix}`;
         manifest.domains = [{ hostname: raceHost, is_primary: true, ssl_status: "active" }];
         manifest.bank_accounts[0].account_number = `77${suffix.charCodeAt(0)}${nonce}`;
         manifest.learning.courses[0].code = `RACE-${suffix}-CC-${nonce}`;
-        manifest.learning.courses[0].course_id = realCourseId;
+        manifest.learning.courses[0].course_id = raceCourses[suffix].courseId;
         manifest.learning.courses[0].lessons = [{
           title: `Race ${suffix} Lesson`,
           sort_order: 1,
           is_free_preview: false,
-          v5_lesson_id: v5LessonId
+          v5_lesson_id: raceCourses[suffix].lessonId
         }];
         manifest.offerings[0].slug = `race-offering-${suffix.toLowerCase()}-${nonce}`;
         manifest.offerings[0].items = [{
@@ -627,6 +638,13 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
       assert.equal(loserSpecificChecks[2].count || 0, 0, "Loser canonical-course insert must roll back");
 
       await deprovisionAgency(winnerSlug, { confirm: true, rehearsalRunId });
+      const winnerManifest = winnerSlug === raceSlugA ? raceManifestA : raceManifestB;
+      const winnerCcCode = winnerManifest.learning.courses[0].code;
+      const { data: winCc } = await supabase.from("canonical_courses").select("id").eq("code", winnerCcCode).maybeSingle();
+      if (winCc) {
+        await supabase.from("canonical_lessons").delete().eq("canonical_course_id", winCc.id);
+        await supabase.from("canonical_courses").delete().eq("id", winCc.id);
+      }
 
     });
 
@@ -759,7 +777,7 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
       };
       const { data: originalOrderItems, error: originalItemsErr } = await supabase
         .from("order_items")
-        .select("canonical_course_id, item_snapshot")
+        .select("canonical_course_id, price_vnd, quantity")
         .eq("order_id", orderId)
         .order("canonical_course_id", { ascending: true });
       assert.ifError(originalItemsErr);
@@ -848,6 +866,32 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
           break;
         }
       }
+      if (!secondReadyCourse) {
+        const secondCourseCode = `CANONICAL-SECOND-${nonce}`;
+        const { data: newCc, error: newCcErr } = await supabase
+          .from("canonical_courses")
+          .insert({
+            code: secondCourseCode,
+            default_title: "Second Ready Course",
+            course_id: "119bc49d-4227-4dde-af9c-f74a66842497",
+            status: "published"
+          })
+          .select("id, code, course_id")
+          .single();
+        assert.ifError(newCcErr);
+
+        const { error: newLessonErr } = await supabase
+          .from("canonical_lessons")
+          .insert({
+            canonical_course_id: newCc.id,
+            title: "Second Course Lesson 1",
+            sort_order: 1,
+            v5_lesson_id: "d2dd9349-e112-44d7-8b8f-848fa3cdb396",
+            is_free_preview: false
+          });
+        assert.ifError(newLessonErr);
+        secondReadyCourse = newCc;
+      }
       assert.ok(secondReadyCourse, "Must have a second canonical course with valid current published V5 release and lesson mapping");
       secondCourseId = secondReadyCourse.id;
 
@@ -886,7 +930,7 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
 
       const { data: storedOrderItemsAfter, error: itemsAfterErr } = await supabase
         .from("order_items")
-        .select("canonical_course_id, item_snapshot")
+        .select("canonical_course_id, price_vnd, quantity")
         .eq("order_id", orderId)
         .order("canonical_course_id", { ascending: true });
       assert.ifError(itemsAfterErr);
@@ -990,7 +1034,10 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
 
       // Clean up synthetic auth users
       if (secondCourseId) {
-        try { await supabase.from("canonical_courses").delete().eq("id", secondCourseId); } catch (_) {}
+        try {
+          await supabase.from("canonical_lessons").delete().eq("canonical_course_id", secondCourseId);
+          await supabase.from("canonical_courses").delete().eq("id", secondCourseId);
+        } catch (_) {}
       }
       if (ownerUserId) {
         try { await supabase.auth.admin.deleteUser(ownerUserId); } catch (_) {}
