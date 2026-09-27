@@ -171,6 +171,11 @@ function establishVerifiedContext(identity) {
 
 export async function installPreM0cTestTargetGuard(runId) {
   if (!runId) throw new Error("runId is required to install the isolated test-target guard.");
+  if (process.env.PRE_M0C_TEST_SAME_STACK_VERIFIED !== "true") {
+    throw new Error(
+      "SECURITY VIOLATION: Test-target guard creation requires the consolidated runner to verify the pinned DB identity and PG/PostgREST sentinel round-trip first."
+    );
+  }
 
   // Identity is established read-only before guard creation. A loopback URL by
   // itself is never sufficient authority because it may be a tunnel.
