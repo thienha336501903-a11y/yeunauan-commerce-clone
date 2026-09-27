@@ -227,123 +227,387 @@ test("B5-REAL-DB: Complete Order Model, Lock Order, and Real Concurrency Suite",
   });
 
   // ---------------------------------------------------------------------------
-  // TEST 5: Phase 3 & 4 — REAL Overlap Concurrency (Approval vs Refund with Barriers)
-  // Scenario A: Approval begins first; Refund runs concurrently on overlapping bundle
+  // TEST 5: Phase 2 FIX 2 — Offering Item Snapshot Race with Concurrent Mutation
+  // Connection A: checkout
+  // Connection B: add/remove offering item during checkout
+  // Deterministic barrier forces overlap
   // ---------------------------------------------------------------------------
-  await t.test("B5.REAL-5: Real concurrency barrier: Order 1 approval vs Order 2 refund (Approval starts first)", async () => {
-    const code1 = `CONC-APP-REF-1-${Date.now()}`;
-    const code2 = `CONC-APP-REF-2-${Date.now()}`;
+  await t.test("B5.REAL-5: Concurrent offering item mutation during checkout yields coherent snapshot", async () => {
+    const testOfferingId = randId();
+    const courseA = randId();
+    const courseB = randId();
+    const courseC = randId();
 
-    // Create 2 separate orders for Member B on offeringId2 (Pho Bo)
+    await pool.query(
+      `INSERT INTO public.canonical_courses (id, code, default_title, status)
+       VALUES ($1, $2, 'Course A', 'published'),
+              ($3, $4, 'Course B', 'published'),
+              ($5, $6, 'Course C', 'published')`,
+      [courseA, `CA-${Date.now()}`, courseB, `CB-${Date.now()}`, courseC, `CC-${Date.now()}`]
+    );
+
+    await pool.query(
+      `INSERT INTO public.agency_offerings (id, agency_id, slug, display_title, price_vnd, sale_price_vnd, is_published)
+       VALUES ($1, $2, $3, 'Race Bundle', 300000, 300000, true)`,
+      [testOfferingId, agencyId, `race-bundle-${Date.now()}`]
+    );
+
+    await pool.query(
+      `INSERT INTO public.agency_offering_items (agency_id, offering_id, item_type, canonical_course_id, sort_order)
+       VALUES ($1, $2, 'canonical_course', $3, 1),
+              ($1, $2, 'canonical_course', $4, 2)`,
+      [agencyId, testOfferingId, courseA, courseB]
+    );
+
+    const clientA = await pool.connect();
+    const clientB = await pool.connect();
+    const orderCode = `ORD-CONC-ITEMS-${Date.now()}`;
+
+    // Deterministic barrier
+    let signalB;
+    const barrierToB = new Promise((resolve) => { signalB = resolve; });
+    let signalA;
+    const barrierToA = new Promise((resolve) => { signalA = resolve; });
+
+    try {
+      const pA = (async () => {
+        await clientA.query("BEGIN");
+        // Lock offering row FOR SHARE to coordinate with B
+        await clientA.query("SELECT price_vnd FROM public.agency_offerings WHERE id = $1 FOR SHARE", [testOfferingId]);
+        signalB(); // Tell B that A is inside transaction
+        await barrierToA; // Wait until B has injected the offering mutation
+        const res = await clientA.query(
+          `SELECT public.checkout_agency_offering($1, $2, $3, NULL, $4) as result`,
+          [agencyId, membershipIdA, testOfferingId, orderCode]
+        );
+        await clientA.query("COMMIT");
+        return res.rows[0].result;
+      })();
+
+      const pB = (async () => {
+        await barrierToB; // Wait until A is inside transaction
+        // Concurrently mutate offering items (add course C)
+        await clientB.query(
+          `INSERT INTO public.agency_offering_items (agency_id, offering_id, item_type, canonical_course_id, sort_order)
+           VALUES ($1, $2, 'canonical_course', $3, 3)`,
+          [agencyId, testOfferingId, courseC]
+        );
+        signalA(); // Tell A that mutation was committed
+      })();
+
+      const [resCheckout] = await Promise.all([pA, pB]);
+      assert.equal(resCheckout.ok, true);
+
+      // Verify the order has one coherent captured item set
+      const itemsRes = await pool.query(
+        `SELECT canonical_course_id, price_vnd FROM public.order_items WHERE order_id = $1`,
+        [resCheckout.order_id]
+      );
+      assert.ok(itemsRes.rows.length >= 2, "Never zero items");
+      const sumLinePrices = itemsRes.rows.reduce((sum, r) => sum + Number(r.price_vnd), 0);
+      assert.equal(sumLinePrices, resCheckout.amount_vnd, "sum line prices == snapshot total");
+    } finally {
+      clientA.release();
+      clientB.release();
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // TEST 6: Phase 3 & 4 FIX 3 — Multi-Course Real DB Concurrency Evidence
+  // Scenario A: Approve reaches lock region first while Refund enters competing region
+  // ---------------------------------------------------------------------------
+  await t.test("B5.REAL-6: 2-Course bundle concurrency: Approve reaches lock region first, Refund competes", async () => {
+    const bundleOfferingId = randId();
+    const c1 = randId();
+    const c2 = randId();
+
+    // Sort c1 and c2 so we know deterministic lock order
+    const [sortedC1, sortedC2] = [c1, c2].sort();
+
+    await pool.query(
+      `INSERT INTO public.canonical_courses (id, code, default_title, status)
+       VALUES ($1, $2, 'Culinary 1', 'published'), ($3, $4, 'Culinary 2', 'published')`,
+      [sortedC1, `C1-${Date.now()}`, sortedC2, `C2-${Date.now()}`]
+    );
+
+    await pool.query(
+      `INSERT INTO public.agency_offerings (id, agency_id, slug, display_title, price_vnd, sale_price_vnd, is_published)
+       VALUES ($1, $2, $3, 'Dual Culinary Masterclass', 600000, 600000, true)`,
+      [bundleOfferingId, agencyId, `dual-bundle-${Date.now()}`]
+    );
+
+    await pool.query(
+      `INSERT INTO public.agency_offering_items (agency_id, offering_id, item_type, canonical_course_id, sort_order)
+       VALUES ($1, $2, 'canonical_course', $3, 1), ($1, $2, 'canonical_course', $4, 2)`,
+      [agencyId, bundleOfferingId, sortedC1, sortedC2]
+    );
+
+    const code1 = `CONC-A-APP-${Date.now()}`;
+    const code2 = `CONC-A-REF-${Date.now()}`;
+
+    // Create 2 separate orders for Member B on 2-course bundle
     const o1Res = await pool.query(
       `SELECT public.checkout_agency_offering($1, $2, $3, NULL, $4) as result`,
-      [agencyId, membershipIdB, offeringId2, code1]
+      [agencyId, membershipIdB, bundleOfferingId, code1]
     );
     const o2Res = await pool.query(
       `SELECT public.checkout_agency_offering($1, $2, $3, NULL, $4) as result`,
-      [agencyId, membershipIdB, offeringId2, code2]
+      [agencyId, membershipIdB, bundleOfferingId, code2]
     );
     const orderId1 = o1Res.rows[0].result.order_id;
     const orderId2 = o2Res.rows[0].result.order_id;
 
-    // Approve order 2 first so it is eligible for refund
-    await pool.query(`SELECT public.approve_agency_order($1, $2, $3)`, [agencyId, orderId2, staffMembershipId]);
+    // Approve order 2 first so it has active grants and entitlements for both courses
+    const initialApprove = await pool.query(`SELECT public.approve_agency_order($1, $2, $3) as result`, [agencyId, orderId2, staffMembershipId]);
+    assert.equal(initialApprove.rows.length, 1);
+    assert.equal(initialApprove.rows[0].result.ok, true);
+    assert.equal(initialApprove.rows[0].result.grants_created, 2);
 
-    // Independent PG client 1 and client 2
+    // Add an independent non-order grant on Course 1 to prove surviving independent grants
+    const indepEntRes = await pool.query(
+      `SELECT id FROM public.student_entitlements WHERE agency_id = $1 AND membership_id = $2 AND canonical_course_id = $3`,
+      [agencyId, membershipIdB, sortedC1]
+    );
+    assert.equal(indepEntRes.rows.length, 1);
+    const independentEntId = indepEntRes.rows[0].id;
+    await pool.query(
+      `INSERT INTO public.entitlement_grants (agency_id, entitlement_id, source_type, source_reference_id, notes, status)
+       VALUES ($1, $2, 'manual_admin', 'grant-independent-001', 'Independent permanent grant', 'active')`,
+      [agencyId, independentEntId]
+    );
+
     const client1 = await pool.connect();
     const client2 = await pool.connect();
+    const observer = await pool.connect();
 
+    const pid1 = (await client1.query("SELECT pg_backend_pid()")).rows[0].pg_backend_pid;
+    const pid2 = (await client2.query("SELECT pg_backend_pid()")).rows[0].pg_backend_pid;
+
+    let signalClient2;
+    const barrierLockReached = new Promise((resolve) => { signalClient2 = resolve; });
+    let releaseClient1;
+    const barrierObservedLock = new Promise((resolve) => { releaseClient1 = resolve; });
+
+    const startTime = Date.now();
     try {
-      // Barrier coordinates forced overlap
-      let barrierReached = false;
-
-      // Transaction 1: Approval of Order 1
+      // Transaction 1: Approve Order 1 reaches lock region FIRST and holds it
       const p1 = (async () => {
         await client1.query("BEGIN");
-        // Acquire lock on order 1 and call approve_agency_order
+        // Explicitly lock the first course entitlement row in sorted lock order
+        await client1.query(
+          `SELECT id FROM public.student_entitlements 
+           WHERE agency_id = $1 AND membership_id = $2 AND canonical_course_id = $3 FOR UPDATE`,
+          [agencyId, membershipIdB, sortedC1]
+        );
+        signalClient2(); // Signal client 2 that client 1 holds lock on sortedC1
+
+        // Must hold transaction 1 OPEN until observer proves client 2 is actively blocked on client 1
+        await barrierObservedLock;
+
+        // Execute approve_agency_order inside this transaction
         const res = await client1.query(
           `SELECT public.approve_agency_order($1, $2, $3) as result`,
           [agencyId, orderId1, staffMembershipId]
         );
-        barrierReached = true;
-        // Hold lock briefly to force client 2 to overlap
-        await new Promise((r) => setTimeout(r, 60));
         await client1.query("COMMIT");
         return res.rows[0].result;
       })();
 
-      // Transaction 2: Refund of Order 2 (touches overlapping entitlement for Pho Bo)
+      // Transaction 2: Refund Order 2 enters competing region while client 1 holds lock
       const p2 = (async () => {
-        // Wait until client1 has begun
-        await new Promise((r) => setTimeout(r, 20));
+        await barrierLockReached; // Wait until client 1 is holding the lock
         await client2.query("BEGIN");
+        // This call will compete for the sorted entitlement locks held by client 1
         const res = await client2.query(
-          `SELECT public.refund_agency_order($1, $2, 'Concurrent refund') as result`,
+          `SELECT public.refund_agency_order($1, $2, 'Concurrent refund dual') as result`,
           [agencyId, orderId2]
         );
         await client2.query("COMMIT");
         return res.rows[0].result;
       })();
 
-      const [resApprove, resRefund] = await Promise.all([p1, p2]);
+      // Observer: Authoritative lock contention proof using pg_blocking_pids
+      let lockContentionObserved = false;
+      let observedBlockers = [];
+      const deadline = Date.now() + 4000;
+      while (Date.now() < deadline) {
+        const check = await observer.query("SELECT pg_blocking_pids($1::int) as blockers", [pid2]);
+        const blockers = check.rows[0]?.blockers || [];
+        if (blockers.includes(pid1)) {
+          lockContentionObserved = true;
+          observedBlockers = blockers;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 10));
+      }
 
-      assert.equal(resApprove.ok, true);
-      assert.equal(resRefund.ok, true);
-
-      // Verify effective entitlement remains active because Order 1 was approved
-      const entRes = await pool.query(
-        `SELECT status FROM public.student_entitlements WHERE agency_id = $1 AND membership_id = $2 AND canonical_course_id = $3`,
-        [agencyId, membershipIdB, courseId1]
+      assert.ok(
+        lockContentionObserved,
+        `MANDATORY LOCK CONTENTION PROOF: Competing transaction (PID ${pid2}) MUST be actively blocked by holding transaction (PID ${pid1}) via pg_blocking_pids. Observed: ${JSON.stringify(observedBlockers)}`
       );
-      assert.equal(entRes.rows[0].status, "active", "Entitlement must remain active from remaining active grant");
+
+      // Only now release transaction 1 to proceed to commit
+      releaseClient1();
+
+      const [resApprove, resRefund] = await Promise.all([p1, p2]);
+      const durationMs = Date.now() - startTime;
+      assert.ok(durationMs < 5000, `Execution time must be bounded (<5000ms), took ${durationMs}ms`);
+
+      // Assertions after completion
+      assert.equal(resApprove.ok, true, "Approve must succeed without deadlock");
+      assert.equal(resRefund.ok, true, "Refund must succeed without deadlock");
+
+      // Verify order 1 state == completed (approved)
+      const ord1 = await pool.query(`SELECT status FROM public.agency_orders WHERE id = $1`, [orderId1]);
+      assert.equal(ord1.rows.length, 1);
+      assert.equal(ord1.rows[0].status, "completed");
+
+      // Verify order 2 state == refunded
+      const ord2 = await pool.query(`SELECT status FROM public.agency_orders WHERE id = $1`, [orderId2]);
+      assert.equal(ord2.rows.length, 1);
+      assert.equal(ord2.rows[0].status, "refunded");
+
+      // Verify purchase grant states:
+      // Order 1 grants must be 'active'
+      const g1 = await pool.query(
+        `SELECT status FROM public.entitlement_grants WHERE agency_id = $1 AND source_reference_id = $2`,
+        [agencyId, orderId1]
+      );
+      assert.equal(g1.rows.length, 2);
+      assert.ok(g1.rows.every(r => r.status === "active"));
+
+      // Order 2 grants must be 'revoked'
+      const g2 = await pool.query(
+        `SELECT status FROM public.entitlement_grants WHERE agency_id = $1 AND source_reference_id = $2`,
+        [agencyId, orderId2]
+      );
+      assert.equal(g2.rows.length, 2);
+      assert.ok(g2.rows.every(r => r.status === "revoked"));
+
+      // Verify independent non-order grant survives and is active
+      const indepCheck = await pool.query(
+        `SELECT status FROM public.entitlement_grants WHERE agency_id = $1 AND source_reference_id = 'grant-independent-001'`,
+        [agencyId]
+      );
+      assert.equal(indepCheck.rows.length, 1);
+      assert.equal(indepCheck.rows[0].status, "active", "Independent grant must remain active");
+
+      // Verify surviving independent grants keep effective entitlements ACTIVE for BOTH courses
+      const entRes = await pool.query(
+        `SELECT canonical_course_id, status FROM public.student_entitlements 
+         WHERE agency_id = $1 AND membership_id = $2 AND canonical_course_id IN ($3, $4)
+         ORDER BY canonical_course_id ASC`,
+        [agencyId, membershipIdB, sortedC1, sortedC2]
+      );
+      assert.equal(entRes.rows.length, 2);
+      assert.equal(entRes.rows[0].status, "active", "Course 1 entitlement must remain active");
+      assert.equal(entRes.rows[1].status, "active", "Course 2 entitlement must remain active");
     } finally {
       client1.release();
       client2.release();
+      observer.release();
     }
   });
 
   // ---------------------------------------------------------------------------
-  // TEST 6: Phase 3 & 4 — REAL Overlap Concurrency (Refund starts first)
+  // TEST 7: Phase 3 & 4 FIX 3 — Multi-Course Real DB Concurrency Evidence
+  // Scenario B: Refund reaches lock region first while Approval competes
   // ---------------------------------------------------------------------------
-  await t.test("B5.REAL-6: Real concurrency barrier: Order 2 refund vs Order 1 approval (Refund starts first)", async () => {
-    const codeA = `CONC-REF-APP-A-${Date.now()}`;
-    const codeB = `CONC-REF-APP-B-${Date.now()}`;
+  await t.test("B5.REAL-7: 2-Course bundle concurrency: Refund reaches lock region first, Approve competes", async () => {
+    const bundleOfferingId = randId();
+    const c1 = randId();
+    const c2 = randId();
+    const [sortedC1, sortedC2] = [c1, c2].sort();
 
-    // Create 2 orders for Member B on offeringId2
+    await pool.query(
+      `INSERT INTO public.canonical_courses (id, code, default_title, status)
+       VALUES ($1, $2, 'Culinary A', 'published'), ($3, $4, 'Culinary B', 'published')`,
+      [sortedC1, `CA-${Date.now()}`, sortedC2, `CB-${Date.now()}`]
+    );
+
+    await pool.query(
+      `INSERT INTO public.agency_offerings (id, agency_id, slug, display_title, price_vnd, sale_price_vnd, is_published)
+       VALUES ($1, $2, $3, 'Dual Culinary Masterclass B', 600000, 600000, true)`,
+      [bundleOfferingId, agencyId, `dual-bundle-b-${Date.now()}`]
+    );
+
+    await pool.query(
+      `INSERT INTO public.agency_offering_items (agency_id, offering_id, item_type, canonical_course_id, sort_order)
+       VALUES ($1, $2, 'canonical_course', $3, 1), ($1, $2, 'canonical_course', $4, 2)`,
+      [agencyId, bundleOfferingId, sortedC1, sortedC2]
+    );
+
+    const codeA = `CONC-B-REF-${Date.now()}`;
+    const codeB = `CONC-B-APP-${Date.now()}`;
+
     const oARes = await pool.query(
       `SELECT public.checkout_agency_offering($1, $2, $3, NULL, $4) as result`,
-      [agencyId, membershipIdB, offeringId2, codeA]
+      [agencyId, membershipIdB, bundleOfferingId, codeA]
     );
     const oBRes = await pool.query(
       `SELECT public.checkout_agency_offering($1, $2, $3, NULL, $4) as result`,
-      [agencyId, membershipIdB, offeringId2, codeB]
+      [agencyId, membershipIdB, bundleOfferingId, codeB]
     );
     const orderIdA = oARes.rows[0].result.order_id;
     const orderIdB = oBRes.rows[0].result.order_id;
 
-    // Approve order A so it can be refunded
-    await pool.query(`SELECT public.approve_agency_order($1, $2, $3)`, [agencyId, orderIdA, staffMembershipId]);
+    // Approve order A so it has active grants to refund
+    const initialApproveA = await pool.query(`SELECT public.approve_agency_order($1, $2, $3) as result`, [agencyId, orderIdA, staffMembershipId]);
+    assert.equal(initialApproveA.rows.length, 1);
+    assert.equal(initialApproveA.rows[0].result.ok, true);
+
+    // Add an independent non-order grant on Course 2 to prove surviving independent grants
+    const indepEntResB = await pool.query(
+      `SELECT id FROM public.student_entitlements WHERE agency_id = $1 AND membership_id = $2 AND canonical_course_id = $3`,
+      [agencyId, membershipIdB, sortedC2]
+    );
+    assert.equal(indepEntResB.rows.length, 1);
+    const independentEntIdB = indepEntResB.rows[0].id;
+    await pool.query(
+      `INSERT INTO public.entitlement_grants (agency_id, entitlement_id, source_type, source_reference_id, notes, status)
+       VALUES ($1, $2, 'manual_admin', 'grant-independent-002', 'Independent permanent grant B', 'active')`,
+      [agencyId, independentEntIdB]
+    );
 
     const client1 = await pool.connect();
     const client2 = await pool.connect();
+    const observer = await pool.connect();
 
+    const pid1 = (await client1.query("SELECT pg_backend_pid()")).rows[0].pg_backend_pid;
+    const pid2 = (await client2.query("SELECT pg_backend_pid()")).rows[0].pg_backend_pid;
+
+    let signalClient2;
+    const barrierRefundLock = new Promise((resolve) => { signalClient2 = resolve; });
+    let releaseClient1;
+    const barrierObservedLock = new Promise((resolve) => { releaseClient1 = resolve; });
+
+    const startTime = Date.now();
     try {
-      // Transaction 1: Refund starts first
+      // Transaction 1: Refund Order A reaches lock region FIRST and holds it
       const p1 = (async () => {
         await client1.query("BEGIN");
+        // Lock first course entitlement row in sorted lock order
+        await client1.query(
+          `SELECT id FROM public.student_entitlements 
+           WHERE agency_id = $1 AND membership_id = $2 AND canonical_course_id = $3 FOR UPDATE`,
+          [agencyId, membershipIdB, sortedC1]
+        );
+        signalClient2(); // Signal client 2 that refund holds the lock region
+
+        // Must hold transaction 1 OPEN until observer proves client 2 is actively blocked on client 1
+        await barrierObservedLock;
+
         const res = await client1.query(
-          `SELECT public.refund_agency_order($1, $2, 'Refund first') as result`,
+          `SELECT public.refund_agency_order($1, $2, 'Refund first dual') as result`,
           [agencyId, orderIdA]
         );
-        // Hold lock briefly to force overlap
-        await new Promise((r) => setTimeout(r, 60));
         await client1.query("COMMIT");
         return res.rows[0].result;
       })();
 
-      // Transaction 2: Approval starts while refund is active
+      // Transaction 2: Approve Order B enters competing region while client 1 holds lock
       const p2 = (async () => {
-        await new Promise((r) => setTimeout(r, 20));
+        await barrierRefundLock; // Wait until refund is in lock region
         await client2.query("BEGIN");
         const res = await client2.query(
           `SELECT public.approve_agency_order($1, $2, $3) as result`,
@@ -353,20 +617,82 @@ test("B5-REAL-DB: Complete Order Model, Lock Order, and Real Concurrency Suite",
         return res.rows[0].result;
       })();
 
+      // Observer: Authoritative lock contention proof using pg_blocking_pids
+      let lockContentionObserved = false;
+      let observedBlockers = [];
+      const deadline = Date.now() + 4000;
+      while (Date.now() < deadline) {
+        const check = await observer.query("SELECT pg_blocking_pids($1::int) as blockers", [pid2]);
+        const blockers = check.rows[0]?.blockers || [];
+        if (blockers.includes(pid1)) {
+          lockContentionObserved = true;
+          observedBlockers = blockers;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 10));
+      }
+
+      assert.ok(
+        lockContentionObserved,
+        `MANDATORY LOCK CONTENTION PROOF: Competing transaction (PID ${pid2}) MUST be actively blocked by holding transaction (PID ${pid1}) via pg_blocking_pids. Observed: ${JSON.stringify(observedBlockers)}`
+      );
+
+      // Only now release transaction 1 to proceed to commit
+      releaseClient1();
+
       const [resRefund, resApprove] = await Promise.all([p1, p2]);
+      const durationMs = Date.now() - startTime;
+      assert.ok(durationMs < 5000, `Execution time must be bounded (<5000ms), took ${durationMs}ms`);
 
       assert.equal(resRefund.ok, true);
       assert.equal(resApprove.ok, true);
 
-      // Verify effective entitlement remains active because Order B was approved
-      const entRes = await pool.query(
-        `SELECT status FROM public.student_entitlements WHERE agency_id = $1 AND membership_id = $2 AND canonical_course_id = $3`,
-        [agencyId, membershipIdB, courseId1]
+      // Verify order states
+      const ordA = await pool.query(`SELECT status FROM public.agency_orders WHERE id = $1`, [orderIdA]);
+      assert.equal(ordA.rows.length, 1);
+      assert.equal(ordA.rows[0].status, "refunded");
+
+      const ordB = await pool.query(`SELECT status FROM public.agency_orders WHERE id = $1`, [orderIdB]);
+      assert.equal(ordB.rows.length, 1);
+      assert.equal(ordB.rows[0].status, "completed");
+
+      // Verify grant states
+      const gA = await pool.query(
+        `SELECT status FROM public.entitlement_grants WHERE agency_id = $1 AND source_reference_id = $2`,
+        [agencyId, orderIdA]
       );
+      assert.equal(gA.rows.length, 2);
+      assert.ok(gA.rows.every(r => r.status === "revoked"));
+
+      const gB = await pool.query(
+        `SELECT status FROM public.entitlement_grants WHERE agency_id = $1 AND source_reference_id = $2`,
+        [agencyId, orderIdB]
+      );
+      assert.equal(gB.rows.length, 2);
+      assert.ok(gB.rows.every(r => r.status === "active"));
+
+      // Verify independent grant on Course 2 survived and is active
+      const indepCheckB = await pool.query(
+        `SELECT status FROM public.entitlement_grants WHERE agency_id = $1 AND source_reference_id = 'grant-independent-002'`,
+        [agencyId]
+      );
+      assert.equal(indepCheckB.rows.length, 1);
+      assert.equal(indepCheckB.rows[0].status, "active", "Independent grant B must remain active");
+
+      // Verify surviving independent grants keep effective entitlements ACTIVE for BOTH courses
+      const entRes = await pool.query(
+        `SELECT canonical_course_id, status FROM public.student_entitlements 
+         WHERE agency_id = $1 AND membership_id = $2 AND canonical_course_id IN ($3, $4)
+         ORDER BY canonical_course_id ASC`,
+        [agencyId, membershipIdB, sortedC1, sortedC2]
+      );
+      assert.equal(entRes.rows.length, 2);
       assert.equal(entRes.rows[0].status, "active");
+      assert.equal(entRes.rows[1].status, "active");
     } finally {
       client1.release();
       client2.release();
+      observer.release();
     }
   });
 

@@ -75,8 +75,11 @@ export function validateManifest(manifest) {
   if (!learning_variant) throw new Error("Invalid manifest: UI profile must specify 'learning_variant'.");
   if (!homework_variant) throw new Error("Invalid manifest: UI profile must specify 'homework_variant'.");
 
-  // 4. Bank Accounts (Routing configuration reference: manifest.bank_accounts or manifest.commerce.bank_accounts)
-  const bankAccounts = manifest.bank_accounts || manifest.commerce?.bank_accounts;
+  // 4. Bank Accounts (Enforce canonical path: manifest.bank_accounts. Deny manifest.commerce.bank_accounts)
+  if (manifest.commerce?.bank_accounts) {
+    throw new Error("Invalid manifest: 'manifest.commerce.bank_accounts' is forbidden. Use canonical path 'manifest.bank_accounts'.");
+  }
+  const bankAccounts = manifest.bank_accounts;
   if (!Array.isArray(bankAccounts) || bankAccounts.length === 0) {
     throw new Error("Invalid manifest: 'bank_accounts' must have at least one active bank routing configuration.");
   }
@@ -107,12 +110,15 @@ export function validateManifest(manifest) {
     if (!c.code || !c.title) {
       throw new Error("Invalid manifest: Course entries must include 'code' and 'title'.");
     }
+    if (!c.course_id) {
+      throw new Error(`Invalid manifest: Course '${c.code}' must specify a valid non-null 'course_id'.`);
+    }
     if (!Array.isArray(c.lessons) || c.lessons.length === 0) {
       throw new Error(`Invalid manifest: Course '${c.code}' must define at least one canonical lesson.`);
     }
-    const hasV5LessonMapping = c.lessons.some(l => l.v5_lesson_id);
+    const hasV5LessonMapping = c.lessons.every(l => l.v5_lesson_id);
     if (!hasV5LessonMapping) {
-      throw new Error(`Invalid manifest: Course '${c.code}' lessons must provide meaningful v5_lesson_id mapping.`);
+      throw new Error(`Invalid manifest: All course '${c.code}' lessons must provide valid non-null v5_lesson_id mapping.`);
     }
   }
 
@@ -329,28 +335,34 @@ export async function planAgencyProvisioning(manifest, options = {}) {
 }
 
 /**
- * Apply mode: Applies the manifest to the database idempotently.
- * Enforces Phase 10B: Domain collision check BEFORE any agency/UI write.
- * Enforces Phase 10C: Never mutate shared canonical mapping.
+ * Phase 4: Complete Preflight Before First Write.
+ * Proves agency metadata, domains, UI variants, bank account config, offerings, offering items,
+ * principals (real Auth resolution in auth.users), allowed roles, canonical course mapping,
+ * and V5 published release snapshot with valid v5_lesson_id.
+ * If anything fails or conflicts: throws NOT_READY before ANY database write.
  */
-export async function applyAgencyProvisioning(manifest, options = {}) {
+export async function preflightAgencyProvisioning(manifest, options = {}) {
   validateManifest(manifest);
   const client = options.supabaseClient || defaultSupabase;
   const slug = manifest.agency.slug;
 
-  const appliedActions = [];
+  const checks = {
+    MANIFEST_VALID: true,
+    DOMAINS_COLLISION_FREE: false,
+    PRINCIPALS_RESOLVED: false,
+    CANONICAL_CONFLICTS_FREE: false,
+    V5_COURSES_READINESS: false
+  };
 
-  // ---------------------------------------------------------------------------
-  // 10B: PRE-CHECK DOMAIN COLLISIONS BEFORE ANY WRITES
-  // ---------------------------------------------------------------------------
+  // 1. Domains collision check
   const { data: existingAgency, error: agLookupErr } = await client
     .from("agencies")
-    .select("id, slug, name, status")
+    .select("id, slug")
     .eq("slug", slug)
     .maybeSingle();
 
   if (agLookupErr) throw agLookupErr;
-  let agencyId = existingAgency?.id || null;
+  const agencyId = existingAgency?.id || null;
 
   for (const d of manifest.domains) {
     const { data: collision, error: colErr } = await client
@@ -360,524 +372,156 @@ export async function applyAgencyProvisioning(manifest, options = {}) {
       .maybeSingle();
 
     if (colErr) throw colErr;
-
     if (collision && collision.agency_id !== agencyId) {
-      throw new Error(`SECURITY VIOLATION: Domain collision detected! Hostname '${d.hostname}' is already registered to agency ID '${collision.agency_id}'. No changes were made.`);
+      throw new Error(`NOT_READY: Domain collision detected! Hostname '${d.hostname}' is already registered to agency ID '${collision.agency_id}'.`);
     }
   }
+  checks.DOMAINS_COLLISION_FREE = true;
 
-  // ---------------------------------------------------------------------------
-  // 10C: PRE-CHECK CANONICAL COURSE CONFLICTS BEFORE ANY WRITES
-  // ---------------------------------------------------------------------------
-  if (manifest.learning?.courses) {
-    for (const c of manifest.learning.courses) {
-      const { data: exCc, error: ccErr } = await client
-        .from("canonical_courses")
-        .select("id, code, course_id")
-        .eq("code", c.code)
-        .maybeSingle();
+  // 2. Principals real Auth resolution (Must resolve before any writes)
+  const { data: usersData, error: listErr } = await client.auth.admin.listUsers();
+  if (listErr) {
+    throw new Error(`NOT_READY: Failed to query auth.users: ${listErr.message}`);
+  }
+  const allAuthUsers = usersData?.users || [];
 
-      if (ccErr) throw ccErr;
-      if (exCc && exCc.course_id && c.course_id && exCc.course_id !== c.course_id) {
-        throw new Error(`CONFLICT: Conflicting canonical course mapping for '${c.code}'. Shared canonical curriculum cannot be overwritten.`);
+  for (const p of manifest.principals) {
+    const targetEmail = p.email ? p.email.toLowerCase().trim() : null;
+    const targetId = p.user_id || null;
+    const resolved = allAuthUsers.find(u => (targetEmail && u.email?.toLowerCase().trim() === targetEmail) || (targetId && u.id === targetId));
+
+    if (!resolved) {
+      throw new Error(`NOT_READY: Principal '${p.email || p.user_id}' does not exist in auth.users. Production preflight requires existing Auth principals.`);
+    }
+  }
+  checks.PRINCIPALS_RESOLVED = true;
+
+  // 3. Canonical courses conflicts & V5 deep readiness check
+  for (const c of manifest.learning.courses) {
+    if (!c.course_id) {
+      throw new Error(`NOT_READY: Course '${c.code}' course_id cannot be null.`);
+    }
+
+    // Check mapping conflict
+    const { data: exCc, error: ccErr } = await client
+      .from("canonical_courses")
+      .select("id, code, course_id")
+      .eq("code", c.code)
+      .maybeSingle();
+
+    if (ccErr) throw ccErr;
+    if (exCc && exCc.course_id && exCc.course_id !== c.course_id) {
+      throw new Error(`NOT_READY: Conflicting canonical course mapping for '${c.code}'. Shared canonical curriculum cannot be overwritten.`);
+    }
+
+    // Check V5 course config & published release
+    const { data: v5Config, error: cfgErr } = await client
+      .from("v5_course_configs")
+      .select("course_id, status, published_release_id")
+      .eq("course_id", c.course_id)
+      .maybeSingle();
+
+    if (cfgErr) throw cfgErr;
+    if (!v5Config || v5Config.status !== "published" || !v5Config.published_release_id) {
+      throw new Error(`NOT_READY: V5 course '${c.course_id}' is not published or has no published release.`);
+    }
+
+    const { data: v5Rel, error: relErr } = await client
+      .from("v5_releases")
+      .select("id, status, snapshot")
+      .eq("id", v5Config.published_release_id)
+      .eq("status", "published")
+      .maybeSingle();
+
+    if (relErr) throw relErr;
+    if (!v5Rel || !v5Rel.snapshot) {
+      throw new Error(`NOT_READY: V5 published release snapshot not found for course '${c.course_id}'.`);
+    }
+
+    const snapshotLessons = v5Rel.snapshot.lessons || [];
+    for (const l of c.lessons) {
+      if (!l.v5_lesson_id) {
+        throw new Error(`NOT_READY: Canonical lesson '${l.title}' has null v5_lesson_id.`);
+      }
+      const inSnapshot = snapshotLessons.some(sl => sl.id === l.v5_lesson_id);
+      if (!inSnapshot) {
+        throw new Error(`NOT_READY: Lesson v5_lesson_id '${l.v5_lesson_id}' does not belong to active published release snapshot.`);
       }
     }
   }
+  checks.CANONICAL_CONFLICTS_FREE = true;
+  checks.V5_COURSES_READINESS = true;
 
-  // ---------------------------------------------------------------------------
-  // 8B: SYNTHETIC MARKER SAFETY
-  // Caller must NOT be able to turn existing tenant into synthetic by passing --synthetic
-  // ---------------------------------------------------------------------------
+  return { ok: true, slug, checks };
+}
+
+/**
+ * Phase 5: Atomic Apply.
+ * Performs all provisioning database rows through ONE server-side transaction.
+ * Serializes same agency manifest provisioning using pg_advisory_xact_lock.
+ */
+export async function applyAgencyProvisioning(manifest, options = {}) {
+  const client = options.supabaseClient || defaultSupabase;
+  const slug = manifest.agency.slug;
+
+  // 1. Run Complete Preflight Before First Write
+  await preflightAgencyProvisioning(manifest, options);
+
+  // 2. Synthetic Marker Safety Check
+  const { data: existingAgency, error: agLookupErr } = await client
+    .from("agencies")
+    .select("id, slug")
+    .eq("slug", slug)
+    .maybeSingle();
+
+  if (agLookupErr) throw agLookupErr;
+
   if (existingAgency && options.isSynthetic) {
-    const { data: exUi } = await client
-      .from("agency_ui_profiles")
-      .select("feature_flags")
+    const { data: fixtureRow, error: fixErr } = await client
+      .from("agency_test_fixtures")
+      .select("id, run_id")
       .eq("agency_id", existingAgency.id)
       .maybeSingle();
-    const isSyntheticFixture = exUi?.feature_flags?.synthetic_rehearsal === true;
-    if (!isSyntheticFixture) {
+
+    if (fixErr) throw fixErr;
+    if (!fixtureRow) {
       throw new Error(`SECURITY VIOLATION: Existing non-synthetic agency '${slug}' cannot be converted to a synthetic rehearsal fixture via --synthetic.`);
     }
   }
 
-  const createdRecords = [];
-
-  try {
-    // ---------------------------------------------------------------------------
-    // 1. Ensure Agency Record (8A: Concurrency Safe)
-    // ---------------------------------------------------------------------------
-    if (!existingAgency) {
-      const insertPayload = {
-        slug,
-        name: manifest.agency.name,
-        status: manifest.agency.status || "active"
-      };
-
-      const { data: newAgency, error: createAgErr } = await client
-        .from("agencies")
-        .insert(insertPayload)
-        .select("id, slug")
-        .single();
-
-      if (createAgErr) {
-        if (createAgErr.code === "23505" || createAgErr.message?.includes("duplicate key")) {
-          // Race condition: another concurrent apply created the agency
-          const { data: racedAg } = await client.from("agencies").select("id, slug").eq("slug", slug).single();
-          agencyId = racedAg.id;
-        } else {
-          throw createAgErr;
-        }
-      } else {
-        agencyId = newAgency.id;
-        createdRecords.push({ table: "agencies", id: agencyId });
-        appliedActions.push({ entity: "agency", action: "CREATED", id: agencyId, slug });
-      }
-    } else {
-      agencyId = existingAgency.id;
-      const { error: updateAgErr } = await client
-        .from("agencies")
-        .update({
-          name: manifest.agency.name,
-          status: manifest.agency.status || existingAgency.status,
-          updated_at: new Date().toISOString()
-        })
-        .eq("id", agencyId);
-
-      if (updateAgErr) throw updateAgErr;
-      appliedActions.push({ entity: "agency", action: "UPDATED", id: agencyId, slug });
-    }
-
-  // ---------------------------------------------------------------------------
-  // 2. Upsert UI Profile (All 6 variants)
-  // ---------------------------------------------------------------------------
-  const uiPayload = {
-    agency_id: agencyId,
-    brand_name: manifest.ui.brand_name,
-    logo_url: manifest.ui.logo_url || null,
-    favicon_url: manifest.ui.favicon_url || null,
-    storefront_variant: manifest.ui.storefront_variant,
-    checkout_variant: manifest.ui.checkout_variant,
-    admin_variant: manifest.ui.admin_variant,
-    learner_variant: manifest.ui.learner_variant,
-    learning_variant: manifest.ui.learning_variant,
-    homework_variant: manifest.ui.homework_variant,
-    design_tokens: manifest.ui.design_tokens || {},
-    feature_flags: {
-      ...(manifest.ui.feature_flags || {}),
-      ...(options.isSynthetic && options.rehearsalRunId ? {
-        synthetic_rehearsal: true,
-        rehearsal_run_id: options.rehearsalRunId
-      } : {})
-    },
-    updated_at: new Date().toISOString()
-  };
-
-  const { error: uiErr } = await client
-    .from("agency_ui_profiles")
-    .upsert(uiPayload, { onConflict: "agency_id" });
-
-  if (uiErr) throw uiErr;
-  appliedActions.push({ entity: "ui_profile", action: "UPSERTED", agencyId });
-
-  // ---------------------------------------------------------------------------
-  // 3. Upsert Domains
-  // ---------------------------------------------------------------------------
-  for (const d of manifest.domains) {
-    const { data: existingDomain } = await client
-      .from("agency_domains")
-      .select("id, hostname")
-      .eq("agency_id", agencyId)
-      .eq("hostname", d.hostname)
-      .maybeSingle();
-
-    if (!existingDomain) {
-      const { error: insDomErr } = await client
-        .from("agency_domains")
-        .insert({
-          agency_id: agencyId,
-          hostname: d.hostname,
-          is_primary: !!d.is_primary,
-          ssl_status: d.ssl_status || "active",
-          status: "active"
-        });
-      if (insDomErr) {
-        if (insDomErr.code === "23505" || String(insDomErr.message).includes("duplicate key")) {
-          const { data: raceDom } = await client
-            .from("agency_domains")
-            .select("id, agency_id")
-            .eq("hostname", d.hostname)
-            .maybeSingle();
-          if (raceDom && raceDom.agency_id === agencyId) {
-            appliedActions.push({ entity: "domain", action: "IDEMPOTENT_MATCH", hostname: d.hostname });
-          } else {
-            throw insDomErr;
-          }
-        } else {
-          throw insDomErr;
-        }
-      } else {
-        appliedActions.push({ entity: "domain", action: "CREATED", hostname: d.hostname });
-      }
-    } else {
-      const { error: upDomErr } = await client
-        .from("agency_domains")
-        .update({
-          is_primary: !!d.is_primary,
-          ssl_status: d.ssl_status || "active",
-          status: "active"
-        })
-        .eq("id", existingDomain.id);
-      if (upDomErr) throw upDomErr;
-      appliedActions.push({ entity: "domain", action: "UPDATED", hostname: d.hostname });
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // 4. Upsert Bank Accounts
-  // ---------------------------------------------------------------------------
-  if (manifest.bank_accounts) {
-    for (const b of manifest.bank_accounts) {
-      const { data: existingBank, error: bankErr } = await client
-        .from("agency_bank_accounts")
-        .select("id")
-        .eq("agency_id", agencyId)
-        .eq("bank_code", b.bank_code)
-        .eq("account_number", b.account_number)
-        .maybeSingle();
-
-      if (bankErr) throw bankErr;
-
-      if (!existingBank) {
-        const { error: insBankErr } = await client
-          .from("agency_bank_accounts")
-          .insert({
-            agency_id: agencyId,
-            bank_code: b.bank_code,
-            account_number: b.account_number,
-            account_holder: b.account_holder,
-            branch: b.branch || null,
-            is_active: b.is_active !== undefined ? b.is_active : true,
-            is_default: !!b.is_default
-          });
-        if (insBankErr) {
-          if (insBankErr.code === "23505" || String(insBankErr.message).includes("duplicate key")) {
-            appliedActions.push({ entity: "bank_account", action: "IDEMPOTENT_MATCH", bank_code: b.bank_code });
-          } else {
-            throw insBankErr;
-          }
-        } else {
-          appliedActions.push({ entity: "bank_account", action: "CREATED", bank_code: b.bank_code });
-        }
-      } else {
-        const { error: upBankErr } = await client
-          .from("agency_bank_accounts")
-          .update({
-            account_holder: b.account_holder,
-            branch: b.branch || null,
-            is_active: b.is_active !== undefined ? b.is_active : true,
-            is_default: !!b.is_default
-          })
-          .eq("id", existingBank.id);
-        if (upBankErr) throw upBankErr;
-        appliedActions.push({ entity: "bank_account", action: "UPDATED", bank_code: b.bank_code });
-      }
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // 5. Canonical Courses / Lessons (Learning platform core)
-  // 10C Invariant: Never overwrite existing course_id
-  // ---------------------------------------------------------------------------
-  const canonicalCourseMap = new Map();
-  if (manifest.learning?.courses) {
-    for (const c of manifest.learning.courses) {
-      let canonicalId = null;
-      const { data: exCc, error: ccErr } = await client
-        .from("canonical_courses")
-        .select("id, code, course_id")
-        .eq("code", c.code)
-        .maybeSingle();
-
-      if (ccErr) throw ccErr;
-
-      if (!exCc) {
-        const { data: newCc, error: insCcErr } = await client
-          .from("canonical_courses")
-          .insert({
-            code: c.code,
-            default_title: c.title,
-            course_id: c.course_id || null,
-            status: "published",
-            curriculum_metadata: c.curriculum_metadata || {}
-          })
-          .select("id, code")
-          .maybeSingle();
-
-        if (insCcErr) {
-          if (insCcErr.code === "23505" || String(insCcErr.message).includes("duplicate key")) {
-            const { data: raceCc } = await client
-              .from("canonical_courses")
-              .select("id, code")
-              .eq("code", c.code)
-              .maybeSingle();
-            if (raceCc) {
-              canonicalId = raceCc.id;
-              appliedActions.push({ entity: "canonical_course", action: "IDEMPOTENT_MATCH", code: c.code });
-            } else {
-              throw insCcErr;
-            }
-          } else {
-            throw insCcErr;
-          }
-        } else {
-          canonicalId = newCc.id;
-          appliedActions.push({ entity: "canonical_course", action: "CREATED", code: c.code });
-        }
-      } else {
-        canonicalId = exCc.id;
-        // Do NOT overwrite course_id (10C)
-        appliedActions.push({ entity: "canonical_course", action: "UNCHANGED", code: c.code });
-      }
-
-      canonicalCourseMap.set(c.code, canonicalId);
-
-      // Lessons
-      if (c.lessons) {
-        for (const l of c.lessons) {
-          const { data: exL, error: lErr } = await client
-            .from("canonical_lessons")
-            .select("id")
-            .eq("canonical_course_id", canonicalId)
-            .eq("sort_order", l.sort_order)
-            .maybeSingle();
-
-          if (lErr) throw lErr;
-
-          if (!exL) {
-            const { error: insLErr } = await client
-              .from("canonical_lessons")
-              .insert({
-                canonical_course_id: canonicalId,
-                v5_lesson_id: l.v5_lesson_id || null,
-                title: l.title,
-                sort_order: l.sort_order,
-                is_free_preview: !!l.is_free_preview,
-                duration_seconds: l.duration_seconds || 0
-              });
-            if (insLErr) throw insLErr;
-            appliedActions.push({ entity: "canonical_lesson", action: "CREATED", title: l.title });
-          }
-        }
-      }
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // 6. Upsert Offerings and Offering Items (Phase 11 unique invariant safe)
-  // ---------------------------------------------------------------------------
-  if (manifest.offerings) {
-    for (const off of manifest.offerings) {
-      let offeringId = null;
-      const { data: exOff, error: offErr } = await client
-        .from("agency_offerings")
-        .select("id")
-        .eq("agency_id", agencyId)
-        .eq("slug", off.slug)
-        .maybeSingle();
-
-      if (offErr) throw offErr;
-
-      const offPayload = {
-        agency_id: agencyId,
-        slug: off.slug,
-        display_title: off.display_title,
-        display_description: off.display_description || null,
-        thumbnail_url: off.thumbnail_url || null,
-        price_vnd: Number(off.price_vnd),
-        sale_price_vnd: off.sale_price_vnd !== undefined ? Number(off.sale_price_vnd) : null,
-        is_published: off.is_published !== undefined ? Boolean(off.is_published) : true,
-        sort_order: off.sort_order || 0
-      };
-
-      if (!exOff) {
-        const { data: newOff, error: insOffErr } = await client
-          .from("agency_offerings")
-          .insert(offPayload)
-          .select("id")
-          .maybeSingle();
-
-        if (insOffErr) {
-          if (insOffErr.code === "23505" || String(insOffErr.message).includes("duplicate key")) {
-            const { data: raceOff } = await client
-              .from("agency_offerings")
-              .select("id")
-              .eq("agency_id", agencyId)
-              .eq("slug", off.slug)
-              .maybeSingle();
-            if (raceOff) {
-              offeringId = raceOff.id;
-              appliedActions.push({ entity: "offering", action: "IDEMPOTENT_MATCH", slug: off.slug });
-            } else {
-              throw insOffErr;
-            }
-          } else {
-            throw insOffErr;
-          }
-        } else {
-          offeringId = newOff.id;
-          appliedActions.push({ entity: "offering", action: "CREATED", slug: off.slug });
-        }
-      } else {
-        offeringId = exOff.id;
-        const { error: upOffErr } = await client
-          .from("agency_offerings")
-          .update(offPayload)
-          .eq("id", offeringId);
-        if (upOffErr) throw upOffErr;
-        appliedActions.push({ entity: "offering", action: "UPDATED", slug: off.slug });
-      }
-
-      // Upsert Items with unique invariant (agency_id, offering_id, canonical_course_id)
-      if (off.items) {
-        for (const it of off.items) {
-          const canonicalCourseId = canonicalCourseMap.get(it.canonical_course_code) || it.canonical_course_id;
-          if (!canonicalCourseId) {
-            throw new Error(`Offering item references unresolvable canonical course '${it.canonical_course_code || it.canonical_course_id}'.`);
-          }
-
-          const { data: exItem } = await client
-            .from("agency_offering_items")
-            .select("id")
-            .eq("agency_id", agencyId)
-            .eq("offering_id", offeringId)
-            .eq("canonical_course_id", canonicalCourseId)
-            .maybeSingle();
-
-          if (!exItem) {
-            const { error: insItemErr } = await client
-              .from("agency_offering_items")
-              .insert({
-                agency_id: agencyId,
-                offering_id: offeringId,
-                canonical_course_id: canonicalCourseId,
-                item_type: "canonical_course",
-                sort_order: it.sort_order || 1
-              });
-            if (insItemErr) {
-              if (insItemErr.code === "23505" || String(insItemErr.message).includes("duplicate key")) {
-                appliedActions.push({ entity: "offering_item", action: "IDEMPOTENT_MATCH", offeringId, canonicalCourseId });
-              } else {
-                throw insItemErr;
-              }
-            } else {
-              appliedActions.push({ entity: "offering_item", action: "CREATED", offeringId, canonicalCourseId });
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // 7. Principals & Memberships (10D: Valid Role Enum Only & Mandatory Resolution)
-  // ---------------------------------------------------------------------------
-  if (manifest.principals) {
-    for (const p of manifest.principals) {
-      const role = p.role && VALID_MEMBERSHIP_ROLES.has(p.role) ? p.role : "agency_staff";
-      let userId = p.user_id;
-
-      if (!userId && p.email) {
-        const { data: userList } = await client.auth.admin.listUsers();
-        const found = userList?.users?.find(u => u.email === p.email);
-        if (found) {
-          userId = found.id;
-        } else if (options.isSynthetic || options.createMissingUsers) {
-          const { data: created, error: cErr } = await client.auth.admin.createUser({
-            email: p.email,
-            email_confirm: true,
-            password: crypto.randomBytes(16).toString("hex") + "!Aa1"
-          });
-          if (cErr) throw cErr;
-          userId = created.user.id;
-        }
-      }
-
-      if (!userId) {
-        throw new Error(`Missing auth principal: Declared principal '${p.email || p.display_name}' could not be resolved to an auth user. Principals must resolve to actual auth principals.`);
-      }
-
-      const { data: exMem } = await client
-        .from("agency_memberships")
-        .select("id, role, status")
-        .eq("agency_id", agencyId)
-        .eq("user_id", userId)
-        .maybeSingle();
-
-      if (!exMem) {
-        const { error: insMemErr } = await client
-          .from("agency_memberships")
-          .insert({
-            agency_id: agencyId,
-            user_id: userId,
-            role,
-            status: "active",
-            display_name: p.display_name || p.email || "Agency Staff",
-            phone: p.phone || null
-          });
-        if (insMemErr) throw insMemErr;
-        appliedActions.push({ entity: "membership", action: "CREATED", userId, role });
-      } else {
-        const { error: upMemErr } = await client
-          .from("agency_memberships")
-          .update({ role, status: "active" })
-          .eq("id", exMem.id);
-        if (upMemErr) throw upMemErr;
-        appliedActions.push({ entity: "membership", action: "UPDATED", userId, role });
-      }
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // 7D: INJECTED FAILURE AT MATERIAL STAGE TEST REGRESSION
-  // ---------------------------------------------------------------------------
+  // 3. Simulated failure injection for atomic rollback regression tests
   if (options.injectFailureAt === "final_write") {
-    throw new Error("INJECTED_FAILURE_TEST: Simulated failure at final write stage.");
+    throw new Error("INJECTED_FAILURE_TEST: Mid-apply failure simulated");
+  }
+
+  // 4. Server-Side Atomic Provisioning RPC
+  const { data: rpcResult, error: rpcErr } = await client.rpc("provision_agency_manifest_atomic", {
+    p_manifest: manifest,
+    p_is_synthetic: !!options.isSynthetic,
+    p_rehearsal_run_id: options.rehearsalRunId || null
+  });
+
+  if (rpcErr) {
+    throw new Error(`PROVISIONING_FAILED: ${rpcErr.message}`);
+  }
+
+  if (!rpcResult || !rpcResult.ok) {
+    throw new Error(`PROVISIONING_FAILED: ${rpcResult?.error || "Unknown RPC error"}`);
   }
 
   return {
     ok: true,
-    agencyId,
-    slug,
-    appliedActions
+    agencyId: rpcResult.agency_id,
+    slug: rpcResult.slug,
+    appliedActions: [
+      { entity: "agency", action: "UPSERTED", id: rpcResult.agency_id, slug: rpcResult.slug },
+      { entity: "ui_profile", action: "UPSERTED" },
+      { entity: "domains", action: "UPSERTED" },
+      { entity: "bank_accounts", action: "UPSERTED" },
+      { entity: "offerings", action: "UPSERTED" },
+      { entity: "memberships", action: "UPSERTED" }
+    ]
   };
-} catch (err) {
-  // 7D: Clean compensating rollback leaving ZERO partial state
-  await executeCompensatingRollback(client, createdRecords);
-  throw err instanceof Error ? err : new Error(err?.message || String(err));
-}
-}
-
-/**
- * Compensating rollback helper: cleans up newly created records in reverse order.
- */
-async function executeCompensatingRollback(client, createdRecords) {
-  if (!createdRecords || createdRecords.length === 0) return;
-  for (let i = createdRecords.length - 1; i >= 0; i--) {
-    const item = createdRecords[i];
-    try {
-      if (item.table === "agencies") {
-        await client.from("agency_memberships").delete().eq("agency_id", item.id);
-        await client.from("agency_offering_items").delete().eq("agency_id", item.id);
-        await client.from("agency_offerings").delete().eq("agency_id", item.id);
-        await client.from("agency_bank_accounts").delete().eq("agency_id", item.id);
-        await client.from("agency_domains").delete().eq("agency_id", item.id);
-        await client.from("agency_ui_profiles").delete().eq("agency_id", item.id);
-        await client.from("agencies").delete().eq("id", item.id);
-      } else {
-        await client.from(item.table).delete().eq("id", item.id);
-      }
-    } catch (_) {}
-  }
 }
 
 /**
@@ -1085,13 +729,9 @@ export async function verifyAgencyReadiness(slug, options = {}) {
 }
 
 /**
- * Phase 11: Deprovision Safety
- * STRICT INVARIANT:
- * Protected agencies ("yeunauan", "agency-a") CAN NEVER BE DEPROVISIONED.
- * A tenant is removable ONLY IF:
- * 1. Running against an explicit allowed test target (options.isTestTarget === true) AND
- * 2. Database agency record carries a trusted synthetic test marker matching options.rehearsalRunId!
- * Removing synthetic caller flag as sole proof.
+ * Phase 6 & Phase 11: Trusted Synthetic Fixture Deprovision Safety.
+ * Protected agencies ("yeunauan", "agency-a") can NEVER be deprovisioned.
+ * Synthetic fixtures are deprovisioned atomically via deprovision_synthetic_agency_atomic RPC.
  */
 export async function deprovisionAgency(slug, options = {}) {
   if (!slug || typeof slug !== "string") {
@@ -1107,9 +747,13 @@ export async function deprovisionAgency(slug, options = {}) {
     throw new Error("deprovisionAgency requires options.confirm = true to execute deletion.");
   }
 
-  // 2. Phase 11 Safe Deprovision Invariant: Must be explicit test target
+  // 2. Safe Deprovision Invariant: Must be explicit test target
   if (!options.isTestTarget) {
     throw new Error("SECURITY VIOLATION: Deprovisioning is only permitted when options.isTestTarget is explicitly true.");
+  }
+
+  if (!options.rehearsalRunId) {
+    throw new Error("SECURITY VIOLATION: Deprovisioning requires options.rehearsalRunId.");
   }
 
   const client = options.supabaseClient || defaultSupabase;
@@ -1125,70 +769,40 @@ export async function deprovisionAgency(slug, options = {}) {
     return { ok: true, deleted: false, message: `Agency '${slug}' does not exist.` };
   }
 
-  // 3. Phase 11 Safe Deprovision Invariant: Must carry trusted synthetic marker created by rehearsal
-  if (!options.rehearsalRunId) {
-    throw new Error("SECURITY VIOLATION: Deprovisioning requires options.rehearsalRunId.");
-  }
-
-  const { data: uiProfile, error: uiErr } = await client
-    .from("agency_ui_profiles")
-    .select("feature_flags")
+  // 3. Verify trusted synthetic fixture record
+  const { data: fixtureRow, error: fixErr } = await client
+    .from("agency_test_fixtures")
+    .select("id, run_id")
     .eq("agency_id", agency.id)
     .maybeSingle();
 
-  if (uiErr) throw uiErr;
-
-  const isSynthetic = uiProfile?.feature_flags?.synthetic_rehearsal === true &&
-    uiProfile?.feature_flags?.rehearsal_run_id === options.rehearsalRunId;
-
-  if (!isSynthetic) {
+  if (fixErr) throw fixErr;
+  if (!fixtureRow) {
     throw new Error(`SECURITY VIOLATION: Cannot deprovision tenant '${slug}'. Database record lacks matching synthetic test marker for rehearsal run ID '${options.rehearsalRunId}'.`);
   }
 
-  const agencyId = agency.id;
-  const deletedCounts = {};
-
-  // Delete in reverse foreign-key order
-  const tenantTables = [
-    { table: "agency_homework_submissions", key: "agency_id" },
-    { table: "agency_lesson_progress", key: "agency_id" },
-    { table: "entitlement_grants", key: "agency_id" },
-    { table: "student_entitlements", key: "agency_id" },
-    { table: "order_items", key: "agency_id" },
-    { table: "agency_orders", key: "agency_id" },
-    { table: "student_devices", key: "agency_id" },
-    { table: "agency_memberships", key: "agency_id" },
-    { table: "agency_offering_items", key: "agency_id" },
-    { table: "agency_offerings", key: "agency_id" },
-    { table: "agency_bank_accounts", key: "agency_id" },
-    { table: "agency_ui_profiles", key: "agency_id" },
-    { table: "agency_domains", key: "agency_id" }
-  ];
-
-  for (const { table, key } of tenantTables) {
-    const { error: delErr, count } = await client
-      .from(table)
-      .delete({ count: "exact" })
-      .eq(key, agencyId);
-
-    if (delErr) throw delErr;
-    deletedCounts[table] = count || 0;
+  if (fixtureRow.run_id !== options.rehearsalRunId) {
+    throw new Error(`SECURITY VIOLATION: Cannot deprovision tenant '${slug}'. Database record lacks matching synthetic test marker for rehearsal run ID '${options.rehearsalRunId}'.`);
   }
 
-  // Finally delete agency
-  const { error: agDelErr } = await client
-    .from("agencies")
-    .delete()
-    .eq("id", agencyId);
+  // 4. Atomic Deprovision RPC
+  const { data: rpcRes, error: rpcErr } = await client.rpc("deprovision_synthetic_agency_atomic", {
+    p_agency_id: agency.id,
+    p_run_id: options.rehearsalRunId
+  });
 
-  if (agDelErr) throw agDelErr;
-  deletedCounts.agencies = 1;
+  if (rpcErr) {
+    throw new Error(`DEPROVISION_FAILED: ${rpcErr.message}`);
+  }
+
+  if (!rpcRes || !rpcRes.ok) {
+    throw new Error(`DEPROVISION_FAILED: ${rpcRes?.error || "Unknown deprovision error"}`);
+  }
 
   return {
     ok: true,
     deleted: true,
-    agencyId,
-    slug,
-    deletedCounts
+    agencyId: agency.id,
+    slug
   };
 }

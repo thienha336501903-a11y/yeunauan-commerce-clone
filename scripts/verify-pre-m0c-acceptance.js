@@ -2,25 +2,27 @@
 // scripts/verify-pre-m0c-acceptance.js
 // Consolidated Pre-M0C Preview & Route Acceptance Test Harness
 // Authoritative Plan: SYSTEM_B_MULTI_AGENCY_MASTER_IMPLEMENTATION_PLAN_V1_1.md
-// Milestone M0B.1 / Pre-M0C Remediation V3 — Phase 14 / FIX 11
-// Invariants:
-//   - Strict Category Probing with real database & RPC probes (no inferred passes, no table-count shortcuts).
-//   - Distinguishes PASS, FAIL, NOT_PROVISIONED, DEFERRED.
-//   - Never reports NOT_PROVISIONED as PASS.
-//   - Suspended-only memberships result in FAIL / NOT_READY.
-//   - Missing offering items prevent CATALOG / CHECKOUT from returning PASS.
-//   - Synthetic flag requires real playback authorization probe execution.
-//   - Zero secrets printed or logged.
-//   - Exit rules:
-//       Preparation mode: exit 0 only if all required gates pass and unprovisioned/deferred items are permitted.
-//       Real M0C mode: exit nonzero on ANY FAIL, NOT_PROVISIONED, or DEFERRED.
+// Phase 9: Real Functional Behavior Probing in Pre-M0C Preparation Mode
 
 import crypto from "node:crypto";
+import { createClient } from "@supabase/supabase-js";
 import { supabase } from "../utils/supabase.js";
-import { checkM0dCutoverReadiness } from "../utils/m0d-dependency-checker.js";
+import {
+  applyAgencyProvisioning,
+  deprovisionAgency
+} from "../utils/agency-provisioner.js";
+import { requireAgencyMembership } from "../utils/agency-auth.js";
+import {
+  checkoutOffering,
+  approveAgencyOrder
+} from "../utils/agency-commerce.js";
+import {
+  submitAgencyHomework,
+  listAgencyHomework
+} from "../utils/agency-homework.js";
+import { _clearTenantCache, resolveTenant } from "../utils/tenant-resolver.js";
 
-export const CATEGORIES = [
-  "AGENCY_RECORD",
+export const MANDATORY_CATEGORIES = [
   "HOST",
   "AUTH",
   "MEMBERSHIP",
@@ -29,297 +31,372 @@ export const CATEGORIES = [
   "ORDER",
   "ENTITLEMENT",
   "LEARNER",
-  "PLAYBACK_AUTHORIZATION",
   "HOMEWORK",
   "LEGACY_FALLBACK"
 ];
 
-export async function verifyPreM0cAcceptance(options = {}) {
-  const targetSlug = options.slug || "agency-a";
-  const client = options.supabaseClient || supabase;
-  const isSyntheticRehearsal = Boolean(options.synthetic);
+export async function runPreM0cFunctionalHarness(options = {}) {
+  const nonce = Date.now().toString().slice(-6);
+  const rehearsalRunId = crypto.randomUUID();
+  const slug = `syn-acc-${nonce}`;
+  const hostCommerce = `commerce-${slug}.local`;
+  const hostLms = `lms-${slug}.local`;
 
   const results = {};
-
-  // 1. AGENCY_RECORD probe
-  const { data: agency, error: agErr } = await client
-    .from("agencies")
-    .select("id, slug, name, status")
-    .eq("slug", targetSlug)
-    .maybeSingle();
-
-  if (agErr) {
-    results.AGENCY_RECORD = { status: "FAIL", reason: `Database error querying agency: ${agErr.message}` };
-  } else if (!agency) {
-    results.AGENCY_RECORD = {
-      status: "NOT_PROVISIONED",
-      reason: `Agency '${targetSlug}' is intentionally not provisioned in database (Pre-M0C strict cutover boundary enforced).`
-    };
-  } else {
-    results.AGENCY_RECORD = agency.status === "active"
-      ? { status: "PASS", details: `Agency record '${agency.slug}' active (ID: ${agency.id}).` }
-      : { status: "FAIL", reason: `Agency status is '${agency.status}', expected 'active'.` };
+  for (const cat of MANDATORY_CATEGORIES) {
+    results[cat] = { status: "FAIL", reason: "Not yet evaluated" };
   }
+  results.PLAYBACK_AUTHORIZATION = {
+    status: "DEFERRED",
+    reason: "Production positive Agency A playback strictly deferred until live M0C cutover (REQUIRED_DURING_M0C)."
+  };
 
-  const agencyId = agency?.id || null;
+  const anonClient = createClient(
+    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  );
 
-  // 2. HOST / DOMAINS probe
-  if (!agencyId) {
-    results.HOST = { status: "NOT_PROVISIONED", reason: `Domains for '${targetSlug}' not provisioned.` };
-  } else {
-    const { data: domains, error: domErr } = await client
-      .from("agency_domains")
-      .select("id, hostname, is_primary, ssl_status, status")
-      .eq("agency_id", agencyId);
+  let ownerUserId = null;
+  let studentUserId = null;
+  let staffUserId = null;
+  let agencyId = null;
 
-    if (domErr) {
-      results.HOST = { status: "FAIL", reason: `Domain query failed: ${domErr.message}` };
-    } else if (!domains || domains.length === 0) {
-      results.HOST = { status: "FAIL", reason: "Agency row exists but 0 domains are attached." };
-    } else {
-      const activeDomains = domains.filter(d => (d.status === "active" || d.status === null || d.status === undefined));
-      results.HOST = activeDomains.length > 0
-        ? { status: "PASS", details: `${activeDomains.length} domain(s) verified active.` }
-        : { status: "FAIL", reason: "Domains exist but none are active." };
-    }
-  }
-
-  // 3. AUTH probe (Real session / auth capability probe)
   try {
-    const { data: sessionData, error: sessionErr } = await client.auth.getSession();
-    if (sessionErr) {
-      results.AUTH = { status: "FAIL", reason: `Auth infrastructure probe error: ${sessionErr.message}` };
-    } else {
-      results.AUTH = { status: "PASS", details: "Multi-agency Auth & JWT verification foundation active and responsive." };
-    }
-  } catch (err) {
-    results.AUTH = { status: "FAIL", reason: `Auth infrastructure unreachable: ${err.message}` };
-  }
+    // 1. Resolve published V5 course & release
+    const courseId = "a645f117-2320-452f-8538-154b80484218";
+    const lessonId = "45192be0-e62e-4d88-848e-6e3ea828a75a";
+    const assetId = "ab79016b-e024-40f3-8ea1-50962e1c22a5";
 
-  // 4. MEMBERSHIP probe (Strict active membership + staff/owner requirement)
-  if (!agencyId) {
-    results.MEMBERSHIP = { status: "NOT_PROVISIONED", reason: `Memberships for '${targetSlug}' not provisioned.` };
-  } else {
-    const { data: members, error: memErr } = await client
+    // Pre-create Auth owner user for preflight
+    const ownerEmail = `owner@${slug}.local`;
+    const { data: ownerUser, error: oErr } = await supabase.auth.admin.createUser({
+      email: ownerEmail,
+      password: `OwnerPass_${nonce}!123`,
+      email_confirm: true
+    });
+    if (oErr) throw oErr;
+    ownerUserId = ownerUser.user.id;
+
+    // Build synthetic manifest
+    const manifest = {
+      agency: { slug, name: "Acceptance Synthetic Academy", status: "active" },
+      domains: [
+        { hostname: hostCommerce, is_primary: true, ssl_status: "active" },
+        { hostname: hostLms, is_primary: false, ssl_status: "active" }
+      ],
+      ui: {
+        brand_name: "Acceptance Culinary",
+        storefront_variant: "classic_culinary",
+        checkout_variant: "one_page_qr",
+        admin_variant: "standard_agency",
+        learner_variant: "card_dashboard",
+        learning_variant: "cinema_player",
+        homework_variant: "photo_submission"
+      },
+      bank_accounts: [
+        {
+          bank_code: "MBBANK",
+          account_number: `666${nonce}`,
+          account_holder: "ACCEPTANCE CHEF",
+          branch: "Hanoi",
+          is_default: true,
+          is_active: true
+        }
+      ],
+      learning: {
+        courses: [
+          {
+            code: `CC-ACC-${nonce}`,
+            title: "Acceptance Course",
+            course_id: courseId,
+            lessons: [{ title: "Lesson 1", sort_order: 1, v5_lesson_id: lessonId }]
+          }
+        ]
+      },
+      offerings: [
+        {
+          slug: "acc-offering",
+          display_title: "Acceptance Offering",
+          price_vnd: 250000,
+          is_published: true,
+          items: [{ canonical_course_code: `CC-ACC-${nonce}`, item_type: "canonical_course", sort_order: 1 }]
+        }
+      ],
+      principals: [{ email: ownerEmail, role: "agency_owner" }]
+    };
+
+    // Apply provisioning atomically
+    const applyRes = await applyAgencyProvisioning(manifest, {
+      isSynthetic: true,
+      rehearsalRunId
+    });
+    agencyId = applyRes.agencyId;
+
+    _clearTenantCache();
+
+    // -------------------------------------------------------------------------
+    // 1. HOST PROBE: Real hostname resolution via resolveTenant
+    // -------------------------------------------------------------------------
+    const hostRes = await resolveTenant({ headers: { host: hostCommerce } });
+    if (hostRes.ok && hostRes.tenant?.agencyId === agencyId && hostRes.tenant?.agencySlug === slug) {
+      results.HOST = { status: "PASS", details: `Host '${hostCommerce}' successfully resolved to tenant '${slug}' (${agencyId}).` };
+    } else {
+      results.HOST = { status: "FAIL", reason: `Host '${hostCommerce}' failed to resolve: ${hostRes.error || hostRes.code}` };
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. AUTH PROBE: Real student Auth signup & genuine signed JWT token
+    // -------------------------------------------------------------------------
+    const studentEmail = `student-${nonce}@${slug}.local`;
+    const studentPassword = `StudentP@ss_${nonce}!`;
+    const { data: stUserCreated, error: stCreateErr } = await supabase.auth.admin.createUser({
+      email: studentEmail,
+      password: studentPassword,
+      email_confirm: true
+    });
+    if (stCreateErr) throw stCreateErr;
+    studentUserId = stUserCreated.user.id;
+
+    const { data: signinData, error: signinErr } = await anonClient.auth.signInWithPassword({
+      email: studentEmail,
+      password: studentPassword
+    });
+    if (signinErr || !signinData?.session?.access_token) {
+      results.AUTH = { status: "FAIL", reason: `Student auth sign-in failed: ${signinErr?.message}` };
+    } else {
+      results.AUTH = { status: "PASS", details: `Genuine student signed JWT session established for ${studentEmail}.` };
+    }
+    const studentJwt = signinData.session.access_token;
+
+    // -------------------------------------------------------------------------
+    // 3. MEMBERSHIP PROBE: Request-bound requireAgencyMembership with signed JWT
+    // -------------------------------------------------------------------------
+    const { data: studentMember, error: smErr } = await supabase
       .from("agency_memberships")
-      .select("id, role, status")
-      .eq("agency_id", agencyId);
+      .insert({
+        agency_id: agencyId,
+        user_id: studentUserId,
+        role: "student",
+        display_name: "Harness Student",
+        status: "active"
+      })
+      .select("id")
+      .single();
+    if (smErr) throw smErr;
+    const studentMembershipId = studentMember.id;
 
-    if (memErr) {
-      results.MEMBERSHIP = { status: "FAIL", reason: `Membership probe failed: ${memErr.message}` };
-    } else if (!members || members.length === 0) {
-      results.MEMBERSHIP = { status: "NOT_PROVISIONED", reason: "No memberships provisioned for this agency." };
-    } else {
-      const activeMembers = members.filter(m => m.status === "active");
-      if (activeMembers.length === 0) {
-        results.MEMBERSHIP = { status: "FAIL", reason: "Memberships exist but none are active (suspended-only memberships)." };
-      } else {
-        const staff = activeMembers.filter(m => ["agency_staff", "agency_owner"].includes(m.role));
-        results.MEMBERSHIP = staff.length > 0
-          ? { status: "PASS", details: `${activeMembers.length} active membership(s) (${staff.length} active staff/owner).` }
-          : { status: "FAIL", reason: "Active memberships exist but lack required active staff or owner role." };
+    const studentReq = {
+      headers: {
+        host: hostCommerce,
+        authorization: `Bearer ${studentJwt}`
       }
-    }
-  }
+    };
 
-  // 5. CATALOG probe (Offerings + mandatory offering items)
-  let catalogHasValidItems = false;
-  if (!agencyId) {
-    results.CATALOG = { status: "NOT_PROVISIONED", reason: `Catalog offerings for '${targetSlug}' not provisioned.` };
-  } else {
-    const { data: offerings, error: offErr } = await client
+    const membershipCheck = await requireAgencyMembership(studentReq);
+    if (membershipCheck.ok && membershipCheck.membership?.id === studentMembershipId) {
+      results.MEMBERSHIP = { status: "PASS", details: `Request-bound membership verified active (ID: ${studentMembershipId}).` };
+    } else {
+      results.MEMBERSHIP = { status: "FAIL", reason: `requireAgencyMembership failed: ${membershipCheck.error || membershipCheck.code}` };
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. CATALOG PROBE: Request-bound catalog query for tenant offerings & items
+    // -------------------------------------------------------------------------
+    const { data: offerings, error: offErr } = await supabase
       .from("agency_offerings")
-      .select("id, slug, is_published")
+      .select("id, slug, is_published, agency_offering_items(id, canonical_course_id)")
       .eq("agency_id", agencyId);
 
-    if (offErr) {
-      results.CATALOG = { status: "FAIL", reason: `Catalog probe failed: ${offErr.message}` };
-    } else if (!offerings || offerings.length === 0) {
-      results.CATALOG = { status: "NOT_PROVISIONED", reason: "No offerings catalog provisioned for this agency." };
+    if (offErr || !offerings || offerings.length === 0 || offerings[0].agency_offering_items.length === 0) {
+      results.CATALOG = { status: "FAIL", reason: "Catalog probe found 0 offerings or missing materialized offering items." };
     } else {
-      let missingItems = false;
-      let missingItemSlug = "";
-
-      for (const off of offerings) {
-        const { data: items, error: itErr } = await client
-          .from("agency_offering_items")
-          .select("id, canonical_course_id")
-          .eq("agency_id", agencyId)
-          .eq("offering_id", off.id);
-
-        if (itErr || !items || items.length === 0) {
-          missingItems = true;
-          missingItemSlug = off.slug;
-          break;
-        }
-      }
-
-      if (missingItems) {
-        results.CATALOG = { status: "FAIL", reason: `Offering '${missingItemSlug}' has 0 offering items configured.` };
-      } else {
-        catalogHasValidItems = true;
-        results.CATALOG = { status: "PASS", details: `${offerings.length} offering(s) verified with materialized offering items.` };
-      }
+      results.CATALOG = { status: "PASS", details: `Catalog verified with offering '${offerings[0].slug}' and materialized items.` };
     }
-  }
+    const offeringId = offerings[0].id;
+    const canonicalCourseId = offerings[0].agency_offering_items[0].canonical_course_id;
 
-  // 6. CHECKOUT probe (Active bank accounts + offering items readiness)
-  if (!agencyId) {
-    results.CHECKOUT = { status: "NOT_PROVISIONED", reason: `Checkout routes for '${targetSlug}' awaiting M0C activation.` };
-  } else {
-    const { data: banks, error: bankErr } = await client
-      .from("agency_bank_accounts")
-      .select("id, is_active")
-      .eq("agency_id", agencyId)
-      .eq("is_active", true);
+    // -------------------------------------------------------------------------
+    // 5. CHECKOUT PROBE: Request-bound checkoutOffering with signed JWT
+    // -------------------------------------------------------------------------
+    const orderCode = `ORD-ACC-${nonce}`;
+    const checkoutRes = await checkoutOffering(studentReq, {
+      offeringId,
+      idempotencyOrderCode: orderCode
+    });
 
-    if (bankErr) {
-      results.CHECKOUT = { status: "FAIL", reason: `Bank lookup failed: ${bankErr.message}` };
-    } else if (!banks || banks.length === 0) {
-      results.CHECKOUT = { status: "FAIL", reason: "Cannot checkout: 0 active bank accounts configured for agency." };
-    } else if (!catalogHasValidItems) {
-      results.CHECKOUT = { status: "FAIL", reason: "Cannot checkout: Catalog lacks valid offering items snapshot." };
+    if (checkoutRes.ok && checkoutRes.order?.orderId) {
+      results.CHECKOUT = { status: "PASS", details: `Request-bound checkout succeeded (Order ID: ${checkoutRes.order.orderId}, Amount: ${checkoutRes.order.amountVnd} VND).` };
     } else {
-      results.CHECKOUT = { status: "PASS", details: `Checkout route ready with ${banks.length} active bank account(s) and valid catalog items.` };
+      results.CHECKOUT = { status: "FAIL", reason: `Checkout failed: ${checkoutRes.error || checkoutRes.code}` };
     }
-  }
+    const orderId = checkoutRes.order?.orderId;
 
-  // 7. ORDER probe
-  if (!agencyId) {
-    results.ORDER = { status: "NOT_PROVISIONED", reason: `Orders for '${targetSlug}' not provisioned.` };
-  } else {
-    const { count: orderCount, error: ordErr } = await client
+    // -------------------------------------------------------------------------
+    // 6. ORDER PROBE: Verify stored order state & immutable snapshot
+    // -------------------------------------------------------------------------
+    const { data: storedOrder, error: stOrdErr } = await supabase
       .from("agency_orders")
-      .select("id", { count: "exact", head: true })
-      .eq("agency_id", agencyId);
+      .select("id, status, total_amount_vnd, order_items(id, canonical_course_id)")
+      .eq("id", orderId)
+      .single();
 
-    if (ordErr) {
-      results.ORDER = { status: "FAIL", reason: `Order probe failed: ${ordErr.message}` };
-    } else if (orderCount > 0) {
-      results.ORDER = { status: "PASS", details: `${orderCount} agency order(s) recorded.` };
+    if (stOrdErr || !storedOrder || storedOrder.order_items.length === 0) {
+      results.ORDER = { status: "FAIL", reason: "Stored order lookup failed or items missing." };
     } else {
-      results.ORDER = isSyntheticRehearsal
-        ? { status: "NOT_PROVISIONED", reason: "No orders yet created in rehearsal." }
-        : { status: "NOT_PROVISIONED", reason: "Live commercial orders not yet provisioned prior to customer traffic." };
+      results.ORDER = { status: "PASS", details: `Order verified in DB with status '${storedOrder.status}' and ${storedOrder.order_items.length} materialized item(s).` };
     }
-  }
 
-  // 8. ENTITLEMENT probe
-  if (!agencyId) {
-    results.ENTITLEMENT = { status: "NOT_PROVISIONED", reason: `Student entitlements for '${targetSlug}' awaiting enrollment.` };
-  } else {
-    const { count: entCount, error: entErr } = await client
-      .from("student_entitlements")
-      .select("id", { count: "exact", head: true })
-      .eq("agency_id", agencyId)
-      .eq("status", "active");
+    // -------------------------------------------------------------------------
+    // 7. ENTITLEMENT PROBE: Staff approval -> active entitlement verification
+    // -------------------------------------------------------------------------
+    const staffEmail = `staff-${nonce}@${slug}.local`;
+    const { data: staffUser, error: staffCreateErr } = await supabase.auth.admin.createUser({
+      email: staffEmail,
+      password: `StaffP@ss_${nonce}!`,
+      email_confirm: true
+    });
+    if (staffCreateErr) throw staffCreateErr;
+    staffUserId = staffUser.user.id;
 
-    if (entErr) {
-      results.ENTITLEMENT = { status: "FAIL", reason: `Entitlement probe failed: ${entErr.message}` };
-    } else if (entCount > 0) {
-      results.ENTITLEMENT = { status: "PASS", details: `${entCount} active student entitlement(s).` };
-    } else {
-      results.ENTITLEMENT = { status: "NOT_PROVISIONED", reason: "Zero active student entitlements currently present." };
-    }
-  }
+    const { data: staffMember } = await supabase
+      .from("agency_memberships")
+      .insert({
+        agency_id: agencyId,
+        user_id: staffUserId,
+        role: "agency_staff",
+        display_name: "Approver",
+        status: "active"
+      })
+      .select("id")
+      .single();
 
-  // 9. LEARNER probe
-  if (!agencyId) {
-    results.LEARNER = { status: "NOT_PROVISIONED", reason: `Learner portal for '${targetSlug}' not provisioned.` };
-  } else {
-    const { data: uiProf, error: uiErr } = await client
-      .from("agency_ui_profiles")
-      .select("learner_variant, learning_variant")
-      .eq("agency_id", agencyId)
-      .maybeSingle();
+    const { data: staffAuth } = await anonClient.auth.signInWithPassword({
+      email: staffEmail,
+      password: `StaffP@ss_${nonce}!`
+    });
+    const staffJwt = staffAuth.session.access_token;
 
-    if (uiErr) {
-      results.LEARNER = { status: "FAIL", reason: `Learner UI probe failed: ${uiErr.message}` };
-    } else if (!uiProf || !uiProf.learner_variant) {
-      results.LEARNER = { status: "FAIL", reason: "Learner profile variant not configured." };
-    } else {
-      results.LEARNER = { status: "PASS", details: `Learner portal configured with variant '${uiProf.learner_variant}'.` };
-    }
-  }
-
-  // 10. PLAYBACK_AUTHORIZATION probe
-  // FIX 11: Real probe execution for synthetic; DEFERRED for live production awaiting enrollment
-  if (!agencyId) {
-    results.PLAYBACK_AUTHORIZATION = {
-      status: "DEFERRED",
-      reason: "Positive playback authorization intentionally awaits live Agency customer cutover in M0C. Lockdown fail-closed RPC active and verified."
+    const staffReq = {
+      headers: {
+        host: hostCommerce,
+        authorization: `Bearer ${staffJwt}`
+      }
     };
-  } else if (!isSyntheticRehearsal) {
-    results.PLAYBACK_AUTHORIZATION = {
-      status: "DEFERRED",
-      reason: "Production positive playback probe deferred until real live student enrollment in M0C."
-    };
-  } else {
-    // Synthetic mode: execute real RPC probe
-    try {
-      if (typeof options.playbackProbe === "function") {
-        const probeRes = await options.playbackProbe();
-        results.PLAYBACK_AUTHORIZATION = probeRes.ok
-          ? { status: "PASS", details: "Synthetic playback authorization probe verified." }
-          : { status: "FAIL", reason: `Playback authorization probe failed: ${probeRes.error}` };
+
+    const approveRes = await approveAgencyOrder(staffReq, orderId);
+    if (!approveRes.ok || approveRes.status !== "completed") {
+      results.ENTITLEMENT = { status: "FAIL", reason: `Order approval failed: ${approveRes.error}` };
+    } else {
+      const { data: activeEnt } = await supabase
+        .from("student_entitlements")
+        .select("id, status")
+        .eq("agency_id", agencyId)
+        .eq("membership_id", studentMembershipId)
+        .eq("status", "active")
+        .maybeSingle();
+
+      if (activeEnt) {
+        results.ENTITLEMENT = { status: "PASS", details: `Active student entitlement verified post-approval (ID: ${activeEnt.id}).` };
       } else {
-        const dummyMemId = crypto.randomUUID();
-        const dummyLessonId = crypto.randomUUID();
-        const dummyAssetId = crypto.randomUUID();
-        const { data: rpcRes, error: rpcErr } = await client.rpc("v5_authorize_agency_playback", {
-          p_agency_id: agencyId,
-          p_membership_id: dummyMemId,
-          p_lesson_id: dummyLessonId,
-          p_asset_id: dummyAssetId
+        results.ENTITLEMENT = { status: "FAIL", reason: "Entitlement not active post-approval." };
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // 8. LEARNER PROBE: Request-bound learner progress and course structure
+    // -------------------------------------------------------------------------
+    const { data: lessons } = await supabase
+      .from("canonical_lessons")
+      .select("id, title, v5_lesson_id")
+      .eq("canonical_course_id", canonicalCourseId);
+
+    if (lessons && lessons.length > 0 && lessons[0].v5_lesson_id) {
+      results.LEARNER = { status: "PASS", details: `Learner course content verified with ${lessons.length} canonical lesson(s) mapped to V5.` };
+    } else {
+      results.LEARNER = { status: "FAIL", reason: "Learner course content has 0 lessons or null v5_lesson_id." };
+    }
+    const canonicalLessonId = lessons?.[0]?.id;
+
+    // -------------------------------------------------------------------------
+    // 9. HOMEWORK PROBE: Request-bound homework submission & listing
+    // -------------------------------------------------------------------------
+    const hwSubmitRes = await submitAgencyHomework(studentReq, {
+      courseId: canonicalCourseId,
+      canonicalLessonId,
+      title: "Harness Submission",
+      content: { text: "Photo of Pho Bo stock" }
+    });
+
+    if (hwSubmitRes.ok && (hwSubmitRes.submissionId || hwSubmitRes.submission?.id)) {
+      const subId = hwSubmitRes.submissionId || hwSubmitRes.submission?.id;
+      const hwList = await listAgencyHomework(studentReq);
+      if (Array.isArray(hwList) && hwList.length > 0) {
+        results.HOMEWORK = { status: "PASS", details: `Homework submitted and listed via request helper (Submission ID: ${subId}).` };
+      } else {
+        results.HOMEWORK = { status: "FAIL", reason: "Homework listing returned empty result." };
+      }
+    } else {
+      results.HOMEWORK = { status: "FAIL", reason: `Homework submission failed: ${hwSubmitRes.error || hwSubmitRes.code || JSON.stringify(hwSubmitRes)}` };
+    }
+
+    // -------------------------------------------------------------------------
+    // 10. LEGACY_FALLBACK PROBE: Verify unknown legacy host fails closed without agency bleed
+    // -------------------------------------------------------------------------
+    const legacyRes = await resolveTenant({ headers: { host: "unknown-legacy-host.local" } });
+    if (legacyRes.ok === false && legacyRes.code === "tenant_not_found") {
+      results.LEGACY_FALLBACK = { status: "PASS", details: "Unrecognized hosts cleanly fail-closed without agency bleed." };
+    } else {
+      results.LEGACY_FALLBACK = { status: "FAIL", reason: `Legacy fallback did not fail closed: ${JSON.stringify(legacyRes)}` };
+    }
+
+    // -------------------------------------------------------------------------
+    // Optional Playback Probe with valid fixture
+    // -------------------------------------------------------------------------
+    if (options.probePlayback) {
+      const authUserClient = createClient(
+        process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
+        process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+        { global: { headers: { Authorization: `Bearer ${studentJwt}` } } }
+      );
+      const playbackRes = await authUserClient.rpc("v5_authorize_agency_playback", {
+        p_agency_id: agencyId,
+        p_membership_id: studentMembershipId,
+        p_lesson_id: canonicalLessonId,
+        p_asset_id: assetId
+      });
+      if (playbackRes.data?.authorized === true) {
+        results.PLAYBACK_AUTHORIZATION = { status: "PASS", details: "Playback authorization verified with valid current-release asset." };
+      } else {
+        results.PLAYBACK_AUTHORIZATION = { status: "FAIL", reason: `Playback authorization returned false: ${JSON.stringify(playbackRes.data)}` };
+      }
+    }
+
+  } finally {
+    // Teardown synthetic fixture
+    if (agencyId) {
+      try {
+        await deprovisionAgency(slug, {
+          confirm: true,
+          isTestTarget: true,
+          rehearsalRunId
         });
-
-        if (rpcErr) {
-          results.PLAYBACK_AUTHORIZATION = { status: "FAIL", reason: `Playback RPC error: ${rpcErr.message}` };
-        } else if (rpcRes && rpcRes.authorized === false) {
-          results.PLAYBACK_AUTHORIZATION = { status: "PASS", details: "Playback RPC verified active and strictly fail-closed." };
-        } else {
-          results.PLAYBACK_AUTHORIZATION = { status: "FAIL", reason: "Playback RPC returned unexpected authorization state." };
-        }
-      }
-    } catch (err) {
-      results.PLAYBACK_AUTHORIZATION = { status: "FAIL", reason: `Playback probe error: ${err.message}` };
-    }
-  }
-
-  // 11. HOMEWORK probe
-  if (!agencyId) {
-    results.HOMEWORK = { status: "NOT_PROVISIONED", reason: `Homework subsystem for '${targetSlug}' pending production provisioning.` };
-  } else {
-    const { data: uiProf } = await client
-      .from("agency_ui_profiles")
-      .select("homework_variant")
-      .eq("agency_id", agencyId)
-      .maybeSingle();
-
-    if (!uiProf?.homework_variant) {
-      results.HOMEWORK = { status: "FAIL", reason: "Homework variant not configured in UI profile." };
-    } else {
-      const { error: hwErr } = await client
-        .from("agency_homework_submissions")
-        .select("id", { count: "exact", head: true })
-        .eq("agency_id", agencyId);
-
-      if (hwErr && hwErr.code !== "PGRST116") {
-        results.HOMEWORK = { status: "FAIL", reason: `Homework submissions table probe failed: ${hwErr.message}` };
-      } else {
-        results.HOMEWORK = { status: "PASS", details: `Homework configured with variant '${uiProf.homework_variant}' and submissions ready.` };
+      } catch (e) {
+        console.warn(`[WARN] Cleanup deprovision error: ${e.message}`);
       }
     }
-  }
-
-  // 12. LEGACY_FALLBACK probe
-  try {
-    const m0d = checkM0dCutoverReadiness();
-    results.LEGACY_FALLBACK = m0d.gates.AGENCY_HOST_ROUTES_NEVER_FALL_TO_LEGACY
-      ? { status: "PASS", details: "Fail-closed explicit routing; zero legacy fallback." }
-      : { status: "FAIL", reason: "Route fallback leak detected." };
-  } catch (err) {
-    results.LEGACY_FALLBACK = { status: "FAIL", reason: `Legacy fallback probe failed: ${err.message}` };
+    // Teardown canonical courses
+    const { data: ccList } = await supabase.from("canonical_courses").select("id").eq("code", `CC-ACC-${nonce}`);
+    if (ccList && ccList.length > 0) {
+      const ccIds = ccList.map(c => c.id);
+      await supabase.from("canonical_lessons").delete().in("canonical_course_id", ccIds);
+      await supabase.from("canonical_courses").delete().in("id", ccIds);
+    }
+    // Teardown users
+    for (const uid of [ownerUserId, studentUserId, staffUserId]) {
+      if (uid) {
+        try { await supabase.auth.admin.deleteUser(uid); } catch (_) {}
+      }
+    }
   }
 
   return results;
@@ -327,14 +404,15 @@ export async function verifyPreM0cAcceptance(options = {}) {
 
 export function printScorecard(results) {
   console.log("================================================================================");
-  console.log("       SYSTEM B — PRE-M0C ACCEPTANCE HARNESS & ROUTE READINESS SCORECARD");
+  console.log("       SYSTEM B — PRE-M0C ACCEPTANCE HARNESS & FUNCTIONAL READINESS");
   console.log("================================================================================");
   console.log(`Evaluated at: ${new Date().toISOString()}`);
   console.log("");
   console.log("| Category | Status | Details / Evaluation |");
   console.log("|---|---|---|");
 
-  for (const cat of CATEGORIES) {
+  const allCategories = [...MANDATORY_CATEGORIES, "PLAYBACK_AUTHORIZATION"];
+  for (const cat of allCategories) {
     const res = results[cat] || { status: "DEFERRED", reason: "Pending evaluation" };
     const detail = res.details || res.reason || "";
     console.log(`| **${cat}** | \`${res.status}\` | ${detail} |`);
@@ -342,54 +420,38 @@ export function printScorecard(results) {
 
   console.log("");
   console.log("STATUS LEGEND:");
-  console.log("- PASS: Architectural foundation, security locks, and tooling are fully verified.");
-  console.log("- NOT_PROVISIONED: Real production entity has NOT yet been provisioned (Strict M0C boundary).");
-  console.log("- DEFERRED: Explicitly scheduled for live production post-approval verification.");
-  console.log("- FAIL: Blocker or regression detected (Must halt).");
+  console.log("- PASS: Functional request-bound behavior verified against live database and RPCs.");
+  console.log("- DEFERRED: Permitted only for Agency A positive playback until M0C cutover.");
+  console.log("- FAIL: Blocker or regression detected (Nonzero exit).");
   console.log("================================================================================");
 }
 
 async function main() {
-  const isStrictProduction = process.argv.includes("--strict-production") || process.argv.includes("--real-m0c");
-  const isJson = process.argv.includes("--json");
-
+  console.log("[PRE-M0C-ACCEPTANCE] Executing functional acceptance harness against synthetic fixture...\n");
   try {
-    const results = await verifyPreM0cAcceptance({ slug: "agency-a" });
+    const results = await runPreM0cFunctionalHarness({ probePlayback: true });
+    printScorecard(results);
 
-    if (isJson) {
-      console.log(JSON.stringify(results, null, 2));
-    } else {
-      printScorecard(results);
+    // Assert every mandatory category is PASS
+    let hasFailure = false;
+    for (const cat of MANDATORY_CATEGORIES) {
+      if (results[cat]?.status !== "PASS") {
+        console.error(`[ERROR] Mandatory category ${cat} did not PASS: ${results[cat]?.reason || results[cat]?.status}`);
+        hasFailure = true;
+      }
     }
 
-    const statuses = Object.values(results).map(r => r.status);
-    const hasFail = statuses.includes("FAIL");
-    const hasNotProvisioned = statuses.includes("NOT_PROVISIONED");
-    const hasDeferred = statuses.includes("DEFERRED");
-
-    if (hasFail) {
-      console.error("[ERROR] Acceptance harness encountered FAIL status on one or more categories.");
+    if (hasFailure) {
+      console.error("\nPRE_M0C_ACCEPTANCE_HARNESS = FAIL");
       process.exit(1);
     }
 
-    if (isStrictProduction) {
-      // In strict production mode, NOT_PROVISIONED or DEFERRED causes non-zero exit
-      if (hasNotProvisioned || hasDeferred) {
-        console.error("[ERROR] Strict Production mode requires 100% PASS (unprovisioned or deferred categories present).");
-        process.exit(2);
-      }
-      console.log("\n[ACCEPTANCE HARNESS] Production Mode: ALL REQUIRED GATES PASSED.");
-    } else {
-      // In Pre-M0C preparation mode, unprovisioned real agency and deferred live playback are strictly expected
-      if (hasNotProvisioned || hasDeferred) {
-        console.log("\n[ACCEPTANCE HARNESS] Pre-M0C Preparation Mode: Boundary preserved (Unprovisioned / Deferred items strictly expected prior to real cutover).");
-      } else {
-        console.log("\n[ACCEPTANCE HARNESS] Pre-M0C Evaluation: ALL REQUIRED GATES PASSED.");
-      }
-    }
+    console.log("\n=======================================================");
+    console.log("PRE_M0C_ACCEPTANCE_HARNESS = PASS");
+    console.log("=======================================================");
     process.exit(0);
   } catch (err) {
-    console.error(`[ERROR] Acceptance harness execution failed: ${err.message}`);
+    console.error(`[FATAL] Acceptance harness error: ${err.message}`);
     process.exit(1);
   }
 }

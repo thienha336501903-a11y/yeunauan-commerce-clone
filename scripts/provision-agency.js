@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
+  preflightAgencyProvisioning,
   planAgencyProvisioning,
   applyAgencyProvisioning,
   verifyAgencyReadiness,
@@ -76,6 +77,17 @@ async function main() {
 
   try {
     switch (options.mode) {
+      case "preflight": {
+        if (!manifest) {
+          console.error("[ERROR] --manifest <file.json> is required for preflight mode.");
+          process.exit(1);
+        }
+        console.log(`[PROVISION-AGENCY] Preflight verifying manifest for slug: ${manifest.agency?.slug}...`);
+        const result = await preflightAgencyProvisioning(manifest);
+        console.log(JSON.stringify(result, null, 2));
+        break;
+      }
+
       case "plan": {
         if (!manifest) {
           console.error("[ERROR] --manifest <file.json> is required for plan mode.");
