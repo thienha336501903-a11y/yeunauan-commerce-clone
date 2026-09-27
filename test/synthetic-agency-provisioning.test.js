@@ -372,6 +372,9 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
       ];
       failManifest.learning.courses[0].code = syntheticManifest.learning.courses[0].code;
       failManifest.learning.courses[0].course_id = realCourseId;
+      // Deliberately attempt a shared canonical value mutation inside the SQL
+      // transaction. The late membership trigger below must roll this back.
+      failManifest.learning.courses[0].title = `ROLLBACK_ATTEMPTED_CHANGE_${nonce}`;
       failManifest.learning.courses[0].lessons[0].v5_lesson_id = v5LessonId;
       failManifest.offerings[0].slug = `fail-offering-${nonce}`;
       failManifest.offerings[0].items[0].canonical_course_code = syntheticManifest.learning.courses[0].code;
@@ -398,6 +401,49 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
             ) AS state
           `)
         ).rows[0].state;
+
+        const sharedBefore = (
+          await pgClient.query(`
+            SELECT jsonb_build_object(
+              'canonical_course',
+                (SELECT to_jsonb(cc)
+                   FROM public.canonical_courses cc
+                  WHERE cc.code = $1),
+              'canonical_lessons',
+                COALESCE(
+                  (SELECT jsonb_agg(to_jsonb(cl) ORDER BY cl.sort_order, cl.id)
+                     FROM public.canonical_lessons cl
+                     JOIN public.canonical_courses cc ON cc.id = cl.canonical_course_id
+                    WHERE cc.code = $1),
+                  '[]'::jsonb
+                ),
+              'v5_config',
+                (SELECT to_jsonb(vc)
+                   FROM public.v5_course_configs vc
+                  WHERE vc.course_id = $2::uuid),
+              'published_release_pointer',
+                (SELECT vc.published_release_id
+                   FROM public.v5_course_configs vc
+                  WHERE vc.course_id = $2::uuid),
+              'published_release',
+                (SELECT to_jsonb(vr)
+                   FROM public.v5_releases vr
+                  WHERE vr.id = (
+                    SELECT vc.published_release_id
+                      FROM public.v5_course_configs vc
+                     WHERE vc.course_id = $2::uuid
+                  ))
+            ) AS state
+          `, [syntheticManifest.learning.courses[0].code, realCourseId])
+        ).rows[0].state;
+        assert.ok(sharedBefore.canonical_course, "Controlled pre-existing canonical course must exist");
+        assert.ok(sharedBefore.v5_config, "Controlled V5 course config must exist");
+        assert.ok(sharedBefore.published_release, "Controlled current published release must exist");
+        assert.notEqual(
+          failManifest.learning.courses[0].title,
+          sharedBefore.canonical_course.default_title,
+          "Late-failure manifest must attempt a distinct canonical title mutation"
+        );
 
         await pgClient.query(`
           CREATE OR REPLACE FUNCTION test_forced_late_failure_fn()
@@ -472,16 +518,48 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
         assert.ifError(failedOfferingsErr);
         assert.equal(failedOfferings.length, 0);
 
-        // Pre-existing shared V5/canonical mappings used by the fixture must
-        // still resolve to the same V5 course/release after the forced failure.
-        const { data: sharedConfig, error: sharedCfgErr } = await supabase
-          .from("v5_course_configs")
-          .select("course_id, published_release_id, status")
-          .eq("course_id", realCourseId)
-          .single();
-        assert.ifError(sharedCfgErr);
-        assert.equal(sharedConfig.course_id, realCourseId);
-        assert.equal(sharedConfig.status, "published");
+        // Exact shared-state proof: compare full relevant rows, not counts or
+        // status-only proxies. The attempted canonical title mutation above
+        // must disappear together with every other write in the failed xact.
+        const sharedAfter = (
+          await pgClient.query(`
+            SELECT jsonb_build_object(
+              'canonical_course',
+                (SELECT to_jsonb(cc)
+                   FROM public.canonical_courses cc
+                  WHERE cc.code = $1),
+              'canonical_lessons',
+                COALESCE(
+                  (SELECT jsonb_agg(to_jsonb(cl) ORDER BY cl.sort_order, cl.id)
+                     FROM public.canonical_lessons cl
+                     JOIN public.canonical_courses cc ON cc.id = cl.canonical_course_id
+                    WHERE cc.code = $1),
+                  '[]'::jsonb
+                ),
+              'v5_config',
+                (SELECT to_jsonb(vc)
+                   FROM public.v5_course_configs vc
+                  WHERE vc.course_id = $2::uuid),
+              'published_release_pointer',
+                (SELECT vc.published_release_id
+                   FROM public.v5_course_configs vc
+                  WHERE vc.course_id = $2::uuid),
+              'published_release',
+                (SELECT to_jsonb(vr)
+                   FROM public.v5_releases vr
+                  WHERE vr.id = (
+                    SELECT vc.published_release_id
+                      FROM public.v5_course_configs vc
+                     WHERE vc.course_id = $2::uuid
+                  ))
+            ) AS state
+          `, [syntheticManifest.learning.courses[0].code, realCourseId])
+        ).rows[0].state;
+        assert.deepEqual(
+          sharedAfter,
+          sharedBefore,
+          "Late SQL failure must restore exact canonical course/lesson values, V5 config, published-release pointer and release row"
+        );
 
         const rollbackAfter = (
           await pgClient.query(`
@@ -564,53 +642,101 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
       const racePool = new pg.Pool({ connectionString: process.env.PRE_M0C_TEST_DATABASE_URL, max: 3 });
       const raceClientA = await racePool.connect();
       const raceClientB = await racePool.connect();
-      let releaseRace;
-      const raceBarrier = new Promise((resolve) => { releaseRace = resolve; });
+      const raceObserver = await racePool.connect();
+      let txAOpen = false;
+      let txBOpen = false;
+      let winner;
+      let winnerSlug;
+      let winnerAgencyId;
+      let loserManifest = raceManifestB;
+      let loserSlug = raceSlugB;
+      let blockingPidObserved = false;
 
-      const invokeRace = async (client, manifest) => {
-        await client.query("BEGIN");
-        await client.query("SET LOCAL statement_timeout = '10000ms'");
-        try {
-          await raceBarrier;
-          const out = await client.query(
-            "SELECT public.provision_agency_manifest_atomic($1::jsonb, true, $2::uuid) AS result",
-            [JSON.stringify(manifest), rehearsalRunId]
-          );
-          await client.query("COMMIT");
-          return out.rows[0].result;
-        } catch (error) {
-          try { await client.query("ROLLBACK"); } catch {}
-          throw error;
-        }
-      };
-
-      let raceResults;
       try {
-        const racePromiseA = invokeRace(raceClientA, raceManifestA);
-        const racePromiseB = invokeRace(raceClientB, raceManifestB);
-        releaseRace();
-        raceResults = await Promise.allSettled([racePromiseA, racePromiseB]);
+        await raceObserver.query("SET statement_timeout = '3000ms'");
+
+        // Transaction A deliberately wins the initially-unowned hostname but
+        // remains uncommitted, keeping the unique-index transaction lock held.
+        await raceClientA.query("BEGIN");
+        txAOpen = true;
+        await raceClientA.query("SET LOCAL statement_timeout = '10000ms'");
+        await raceClientA.query("SET LOCAL lock_timeout = '7000ms'");
+        const pidA = Number((await raceClientA.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+        const resultA = await raceClientA.query(
+          "SELECT public.provision_agency_manifest_atomic($1::jsonb, true, $2::uuid) AS result",
+          [JSON.stringify(raceManifestA), rehearsalRunId]
+        );
+        winner = resultA.rows[0].result;
+        winnerSlug = winner.slug;
+        winnerAgencyId = winner.agency_id;
+
+        // Transaction B begins only after A has successfully written the same
+        // hostname but before A commits. B must therefore block on A's
+        // uncommitted unique-key ownership.
+        await raceClientB.query("BEGIN");
+        txBOpen = true;
+        await raceClientB.query("SET LOCAL statement_timeout = '10000ms'");
+        await raceClientB.query("SET LOCAL lock_timeout = '7000ms'");
+        const pidB = Number((await raceClientB.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+
+        const racePromiseB = raceClientB.query(
+          "SELECT public.provision_agency_manifest_atomic($1::jsonb, true, $2::uuid) AS result",
+          [JSON.stringify(raceManifestB), rehearsalRunId]
+        );
+
+        const observeDeadline = Date.now() + 3000;
+        let blockers = [];
+        while (Date.now() < observeDeadline) {
+          const blockRes = await raceObserver.query(
+            "SELECT pg_blocking_pids($1::int) AS blockers",
+            [pidB]
+          );
+          blockers = blockRes.rows[0]?.blockers || [];
+          if (blockers.map(Number).includes(pidA)) {
+            blockingPidObserved = true;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        assert.equal(
+          blockingPidObserved,
+          true,
+          `Transaction B must be demonstrably blocked by transaction A before release; observed blockers=${JSON.stringify(blockers)}`
+        );
+
+        // Release A only after actual lock overlap is proven.
+        await raceClientA.query("COMMIT");
+        txAOpen = false;
+
+        let betaError = null;
+        try {
+          await racePromiseB;
+        } catch (error) {
+          betaError = error;
+        }
+        assert.ok(betaError, "Second transaction must fail closed after winner commits hostname ownership");
+        assert.match(
+          String(betaError.message || betaError),
+          /domain_ownership_conflict|Domain collision/i
+        );
+        await raceClientB.query("ROLLBACK");
+        txBOpen = false;
       } finally {
-        releaseRace?.();
-        try { await raceClientA.query("ROLLBACK"); } catch {}
-        try { await raceClientB.query("ROLLBACK"); } catch {}
+        if (txAOpen) {
+          try { await raceClientA.query("ROLLBACK"); } catch {}
+        }
+        if (txBOpen) {
+          try { await raceClientB.query("ROLLBACK"); } catch {}
+        }
         raceClientA.release();
         raceClientB.release();
+        raceObserver.release();
         await racePool.end();
       }
 
-      const winners = raceResults.filter((result) => result.status === "fulfilled");
-      const losers = raceResults.filter((result) => result.status === "rejected");
-      assert.equal(winners.length, 1, "Exactly one race participant must win");
-      assert.equal(losers.length, 1, "Exactly one race participant must fail closed");
-      assert.match(String(losers[0].reason?.message || losers[0].reason), /domain_ownership_conflict|Domain collision/i);
-
-      const winner = winners[0].value;
-      const winnerSlug = winner.slug;
-      const winnerAgencyId = winner.agency_id;
-      const loserManifest = winnerSlug === raceSlugA ? raceManifestB : raceManifestA;
-      const loserSlug = loserManifest.agency.slug;
-
+      assert.equal(blockingPidObserved, true, "DOMAIN_BLOCKING_PID_OBSERVED must be true");
+      assert.equal(winnerSlug, raceSlugA, "Transaction A must be the deterministic winner in this overlap proof");
+      assert.equal(loserSlug, raceSlugB);
       const { data: raceDomainRows, error: raceDomainErr } = await supabase
         .from("agency_domains")
         .select("agency_id, hostname")
