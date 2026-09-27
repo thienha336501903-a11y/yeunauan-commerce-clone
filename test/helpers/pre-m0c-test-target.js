@@ -11,6 +11,10 @@ const FORBIDDEN_PROJECT_REFS = new Set([
   "yyiavtiwtekkocqpephr",
   "aqozjkfwzmyfunqvcyjv"
 ]);
+const FORBIDDEN_SYSTEM_IDENTIFIERS = new Set([
+  "7666007964130682852", // Main
+  "7642734024280108049"  // Legacy
+]);
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 
 function normalizeSupabaseUrl(raw) {
@@ -137,6 +141,9 @@ export async function verifyPreM0cTestTargetIdentity({ requireGuardAbsent = true
     `);
     const row = identityRes.rows[0];
 
+    if (FORBIDDEN_SYSTEM_IDENTIFIERS.has(String(row.system_identifier))) {
+      throw new Error("Protected Main/Legacy PostgreSQL cluster identity cannot be used for pre-M0C synthetic tests, even through loopback/tunnel aliases.");
+    }
     if (String(row.system_identifier) !== pinned.systemIdentifier) {
       throw new Error(
         `Trusted test-target identity mismatch: connected PostgreSQL system_identifier '${row.system_identifier}' does not match pinned isolated-test identifier '${pinned.systemIdentifier}'.`
