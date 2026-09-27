@@ -218,7 +218,9 @@ async function verifySentinelRoundTrip() {
       throw new Error("PostgREST did not immediately reflect deletion of sentinel agency");
     }
 
+    process.env.PRE_M0C_TEST_SAME_STACK_VERIFIED = "true";
     console.log("  ✓ Sentinel PG -> PostgREST readback and deletion verified.");
+    console.log("  ✓ Same-stack verification established before any synthetic test guard may be created.");
   } finally {
     if (sentinelId) {
       try { await pgClient.query("DELETE FROM public.agencies WHERE id = $1;", [sentinelId]); } catch (_) {}
@@ -262,6 +264,7 @@ function runSubProcess(label, command, args, timeoutMs = 90000) {
         PRE_M0C_TEST_VERIFIED_SYSTEM_IDENTIFIER: process.env.PRE_M0C_TEST_VERIFIED_SYSTEM_IDENTIFIER,
         PRE_M0C_TEST_ENVIRONMENT_FINGERPRINT: process.env.PRE_M0C_TEST_ENVIRONMENT_FINGERPRINT,
         PRE_M0C_TEST_TARGET_VERIFIED: process.env.PRE_M0C_TEST_TARGET_VERIFIED,
+        PRE_M0C_TEST_SAME_STACK_VERIFIED: process.env.PRE_M0C_TEST_SAME_STACK_VERIFIED,
         REQUIRE_INTEGRATION_TESTS: "true"
       }
     });
