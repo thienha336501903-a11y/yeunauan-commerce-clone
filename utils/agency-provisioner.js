@@ -90,6 +90,10 @@ export function assertTrustedSyntheticTestTarget(_options = {}, client = default
     throw new Error("SECURITY VIOLATION: Pinned pre-M0C test-target identity file is invalid.");
   }
 
+  const forbiddenSystemIdentifiers = new Set(["7666007964130682852", "7642734024280108049"]);
+  if (forbiddenSystemIdentifiers.has(pinnedSystemIdentifier) || forbiddenSystemIdentifiers.has(verifiedSystemIdentifier)) {
+    throw new Error("SECURITY VIOLATION: Protected Main/Legacy PostgreSQL cluster identity cannot authorize synthetic operations.");
+  }
   if (verifiedSystemIdentifier !== pinnedSystemIdentifier) {
     throw new Error("SECURITY VIOLATION: Verified PostgreSQL system_identifier does not match the pinned isolated-test identity.");
   }
