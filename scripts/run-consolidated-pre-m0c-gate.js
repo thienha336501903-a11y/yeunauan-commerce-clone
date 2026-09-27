@@ -3,33 +3,79 @@
 // Authoritative Consolidated Pre-M0C Integration Gate Runner
 // SYSTEM_B_CORE_PRE_M0C_CLOSURE_V4 — Phase 10
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import http from "node:http";
 import pg from "pg";
 import { createClient } from "@supabase/supabase-js";
 
-// Ensure explicit test environment configuration
-if (!process.env.DATABASE_URL) {
-  process.env.DATABASE_URL = process.env.PRE_M0C_TEST_DATABASE_URL || "postgres://postgres:postgres@127.0.0.1:54332/postgres";
+// One explicit isolated integration target. No fallback credentials or localhost
+// defaults are accepted by the consolidated gate.
+const REQUIRED_PRE_M0C_ENV = [
+  "PRE_M0C_TEST_DATABASE_URL",
+  "PRE_M0C_TEST_SUPABASE_URL",
+  "PRE_M0C_TEST_SUPABASE_ANON_KEY",
+  "PRE_M0C_TEST_SUPABASE_SERVICE_ROLE_KEY"
+];
+
+function normalizeExplicitTestEnvironment() {
+  const missing = REQUIRED_PRE_M0C_ENV.filter((key) => !String(process.env[key] || "").trim());
+  if (missing.length) {
+    throw new Error(`Missing mandatory isolated integration environment: ${missing.join(", ")}`);
+  }
+
+  const dbUrl = String(process.env.PRE_M0C_TEST_DATABASE_URL).trim();
+  const supabaseUrl = String(process.env.PRE_M0C_TEST_SUPABASE_URL).trim().replace(/\/$/, "");
+  const forbidden = ["yyiavtiwtekkocqpephr", "aqozjkfwzmyfunqvcyjv"];
+  if (forbidden.some((projectRef) => dbUrl.includes(projectRef) || supabaseUrl.includes(projectRef))) {
+    throw new Error("Protected Main/Legacy Supabase targets are forbidden for destructive synthetic integration tests.");
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(supabaseUrl);
+  } catch {
+    throw new Error("PRE_M0C_TEST_SUPABASE_URL is invalid.");
+  }
+
+  const localHosts = new Set(["127.0.0.1", "localhost", "::1"]);
+  if (!localHosts.has(parsed.hostname)) {
+    throw new Error("PRE_M0C_TEST_SUPABASE_URL must point to an isolated local test stack.");
+  }
+  if (!/(127\.0\.0\.1|localhost|\[::1\])/.test(dbUrl)) {
+    throw new Error("PRE_M0C_TEST_DATABASE_URL must point to the same isolated local test stack.");
+  }
+
+  const fingerprint = crypto
+    .createHash("sha256")
+    .update(`${supabaseUrl}\n${dbUrl}`)
+    .digest("hex");
+
+  process.env.DATABASE_URL = dbUrl;
+  process.env.LOCAL_TEST_DB_URL = dbUrl;
+  process.env.SUPABASE_URL = supabaseUrl;
+  process.env.SUPABASE_ANON_KEY = process.env.PRE_M0C_TEST_SUPABASE_ANON_KEY;
+  process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.PRE_M0C_TEST_SUPABASE_SERVICE_ROLE_KEY;
+  process.env.NEXT_PUBLIC_SUPABASE_URL = supabaseUrl;
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = process.env.PRE_M0C_TEST_SUPABASE_ANON_KEY;
+  process.env.REQUIRE_INTEGRATION_TESTS = "true";
+  process.env.PRE_M0C_TEST_ENVIRONMENT_FINGERPRINT = fingerprint;
+
+  return { dbUrl, supabaseUrl, fingerprint };
 }
-if (!process.env.SUPABASE_URL) {
-  process.env.SUPABASE_URL = process.env.PRE_M0C_TEST_SUPABASE_URL || "http://127.0.0.1:54321";
-}
-if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-  process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.PRE_M0C_TEST_SERVICE_ROLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJleHAiOjIxMDU4MzUzNjR9.qXZZvKuEYOReC4kHTTjvpZjhge0Mw8Dm-DvXpxzR-uc";
-}
-if (!process.env.SUPABASE_ANON_KEY) {
-  process.env.SUPABASE_ANON_KEY = process.env.PRE_M0C_TEST_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiZXhwIjoyMTA1ODM1MzY0fQ.7vBR3Bhep8Ck2WTYWhonrLM909-qizQ3upTgKBcTqKs";
-}
-process.env.NEXT_PUBLIC_SUPABASE_URL = process.env.SUPABASE_URL;
-process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+
+const TEST_TARGET = normalizeExplicitTestEnvironment();
 
 const MANDATORY_ENV_VARS = [
+  ...REQUIRED_PRE_M0C_ENV,
+  "DATABASE_URL",
+  "LOCAL_TEST_DB_URL",
   "SUPABASE_URL",
   "SUPABASE_SERVICE_ROLE_KEY",
   "SUPABASE_ANON_KEY",
-  "DATABASE_URL"
+  "PRE_M0C_TEST_ENVIRONMENT_FINGERPRINT",
+  "V5_PLAYBACK_PRIVATE_JWK",
+  "V5_MEDIA_PUBLIC_URL"
 ];
 
 let localGatewayServer = null;
@@ -97,30 +143,28 @@ async function ensureLocalGateway() {
 
 function checkEnvironment() {
   console.log("================================================================================");
-  console.log("       PHASE 10: CONSOLIDATED PRE-M0C INTEGRATION GATE EXECUTION");
+  console.log("       CONSOLIDATED PRE-M0C INTEGRATION GATE — ISOLATED TARGET ONLY");
   console.log("================================================================================");
   console.log(`Execution Timestamp: ${new Date().toISOString()}`);
-  console.log("");
-  console.log("[1/8] Validating Mandatory Environment Configurations...");
 
-  const missing = [];
-  for (const envKey of MANDATORY_ENV_VARS) {
-    const val = process.env[envKey] || (envKey.startsWith("SUPABASE") ? process.env[`NEXT_PUBLIC_${envKey}`] : null);
-    if (!val) {
-      missing.push(envKey);
-    }
+  const missing = MANDATORY_ENV_VARS.filter((key) => !String(process.env[key] || "").trim());
+  if (missing.length) {
+    throw new Error(`Mandatory integration environment missing after normalization: ${missing.join(", ")}`);
   }
 
-  if (missing.length > 0) {
-    console.error(`[FATAL] Missing mandatory environment variable(s): ${missing.join(", ")}`);
-    console.error("Consolidated gate fails closed when mandatory environment credentials are missing.");
-    process.exit(1);
+  if (process.env.DATABASE_URL !== process.env.PRE_M0C_TEST_DATABASE_URL ||
+      process.env.LOCAL_TEST_DB_URL !== process.env.PRE_M0C_TEST_DATABASE_URL) {
+    throw new Error("DATABASE_URL/LOCAL_TEST_DB_URL target drift detected.");
+  }
+  if (process.env.SUPABASE_URL !== process.env.PRE_M0C_TEST_SUPABASE_URL.replace(/\/$/, "") ||
+      process.env.SUPABASE_ANON_KEY !== process.env.PRE_M0C_TEST_SUPABASE_ANON_KEY ||
+      process.env.SUPABASE_SERVICE_ROLE_KEY !== process.env.PRE_M0C_TEST_SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error("Child Supabase environment is not normalized to the explicit test stack.");
   }
 
-  console.log("  ✓ SUPABASE_URL: Configured");
-  console.log("  ✓ SUPABASE_SERVICE_ROLE_KEY: Configured");
-  console.log("  ✓ SUPABASE_ANON_KEY: Configured");
-  console.log("  ✓ DATABASE_URL: Configured");
+  console.log("  ✓ Explicit isolated PostgreSQL target configured");
+  console.log("  ✓ Explicit isolated PostgREST/Auth target configured");
+  console.log("  ✓ Main and Legacy project refs rejected");
 }
 
 async function verifyDatabaseConnectivity() {
@@ -194,6 +238,17 @@ async function verifySentinelRoundTrip() {
   }
 }
 
+function killProcessTree(child) {
+  if (!child?.pid) return;
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+    return;
+  }
+  try { process.kill(-child.pid, "SIGKILL"); } catch {
+    try { child.kill("SIGKILL"); } catch {}
+  }
+}
+
 function runSubProcess(label, command, args, timeoutMs = 90000) {
   return new Promise((resolve, reject) => {
     console.log(`\n--------------------------------------------------------------------------------`);
@@ -202,31 +257,63 @@ function runSubProcess(label, command, args, timeoutMs = 90000) {
     console.log(`--------------------------------------------------------------------------------`);
 
     const child = spawn(command, args, {
-      stdio: "inherit",
+      stdio: ["ignore", "pipe", "pipe"],
       shell: true,
-      env: { ...process.env }
-    });
-
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      reject(new Error(`Suite '${label}' timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      if (code === 0) {
-        console.log(`\n  ✓ [PASS] Suite '${label}' succeeded (exit code 0)`);
-        resolve();
-      } else {
-        console.error(`\n  ✗ [FAIL] Suite '${label}' failed with exit code ${code}`);
-        reject(new Error(`Suite '${label}' exited with non-zero code ${code}`));
+      detached: process.platform !== "win32",
+      env: {
+        ...process.env,
+        DATABASE_URL: process.env.PRE_M0C_TEST_DATABASE_URL,
+        LOCAL_TEST_DB_URL: process.env.PRE_M0C_TEST_DATABASE_URL,
+        SUPABASE_URL: process.env.PRE_M0C_TEST_SUPABASE_URL.replace(/\/$/, ""),
+        SUPABASE_ANON_KEY: process.env.PRE_M0C_TEST_SUPABASE_ANON_KEY,
+        SUPABASE_SERVICE_ROLE_KEY: process.env.PRE_M0C_TEST_SUPABASE_SERVICE_ROLE_KEY,
+        NEXT_PUBLIC_SUPABASE_URL: process.env.PRE_M0C_TEST_SUPABASE_URL.replace(/\/$/, ""),
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.PRE_M0C_TEST_SUPABASE_ANON_KEY,
+        PRE_M0C_TEST_ENVIRONMENT_FINGERPRINT: TEST_TARGET.fingerprint,
+        REQUIRE_INTEGRATION_TESTS: "true"
       }
     });
 
-    child.on("error", (err) => {
+    let output = "";
+    child.stdout.on("data", (chunk) => {
+      const text = chunk.toString();
+      output += text;
+      process.stdout.write(text);
+    });
+    child.stderr.on("data", (chunk) => {
+      const text = chunk.toString();
+      output += text;
+      process.stderr.write(text);
+    });
+
+    let settled = false;
+    const finish = (err) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      console.error(`\n  ✗ [ERROR] Suite '${label}' process error: ${err.message}`);
-      reject(err);
+      if (err) reject(err); else resolve();
+    };
+
+    const timer = setTimeout(() => {
+      killProcessTree(child);
+      finish(new Error(`Suite '${label}' timed out after ${timeoutMs}ms; process tree terminated.`));
+    }, timeoutMs);
+
+    child.on("close", (code) => {
+      const mandatorySkip = /(^|\n).*?(#\s*SKIP\b|SKIP_ENVIRONMENT\b|NOT_EXECUTED\b)/i.test(output);
+      if (mandatorySkip) {
+        return finish(new Error(`Suite '${label}' reported a mandatory skip/not-executed result.`));
+      }
+      if (code !== 0) {
+        return finish(new Error(`Suite '${label}' exited with non-zero code ${code}`));
+      }
+      console.log(`\n  ✓ [PASS] Suite '${label}' succeeded without mandatory skips`);
+      finish();
+    });
+
+    child.on("error", (err) => {
+      killProcessTree(child);
+      finish(err);
     });
   });
 }
