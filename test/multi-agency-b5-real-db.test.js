@@ -757,56 +757,79 @@ test("B5-REAL-DB: Complete Order Model, Lock Order, and Real Concurrency Suite",
   });
 
   // ---------------------------------------------------------------------------
-  // TEST 8: Deliberate Negative Observation & Bounded Non-Hanging Execution
-  // Proves observer loop terminates strictly at deadline without hanging
+  // TEST 8: Deliberate observer failure while a real competing transaction is
+  // blocked. The expected failure MUST release the blocker and settle cleanly.
   // ---------------------------------------------------------------------------
-  await t.test("B5.REAL-8: Negative lock contention observation proves bounded non-hanging execution", async () => {
-    const client1 = await pool.connect();
-    const client2 = await pool.connect();
+  await t.test("B5.REAL-8: observer failure releases a real blocked transaction within a bounded deadline", async () => {
+    const blocker = await pool.connect();
+    const competitor = await pool.connect();
     const observer = await pool.connect();
+    let competitorPromise = null;
+    const startedAt = Date.now();
 
     try {
-      const pid1 = (await client1.query("SELECT pg_backend_pid()")).rows[0].pg_backend_pid;
-      const pid2 = (await client2.query("SELECT pg_backend_pid()")).rows[0].pg_backend_pid;
+      await blocker.query("SET statement_timeout = '4000ms'; SET lock_timeout = '3000ms';");
+      await competitor.query("SET statement_timeout = '4000ms'; SET lock_timeout = '3000ms';");
+      await observer.query("SET statement_timeout = '1000ms';");
 
-      const startTime = Date.now();
-      const timeoutLimitMs = 150;
-      const deadline = startTime + timeoutLimitMs;
-      let observedBlockers = [];
-      let lockContentionObserved = false;
+      const blockerPid = (await blocker.query("SELECT pg_backend_pid()")).rows[0].pg_backend_pid;
+      const competitorPid = (await competitor.query("SELECT pg_backend_pid()")).rows[0].pg_backend_pid;
 
-      while (Date.now() < deadline) {
-        const check = await Promise.race([
-          observer.query("SELECT pg_blocking_pids($1::int) as blockers", [pid2]),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("observer_query_timeout")), 1200))
-        ]);
-        const blockers = check.rows[0]?.blockers || [];
-        if (blockers.includes(pid1)) {
-          lockContentionObserved = true;
-          observedBlockers = blockers;
+      await blocker.query("BEGIN");
+      await blocker.query("SELECT id FROM public.agencies WHERE id = $1 FOR UPDATE", [agencyId]);
+
+      await competitor.query("BEGIN");
+      competitorPromise = competitor.query(
+        "SELECT id FROM public.agencies WHERE id = $1 FOR UPDATE",
+        [agencyId]
+      );
+
+      // First prove the competitor really is blocked.
+      let realBlockObserved = false;
+      const realDeadline = Date.now() + 1000;
+      while (Date.now() < realDeadline) {
+        const check = await observer.query("SELECT pg_blocking_pids($1::int) AS blockers", [competitorPid]);
+        if ((check.rows[0]?.blockers || []).includes(blockerPid)) {
+          realBlockObserved = true;
           break;
         }
-        await new Promise((r) => setTimeout(r, 10));
+        await new Promise((resolve) => setTimeout(resolve, 10));
       }
+      assert.equal(realBlockObserved, true, "Competitor must be genuinely blocked before the failure-path probe");
 
-      const elapsedMs = Date.now() - startTime;
-      assert.equal(lockContentionObserved, false, "Negative test must NOT observe lock contention");
-      assert.ok(elapsedMs >= timeoutLimitMs, `Must have waited until timeout (${elapsedMs}ms >= ${timeoutLimitMs}ms)`);
-      assert.ok(elapsedMs < timeoutLimitMs + 200, `Execution must remain bounded and not hang (${elapsedMs}ms)`);
+      // Deliberately demand an impossible observer condition, and assert that
+      // the observer deadline fails in a bounded way.
+      await assert.rejects(
+        async () => {
+          const impossiblePid = blockerPid + 100000000;
+          const deadline = Date.now() + 150;
+          while (Date.now() < deadline) {
+            const check = await observer.query("SELECT pg_blocking_pids($1::int) AS blockers", [competitorPid]);
+            if ((check.rows[0]?.blockers || []).includes(impossiblePid)) return;
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+          throw new Error("intentional_observer_timeout");
+        },
+        /intentional_observer_timeout/
+      );
     } finally {
-      client1.release();
-      client2.release();
+      // The key invariant: an assertion/observer failure can never strand the
+      // competitor. Releasing the blocker happens before awaiting the query.
+      try { await blocker.query("ROLLBACK"); } catch (_) {}
+      if (competitorPromise) {
+        await Promise.race([
+          Promise.allSettled([competitorPromise]),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("competitor_cleanup_timeout")), 2000))
+        ]);
+      }
+      try { await competitor.query("ROLLBACK"); } catch (_) {}
+      blocker.release();
+      competitor.release();
       observer.release();
     }
+
+    assert.ok(Date.now() - startedAt < 3500, "Intentional failure path must exit without a hanging database session");
   });
 
   await pool.end();
-});
-
-
-test("B5.REAL-8: contention failure path is bounded by DB and process-safe cleanup contracts", () => {
-  const source = "";
-  // The executable scenarios above are the evidence; this guard prevents a
-  // future refactor from removing the hard bounds/finally cleanup silently.
-  assert.ok(true, "bounded-failure contract is exercised by REAL-6/REAL-7");
 });
