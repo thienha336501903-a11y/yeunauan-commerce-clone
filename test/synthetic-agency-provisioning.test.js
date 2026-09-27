@@ -31,9 +31,14 @@ import {
   refundAgencyOrder
 } from "../utils/agency-commerce.js";
 import { _clearTenantCache } from "../utils/tenant-resolver.js";
+import {
+  installPreM0cTestTargetGuard,
+  removePreM0cTestTargetGuard
+} from "./helpers/pre-m0c-test-target.js";
 
 test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/Concurrency -> Marker Safety -> Atomic Rollback -> Validation -> Request-Bound Commerce -> Auth -> Refund -> Deprovision)", async (t) => {
   const rehearsalRunId = crypto.randomUUID();
+  await installPreM0cTestTargetGuard(rehearsalRunId);
   const nonce = Date.now().toString().slice(-6);
   const syntheticSlug = `syn-agency-${nonce}`;
   const syntheticCommerceHost = `commerce-${syntheticSlug}.local`;
@@ -59,9 +64,8 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
       v5LessonId = v5Rel.snapshot.lessons[0].id;
     }
   }
-  if (!v5LessonId) {
-    v5LessonId = "bd6919fd-6778-4ab9-adcd-b42c9e7f3e45";
-  }
+  assert.ok(realCourseId, "Isolated fixture database must contain at least one published V5 course config");
+  assert.ok(v5LessonId, "Published V5 release fixture must contain a real lesson ID");
 
   const ownerEmail = `owner@${syntheticSlug}.local`;
   const ownerPassword = `OwnerPass_${nonce}!123`;
@@ -211,6 +215,39 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
       assert.ok(applyResult.agencyId);
       agencyId = applyResult.agencyId;
       assert.ok(applyResult.appliedActions.length >= 5);
+
+      const { error: directFixtureInsertError } = await supabase
+        .from("agency_test_fixtures")
+        .insert({
+          agency_id: agencyId,
+          run_id: crypto.randomUUID(),
+          created_by_tool: "unauthorized-direct-write",
+          environment_fingerprint: "forbidden"
+        });
+      assert.ok(directFixtureInsertError, "Direct service_role fixture registry INSERT must be denied");
+
+      // Even the database owner cannot mutate authority fields: the trigger is
+      // the second enforcement layer beneath table ACLs.
+      const ownerDb = new pg.Client({ connectionString: process.env.PRE_M0C_TEST_DATABASE_URL });
+      await ownerDb.connect();
+      try {
+        await assert.rejects(
+          ownerDb.query(
+            "UPDATE public.agency_test_fixtures SET run_id = $1 WHERE agency_id = $2",
+            [crypto.randomUUID(), agencyId]
+          ),
+          /Immutable authority.*run_id/i
+        );
+        await assert.rejects(
+          ownerDb.query(
+            "UPDATE public.agency_test_fixtures SET environment_fingerprint = $1 WHERE agency_id = $2",
+            ["tampered-fingerprint", agencyId]
+          ),
+          /Immutable authority.*environment_fingerprint/i
+        );
+      } finally {
+        await ownerDb.end();
+      }
     });
 
     // -------------------------------------------------------------------------
@@ -272,6 +309,18 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
         feature_flags: { synthetic_rehearsal: false }
       });
 
+      // Database ACL must forbid retroactively registering an ordinary Agency
+      // as a synthetic fixture through direct service_role table DML.
+      const { error: retroFixtureErr } = await supabase
+        .from("agency_test_fixtures")
+        .insert({
+          agency_id: normAg.id,
+          run_id: crypto.randomUUID(),
+          created_by_tool: "retroactive-forbidden",
+          environment_fingerprint: process.env.PRE_M0C_TEST_ENVIRONMENT_FINGERPRINT
+        });
+      assert.ok(retroFixtureErr, "Direct service_role retroactive fixture registration must be denied");
+
       // 2. Caller attempting to pass --synthetic on existing non-synthetic agency must be DENIED
       const normalManifest = JSON.parse(JSON.stringify(syntheticManifest));
       normalManifest.agency.slug = normalSlug;
@@ -327,7 +376,7 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
       failManifest.offerings[0].items[0].canonical_course_code = `FAIL-CC-${nonce}`;
       failManifest.principals = [{ email: ownerEmail, role: "agency_owner", display_name: "FORCED_LATE_FAILURE_PROBE" }];
 
-      const pgClient = new pg.Client({ connectionString: process.env.DATABASE_URL || "postgres://postgres:postgres@127.0.0.1:54332/postgres" });
+      const pgClient = new pg.Client({ connectionString: process.env.PRE_M0C_TEST_DATABASE_URL });
       await pgClient.connect();
       try {
         await pgClient.query(`
@@ -361,23 +410,58 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
         assert.ok(caughtErr, "Should have thrown late database failure");
         assert.match(caughtErr.message || String(caughtErr), /forced_late_failure/);
 
-        // Verify that 0 rows remain across all tenant tables
-        const [
-          { count: agCount },
-          { count: domCount },
-          { count: memCount },
-          { count: bankCount }
-        ] = await Promise.all([
-          supabase.from("agencies").select("id", { count: "exact", head: true }).eq("slug", failSlug),
-          supabase.from("agency_domains").select("id", { count: "exact", head: true }).eq("hostname", `fail-commerce-${nonce}.local`),
-          supabase.from("agency_memberships").select("id", { count: "exact", head: true }).eq("display_name", "FORCED_LATE_FAILURE_PROBE"),
-          supabase.from("agency_bank_accounts").select("id", { count: "exact", head: true }).eq("account_number", `777${nonce}`)
-        ]);
+        // Verify ZERO fixture-owned rows across every provisioning-owned table.
+        const { data: failedAgencyRow, error: failedAgencyErr } = await supabase
+          .from("agencies")
+          .select("id")
+          .eq("slug", failSlug)
+          .maybeSingle();
+        assert.ifError(failedAgencyErr);
+        assert.equal(failedAgencyRow, null, "Agency row must roll back completely");
 
-        assert.equal(agCount || 0, 0, "Agency table must have 0 rows after rollback");
-        assert.equal(domCount || 0, 0, "Domain table must have 0 rows after rollback");
-        assert.equal(memCount || 0, 0, "Membership table must have 0 rows after rollback");
-        assert.equal(bankCount || 0, 0, "Bank table must have 0 rows after rollback");
+        const tenantOwnedChecks = await Promise.all([
+          supabase.from("agency_domains").select("id", { count: "exact", head: true }).in("hostname", [`fail-commerce-${nonce}.local`, `fail-lms-${nonce}.local`]),
+          supabase.from("agency_memberships").select("id", { count: "exact", head: true }).eq("display_name", "FORCED_LATE_FAILURE_PROBE"),
+          supabase.from("agency_bank_accounts").select("id", { count: "exact", head: true }).eq("account_number", `777${nonce}`),
+          supabase.from("agency_offerings").select("id", { count: "exact", head: true }).eq("slug", failManifest.offerings[0].slug),
+          supabase.from("canonical_courses").select("id", { count: "exact", head: true }).eq("code", `FAIL-CC-${nonce}`)
+        ]);
+        for (const check of tenantOwnedChecks) assert.ifError(check.error);
+        assert.equal(tenantOwnedChecks[0].count || 0, 0, "All domain rows must roll back");
+        assert.equal(tenantOwnedChecks[1].count || 0, 0, "Membership rows must roll back");
+        assert.equal(tenantOwnedChecks[2].count || 0, 0, "Bank rows must roll back");
+        assert.equal(tenantOwnedChecks[3].count || 0, 0, "Offering rows must roll back");
+        assert.equal(tenantOwnedChecks[4].count || 0, 0, "Provisioning-created canonical course must roll back");
+
+        // Failed transaction cannot leave a fixture registry row. The successful
+        // main synthetic fixture under the same run is the only allowed row.
+        const { data: fixtureRows, error: fixtureRowsErr } = await supabase
+          .from("agency_test_fixtures")
+          .select("agency_id, run_id")
+          .eq("run_id", rehearsalRunId);
+        assert.ifError(fixtureRowsErr);
+        assert.equal(fixtureRows.length, 1, "Late failure must not leave an extra fixture registry row");
+        assert.equal(fixtureRows[0].agency_id, agencyId);
+
+        // No orphan UI/offering-item row can exist without an agency due to FK
+        // rollback; assert by probing the failed manifest identifiers.
+        const { data: failedOfferings, error: failedOfferingsErr } = await supabase
+          .from("agency_offerings")
+          .select("id")
+          .eq("slug", failManifest.offerings[0].slug);
+        assert.ifError(failedOfferingsErr);
+        assert.equal(failedOfferings.length, 0);
+
+        // Pre-existing shared V5/canonical mappings used by the fixture must
+        // still resolve to the same V5 course/release after the forced failure.
+        const { data: sharedConfig, error: sharedCfgErr } = await supabase
+          .from("v5_course_configs")
+          .select("course_id, published_release_id, status")
+          .eq("course_id", realCourseId)
+          .single();
+        assert.ifError(sharedCfgErr);
+        assert.equal(sharedConfig.course_id, realCourseId);
+        assert.equal(sharedConfig.status, "published");
       } finally {
         await pgClient.query(`
           DROP TRIGGER IF EXISTS test_forced_late_failure_trg ON public.agency_memberships;
@@ -386,36 +470,121 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
         await pgClient.end();
       }
 
-      // 5. Fix 1: Concurrent different-slug domain collision (DOMAIN_OWNERSHIP_IMMUTABLE)
-      // Attempting to claim existing domain from another agency must fail closed and leave zero partial rows
-      const collisionSlug = `coll-agency-${nonce}`;
-      const collisionManifest = JSON.parse(JSON.stringify(syntheticManifest));
-      collisionManifest.agency.slug = collisionSlug;
-      // Re-use syntheticCommerceHost which already belongs to syntheticSlug
-      collisionManifest.domains = [{ hostname: syntheticCommerceHost, is_primary: true }];
-      collisionManifest.bank_accounts[0].account_number = `999${nonce}`;
-      collisionManifest.learning.courses[0].code = `COLL-CC-${nonce}`;
-      collisionManifest.learning.courses[0].course_id = realCourseId;
-      collisionManifest.learning.courses[0].lessons[0].v5_lesson_id = v5LessonId;
-      collisionManifest.offerings[0].items[0].canonical_course_code = `COLL-CC-${nonce}`;
+      // 5. TRUE concurrent different-slug race for an initially UNOWNED hostname.
+      // Use two independent PostgreSQL connections and an explicit JS barrier
+      // so both transactions begin the same provisioning call concurrently.
+      const raceHost = `race-unowned-${nonce}.local`;
+      const raceSlugA = `race-a-${nonce}`;
+      const raceSlugB = `race-b-${nonce}`;
 
-      await assert.rejects(
-        async () => {
-          await applyAgencyProvisioning(collisionManifest, {
-            isSynthetic: true,
-            isTestTarget: true,
-            rehearsalRunId
-          });
-        },
-        /Domain collision detected|domain_ownership_conflict/
-      );
+      const { count: initialRaceHostCount, error: initialRaceHostErr } = await supabase
+        .from("agency_domains")
+        .select("id", { count: "exact", head: true })
+        .eq("hostname", raceHost);
+      assert.ifError(initialRaceHostErr);
+      assert.equal(initialRaceHostCount || 0, 0, "Race hostname must be initially unowned");
 
-      // Verify domain ownership is unchanged and collisionSlug has 0 rows
-      const { data: domCheck } = await supabase.from("agency_domains").select("agency_id").eq("hostname", syntheticCommerceHost).single();
-      assert.equal(domCheck.agency_id, agencyId, "Domain ownership must remain with original agency");
+      const raceManifestA = JSON.parse(JSON.stringify(syntheticManifest));
+      const raceManifestB = JSON.parse(JSON.stringify(syntheticManifest));
+      for (const [manifest, raceSlug, suffix] of [[raceManifestA, raceSlugA, "A"], [raceManifestB, raceSlugB, "B"]]) {
+        manifest.agency.slug = raceSlug;
+        manifest.agency.name = `Race Agency ${suffix}`;
+        manifest.domains = [{ hostname: raceHost, is_primary: true, ssl_status: "active" }];
+        manifest.bank_accounts[0].account_number = `77${suffix.charCodeAt(0)}${nonce}`;
+        manifest.learning.courses[0].code = `RACE-${suffix}-CC-${nonce}`;
+        manifest.learning.courses[0].course_id = realCourseId;
+        manifest.learning.courses[0].lessons = [{
+          title: `Race ${suffix} Lesson`,
+          sort_order: 1,
+          is_free_preview: false,
+          v5_lesson_id: v5LessonId
+        }];
+        manifest.offerings[0].slug = `race-offering-${suffix.toLowerCase()}-${nonce}`;
+        manifest.offerings[0].items = [{
+          canonical_course_code: `RACE-${suffix}-CC-${nonce}`,
+          item_type: "canonical_course",
+          sort_order: 1
+        }];
+      }
 
-      const { count: collAgCount } = await supabase.from("agencies").select("id", { count: "exact", head: true }).eq("slug", collisionSlug);
-      assert.equal(collAgCount || 0, 0, "Losing collision tenant must leave 0 rows");
+      const racePool = new pg.Pool({ connectionString: process.env.PRE_M0C_TEST_DATABASE_URL, max: 3 });
+      const raceClientA = await racePool.connect();
+      const raceClientB = await racePool.connect();
+      let releaseRace;
+      const raceBarrier = new Promise((resolve) => { releaseRace = resolve; });
+
+      const invokeRace = async (client, manifest) => {
+        await client.query("BEGIN");
+        await client.query("SET LOCAL statement_timeout = '10000ms'");
+        try {
+          await raceBarrier;
+          const out = await client.query(
+            "SELECT public.provision_agency_manifest_atomic($1::jsonb, true, $2::uuid) AS result",
+            [JSON.stringify(manifest), rehearsalRunId]
+          );
+          await client.query("COMMIT");
+          return out.rows[0].result;
+        } catch (error) {
+          try { await client.query("ROLLBACK"); } catch {}
+          throw error;
+        }
+      };
+
+      let raceResults;
+      try {
+        const racePromiseA = invokeRace(raceClientA, raceManifestA);
+        const racePromiseB = invokeRace(raceClientB, raceManifestB);
+        releaseRace();
+        raceResults = await Promise.allSettled([racePromiseA, racePromiseB]);
+      } finally {
+        releaseRace?.();
+        try { await raceClientA.query("ROLLBACK"); } catch {}
+        try { await raceClientB.query("ROLLBACK"); } catch {}
+        raceClientA.release();
+        raceClientB.release();
+        await racePool.end();
+      }
+
+      const winners = raceResults.filter((result) => result.status === "fulfilled");
+      const losers = raceResults.filter((result) => result.status === "rejected");
+      assert.equal(winners.length, 1, "Exactly one race participant must win");
+      assert.equal(losers.length, 1, "Exactly one race participant must fail closed");
+      assert.match(String(losers[0].reason?.message || losers[0].reason), /domain_ownership_conflict|Domain collision/i);
+
+      const winner = winners[0].value;
+      const winnerSlug = winner.slug;
+      const winnerAgencyId = winner.agency_id;
+      const loserManifest = winnerSlug === raceSlugA ? raceManifestB : raceManifestA;
+      const loserSlug = loserManifest.agency.slug;
+
+      const { data: raceDomainRows, error: raceDomainErr } = await supabase
+        .from("agency_domains")
+        .select("agency_id, hostname")
+        .eq("hostname", raceHost);
+      assert.ifError(raceDomainErr);
+      assert.equal(raceDomainRows.length, 1, "Race hostname must exist exactly once");
+      assert.equal(raceDomainRows[0].agency_id, winnerAgencyId, "Hostname ownership must remain with winner");
+
+      const { data: loserAgency, error: loserAgencyErr } = await supabase
+        .from("agencies")
+        .select("id")
+        .eq("slug", loserSlug)
+        .maybeSingle();
+      assert.ifError(loserAgencyErr);
+      assert.equal(loserAgency, null, "Losing race tenant must leave zero agency rows");
+
+      const loserSpecificChecks = await Promise.all([
+        supabase.from("agency_offerings").select("id", { count: "exact", head: true }).eq("slug", loserManifest.offerings[0].slug),
+        supabase.from("agency_bank_accounts").select("id", { count: "exact", head: true }).eq("account_number", loserManifest.bank_accounts[0].account_number),
+        supabase.from("canonical_courses").select("id", { count: "exact", head: true }).eq("code", loserManifest.learning.courses[0].code)
+      ]);
+      for (const check of loserSpecificChecks) assert.ifError(check.error);
+      assert.equal(loserSpecificChecks[0].count || 0, 0, "Loser offering must roll back");
+      assert.equal(loserSpecificChecks[1].count || 0, 0, "Loser bank row must roll back");
+      assert.equal(loserSpecificChecks[2].count || 0, 0, "Loser canonical-course insert must roll back");
+
+      await deprovisionAgency(winnerSlug, { confirm: true, rehearsalRunId });
+
     });
 
     // -------------------------------------------------------------------------
@@ -539,6 +708,21 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
       assert.equal(checkoutRes.order.accountNumber, bank.account_number);
       orderId = checkoutRes.order.orderId;
 
+      const historicalOrder = {
+        amountVnd: Number(checkoutRes.order.amountVnd),
+        bankCode: checkoutRes.order.bankCode,
+        accountNumber: checkoutRes.order.accountNumber,
+        accountHolder: checkoutRes.order.accountHolder
+      };
+      const { data: originalOrderItems, error: originalItemsErr } = await supabase
+        .from("order_items")
+        .select("canonical_course_id, item_snapshot")
+        .eq("order_id", orderId)
+        .order("canonical_course_id", { ascending: true });
+      assert.ifError(originalItemsErr);
+      assert.ok(originalOrderItems?.length >= 1, "Initial checkout must materialize order_items");
+      const originalPurchasedCourseIds = originalOrderItems.map((row) => row.canonical_course_id).sort();
+
       // 6.4 Mutate ALL THREE after checkout:
       // (1) Offering price
       const { data: updatedOff, error: offUpErr } = await supabase
@@ -550,27 +734,79 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
       assert.ifError(offUpErr);
       assert.equal(Number(updatedOff.sale_price_vnd), 999999, "Live offering price must be successfully mutated");
 
-      // (2) Default bank account
-      const { data: updatedBank, error: bankUpErr } = await supabase
+      // (2) Switch default routing to a DIFFERENT valid account.
+      const { data: secondBank, error: secondBankErr } = await supabase
         .from("agency_bank_accounts")
-        .update({ bank_code: "BIDV", account_number: "999999999" })
-        .eq("id", bankAccountId)
-        .select("bank_code, account_number")
+        .insert({
+          agency_id: agencyId,
+          bank_code: "BIDV",
+          account_number: `999${nonce}2`,
+          account_holder: "SYNTHETIC SECOND PAYEE",
+          branch: "Hanoi Secondary",
+          is_active: true,
+          is_default: false
+        })
+        .select("id, bank_code, account_number, account_holder")
         .single();
-      assert.ifError(bankUpErr);
-      assert.equal(updatedBank.bank_code, "BIDV", "Live bank code must be successfully mutated");
-      assert.equal(updatedBank.account_number, "999999999", "Live account number must be successfully mutated");
+      assert.ifError(secondBankErr);
+      const { error: oldDefaultErr } = await supabase
+        .from("agency_bank_accounts")
+        .update({ is_default: false })
+        .eq("id", bankAccountId);
+      assert.ifError(oldDefaultErr);
+      const { data: newDefault, error: newDefaultErr } = await supabase
+        .from("agency_bank_accounts")
+        .update({ is_default: true })
+        .eq("id", secondBank.id)
+        .select("id, bank_code, account_number, account_holder, is_default")
+        .single();
+      assert.ifError(newDefaultErr);
+      assert.equal(newDefault.is_default, true);
+      assert.notEqual(newDefault.id, bankAccountId);
+      assert.notEqual(newDefault.account_number, historicalOrder.accountNumber);
 
-      // (3) Offering items - use a second VALID existing canonical course
-      const { data: secondCcList } = await supabase
+      // (3) Offering items - choose a second canonical course only after
+      // proving its V5 current-release + lesson readiness.
+      const { data: secondCcCandidates, error: secondCcErr } = await supabase
         .from("canonical_courses")
-        .select("id")
+        .select("id, code, course_id")
         .not("course_id", "is", null)
         .eq("status", "published")
         .neq("code", `CANONICAL-${syntheticSlug}`)
-        .limit(1);
-      assert.ok(secondCcList && secondCcList.length > 0, "Must have an existing second canonical course");
-      secondCourseId = secondCcList[0].id;
+        .limit(20);
+      assert.ifError(secondCcErr);
+
+      let secondReadyCourse = null;
+      for (const candidate of secondCcCandidates || []) {
+        const [{ data: cfg }, { data: lessons }] = await Promise.all([
+          supabase
+            .from("v5_course_configs")
+            .select("published_release_id, status")
+            .eq("course_id", candidate.course_id)
+            .eq("status", "published")
+            .maybeSingle(),
+          supabase
+            .from("canonical_lessons")
+            .select("id, v5_lesson_id")
+            .eq("canonical_course_id", candidate.id)
+            .not("v5_lesson_id", "is", null)
+            .limit(1)
+        ]);
+        if (!cfg?.published_release_id || !lessons?.length) continue;
+        const { data: release } = await supabase
+          .from("v5_releases")
+          .select("id, status")
+          .eq("id", cfg.published_release_id)
+          .eq("course_id", candidate.course_id)
+          .eq("status", "published")
+          .maybeSingle();
+        if (release) {
+          secondReadyCourse = candidate;
+          break;
+        }
+      }
+      assert.ok(secondReadyCourse, "Must have a second canonical course with valid current published V5 release and lesson mapping");
+      secondCourseId = secondReadyCourse.id;
 
       const { data: insItem, error: insItemErr } = await supabase.from("agency_offering_items").insert({
         agency_id: agencyId,
@@ -582,11 +818,15 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
       assert.ifError(insItemErr);
       assert.ok(insItem, "Offering items mutation must succeed");
 
-      // Verify order_items BEFORE retry
-      const { data: storedOrderItemsBefore } = await supabase
-        .from("order_items")
-        .select("id, canonical_course_id")
-        .eq("order_id", orderId);
+      const { data: liveItemsAfterMutation, error: liveItemsErr } = await supabase
+        .from("agency_offering_items")
+        .select("canonical_course_id")
+        .eq("agency_id", agencyId)
+        .eq("offering_id", offeringId)
+        .order("canonical_course_id", { ascending: true });
+      assert.ifError(liveItemsErr);
+      const liveCourseIdsAfterMutation = liveItemsAfterMutation.map((row) => row.canonical_course_id).sort();
+      assert.notDeepEqual(liveCourseIdsAfterMutation, originalPurchasedCourseIds, "Live offering item set must actually change");
 
       // 6.5 Retry checkout -> Returns original STORED snapshot (immutable quote, bank, and items)
       const retryRes = await checkoutOffering(studentReq, {
@@ -596,16 +836,23 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
 
       assert.equal(retryRes.ok, true);
       assert.equal(retryRes.order.idempotent, true);
-      assert.equal(Number(retryRes.order.amountVnd), Number(expectedPrice), "Price must match stored historical snapshot");
-      assert.equal(retryRes.order.bankCode, bank.bank_code, "Bank must match stored historical snapshot");
-      assert.equal(retryRes.order.accountNumber, bank.account_number, "Account must match stored historical snapshot");
+      assert.equal(Number(retryRes.order.amountVnd), historicalOrder.amountVnd, "Price must match pre-mutation historical snapshot");
+      assert.equal(retryRes.order.bankCode, historicalOrder.bankCode, "Bank code must match pre-mutation historical snapshot");
+      assert.equal(retryRes.order.accountNumber, historicalOrder.accountNumber, "Account must match pre-mutation historical snapshot");
+      assert.equal(retryRes.order.accountHolder, historicalOrder.accountHolder, "Payee must match pre-mutation historical snapshot");
 
-      // Verify stored order items after retry == before retry
-      const { data: storedOrderItemsAfter } = await supabase
+      const { data: storedOrderItemsAfter, error: itemsAfterErr } = await supabase
         .from("order_items")
-        .select("id, canonical_course_id")
-        .eq("order_id", orderId);
-      assert.deepEqual(storedOrderItemsAfter, storedOrderItemsBefore, "order_items before retry must equal order_items after retry");
+        .select("canonical_course_id, item_snapshot")
+        .eq("order_id", orderId)
+        .order("canonical_course_id", { ascending: true });
+      assert.ifError(itemsAfterErr);
+      assert.deepEqual(storedOrderItemsAfter, originalOrderItems, "Exact order_items must remain identical to the initial checkout snapshot");
+      assert.deepEqual(
+        storedOrderItemsAfter.map((row) => row.canonical_course_id).sort(),
+        originalPurchasedCourseIds,
+        "Purchased canonical-course set must remain historical"
+      );
 
       // 6.6 Staff Approves Order via application request helper with staff JWT
       const staffReq = {
@@ -712,5 +959,6 @@ test("SYNTHETIC-AGENCY-REHEARSAL: Full Lifecycle (Plan -> Apply -> Idempotency/C
         try { await supabase.auth.admin.deleteUser(staffUserId); } catch (_) {}
       }
     });
+    await removePreM0cTestTargetGuard(rehearsalRunId);
   }
 });
