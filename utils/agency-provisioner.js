@@ -23,19 +23,35 @@ const VALID_MEMBERSHIP_ROLES = new Set(["student", "agency_staff", "agency_owner
  * Asserts that the current target is an isolated test environment and NEVER
  * a protected production project (yyiavtiwtekkocqpephr or aqozjkfwzmyfunqvcyjv).
  */
-export function assertTrustedSyntheticTestTarget(options = {}, client = defaultSupabase) {
-  if (!options.isTestTarget) {
-    throw new Error("SECURITY VIOLATION: Synthetic operation denied. Caller must explicitly assert options.isTestTarget = true.");
+export function assertTrustedSyntheticTestTarget(_options = {}, client = defaultSupabase) {
+  const expectedUrl = String(process.env.PRE_M0C_TEST_SUPABASE_URL || "").trim().replace(/\/$/, "");
+  const expectedDbUrl = String(process.env.PRE_M0C_TEST_DATABASE_URL || "").trim();
+  const environmentFingerprint = String(process.env.PRE_M0C_TEST_ENVIRONMENT_FINGERPRINT || "").trim();
+
+  const clientUrl = String(client?.supabaseUrl || process.env.SUPABASE_URL || "").trim().replace(/\/$/, "");
+  const dbUrl = String(process.env.DATABASE_URL || process.env.LOCAL_TEST_DB_URL || "").trim();
+
+  if (!expectedUrl || !expectedDbUrl || !environmentFingerprint) {
+    throw new Error(
+      "SECURITY VIOLATION: Synthetic operations require server-controlled PRE_M0C_TEST_SUPABASE_URL, PRE_M0C_TEST_DATABASE_URL, and PRE_M0C_TEST_ENVIRONMENT_FINGERPRINT."
+    );
   }
-  const clientUrl = client?.supabaseUrl || process.env.SUPABASE_URL || "";
-  const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || "";
 
   const forbiddenTargets = ["yyiavtiwtekkocqpephr", "aqozjkfwzmyfunqvcyjv"];
   for (const forbidden of forbiddenTargets) {
-    if (clientUrl.includes(forbidden) || dbUrl.includes(forbidden)) {
-      throw new Error(`SECURITY VIOLATION: Cannot execute synthetic deprovisioning or synthetic provisioning tests against production project (${forbidden}). Synthetic operations are strictly restricted to isolated test environments.`);
+    if (clientUrl.includes(forbidden) || dbUrl.includes(forbidden) || expectedUrl.includes(forbidden) || expectedDbUrl.includes(forbidden)) {
+      throw new Error(`SECURITY VIOLATION: Synthetic operations are forbidden against protected project ${forbidden}.`);
     }
   }
+
+  if (clientUrl !== expectedUrl) {
+    throw new Error(`SECURITY VIOLATION: Supabase client target does not match the server-controlled pre-M0C test target.`);
+  }
+  if (dbUrl !== expectedDbUrl) {
+    throw new Error("SECURITY VIOLATION: Database target does not match PRE_M0C_TEST_DATABASE_URL.");
+  }
+
+  return Object.freeze({ supabaseUrl: expectedUrl, databaseUrl: expectedDbUrl, environmentFingerprint });
 }
 
 /**
@@ -118,6 +134,13 @@ export function validateManifest(manifest) {
     }
     if (!Array.isArray(off.items) || off.items.length === 0) {
       throw new Error(`Invalid manifest: Offering '${off.slug}' must include at least one course item.`);
+    }
+    for (const item of off.items) {
+      if (!item?.canonical_course_code || typeof item.canonical_course_code !== "string") {
+        throw new Error(
+          `Invalid manifest: Offering '${off.slug}' items must use canonical_course_code as the authoritative course identifier.`
+        );
+      }
     }
   }
 
@@ -438,39 +461,68 @@ export async function preflightAgencyProvisioning(manifest, options = {}) {
   }
   checks.PRINCIPALS_RESOLVED = true;
 
-  // 3. Offering Items Resolution & Canonical Course Checks
+  // 3. Offering Items Resolution & Canonical Course Checks.
+  // canonical_course_code is the authoritative provisioning identifier.
   for (const off of manifest.offerings) {
     for (const item of off.items) {
-      const courseCode = item.canonical_course_code;
-      const courseId = item.canonical_course_id;
-
-      const inManifestCourse = manifest.learning?.courses?.find(
-        (c) => (courseCode && c.code === courseCode) || (courseId && c.id === courseId)
-      );
-
-      let dbCourse = null;
-      if (courseCode) {
-        const { data: cc, error: ccErr } = await client
-          .from("canonical_courses")
-          .select("id, code, course_id, status")
-          .eq("code", courseCode)
-          .maybeSingle();
-        if (ccErr) throw ccErr;
-        dbCourse = cc;
-      } else if (courseId) {
-        const { data: cc, error: ccErr } = await client
-          .from("canonical_courses")
-          .select("id, code, course_id, status")
-          .eq("id", courseId)
-          .maybeSingle();
-        if (ccErr) throw ccErr;
-        dbCourse = cc;
+      const courseCode = String(item.canonical_course_code || "").trim();
+      if (!courseCode) {
+        throw new Error(`NOT_READY: Offering '${off.slug}' item is missing canonical_course_code.`);
       }
 
-      if (!inManifestCourse && !dbCourse) {
+      const manifestCourse = manifest.learning?.courses?.find((course) => course.code === courseCode) || null;
+      const { data: dbCourse, error: ccErr } = await client
+        .from("canonical_courses")
+        .select("id, code, course_id, status")
+        .eq("code", courseCode)
+        .maybeSingle();
+
+      if (ccErr) throw ccErr;
+      if (!manifestCourse && !dbCourse) {
         throw new Error(
-          `NOT_READY: Offering '${off.slug}' item '${courseCode || courseId}' cannot be resolved to any canonical course.`
+          `NOT_READY: Offering '${off.slug}' item '${courseCode}' cannot be resolved to a canonical course.`
         );
+      }
+
+      if (item.canonical_course_id) {
+        if (!dbCourse || dbCourse.id !== item.canonical_course_id) {
+          throw new Error(
+            `NOT_READY: Offering '${off.slug}' item identifier conflict: canonical_course_code '${courseCode}' and canonical_course_id '${item.canonical_course_id}' do not identify the same existing canonical course.`
+          );
+        }
+      }
+
+      if (manifestCourse && dbCourse?.course_id && dbCourse.course_id !== manifestCourse.course_id) {
+        throw new Error(
+          `NOT_READY: Offering item '${courseCode}' conflicts with the existing canonical -> V5 course mapping.`
+        );
+      }
+
+      // A course referenced only from DB must independently prove current V5 release readiness.
+      if (!manifestCourse) {
+        if (!dbCourse?.course_id) {
+          throw new Error(`NOT_READY: Canonical course '${courseCode}' has no V5 course mapping.`);
+        }
+        const { data: itemConfig, error: itemCfgErr } = await client
+          .from("v5_course_configs")
+          .select("course_id, status, published_release_id")
+          .eq("course_id", dbCourse.course_id)
+          .maybeSingle();
+        if (itemCfgErr) throw itemCfgErr;
+        if (!itemConfig || itemConfig.status !== "published" || !itemConfig.published_release_id) {
+          throw new Error(`NOT_READY: Offering item course '${courseCode}' has no current published V5 release.`);
+        }
+        const { data: itemRelease, error: itemRelErr } = await client
+          .from("v5_releases")
+          .select("id, course_id, status")
+          .eq("id", itemConfig.published_release_id)
+          .eq("course_id", dbCourse.course_id)
+          .eq("status", "published")
+          .maybeSingle();
+        if (itemRelErr) throw itemRelErr;
+        if (!itemRelease) {
+          throw new Error(`NOT_READY: Offering item course '${courseCode}' published release is missing or invalid.`);
+        }
       }
     }
   }
@@ -525,6 +577,22 @@ export async function preflightAgencyProvisioning(manifest, options = {}) {
       const inSnapshot = snapshotLessons.some(sl => sl.id === l.v5_lesson_id);
       if (!inSnapshot) {
         throw new Error(`NOT_READY: Lesson v5_lesson_id '${l.v5_lesson_id}' does not belong to active published release snapshot.`);
+      }
+
+      if (exCc?.id) {
+        const expectedSort = Number.isInteger(l.sort_order) ? l.sort_order : 1;
+        const { data: existingLesson, error: existingLessonErr } = await client
+          .from("canonical_lessons")
+          .select("id, canonical_course_id, v5_lesson_id, sort_order")
+          .eq("canonical_course_id", exCc.id)
+          .eq("sort_order", expectedSort)
+          .maybeSingle();
+        if (existingLessonErr) throw existingLessonErr;
+        if (existingLesson?.v5_lesson_id && existingLesson.v5_lesson_id !== l.v5_lesson_id) {
+          throw new Error(
+            `NOT_READY: Existing canonical lesson mapping conflict for course '${c.code}' sort_order ${expectedSort}; expected '${l.v5_lesson_id}', found '${existingLesson.v5_lesson_id}'.`
+          );
+        }
       }
     }
   }
@@ -827,8 +895,9 @@ export async function deprovisionAgency(slug, options = {}) {
 
   const client = options.supabaseClient || defaultSupabase;
 
-  // 2. Safe Deprovision Invariant: Must be verified isolated test target
-  assertTrustedSyntheticTestTarget(options, client);
+  // 2. Safe Deprovision Invariant: target authority comes from server-controlled
+  // PRE_M0C_TEST_* configuration, never from caller flags.
+  const trustedTarget = assertTrustedSyntheticTestTarget(options, client);
 
   if (!options.rehearsalRunId) {
     throw new Error("SECURITY VIOLATION: Deprovisioning requires options.rehearsalRunId.");
@@ -848,7 +917,7 @@ export async function deprovisionAgency(slug, options = {}) {
   // 3. Verify trusted synthetic fixture record
   const { data: fixtureRow, error: fixErr } = await client
     .from("agency_test_fixtures")
-    .select("id, run_id")
+    .select("id, run_id, environment_fingerprint")
     .eq("agency_id", agency.id)
     .maybeSingle();
 
@@ -859,6 +928,11 @@ export async function deprovisionAgency(slug, options = {}) {
 
   if (fixtureRow.run_id !== options.rehearsalRunId) {
     throw new Error(`SECURITY VIOLATION: Cannot deprovision tenant '${slug}'. Database record lacks matching synthetic test marker for rehearsal run ID '${options.rehearsalRunId}'.`);
+  }
+  if (fixtureRow.environment_fingerprint !== trustedTarget.environmentFingerprint) {
+    throw new Error(
+      `SECURITY VIOLATION: Fixture environment fingerprint does not match the active isolated test target.`
+    );
   }
 
   // 4. Atomic Deprovision RPC
