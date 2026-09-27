@@ -13,6 +13,8 @@
 //   7. Deprovision Safety (Phase 11): Only deletes verified synthetic test fixtures with run ID match.
 
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { supabase as defaultSupabase } from "./supabase.js";
 
 // Protected agency slugs that can NEVER be deprovisioned under any circumstances
@@ -27,31 +29,90 @@ export function assertTrustedSyntheticTestTarget(_options = {}, client = default
   const expectedUrl = String(process.env.PRE_M0C_TEST_SUPABASE_URL || "").trim().replace(/\/$/, "");
   const expectedDbUrl = String(process.env.PRE_M0C_TEST_DATABASE_URL || "").trim();
   const environmentFingerprint = String(process.env.PRE_M0C_TEST_ENVIRONMENT_FINGERPRINT || "").trim();
+  const verifiedSystemIdentifier = String(process.env.PRE_M0C_TEST_VERIFIED_SYSTEM_IDENTIFIER || "").trim();
+  const targetVerified = process.env.PRE_M0C_TEST_TARGET_VERIFIED === "true";
+  const identityFileRaw = String(process.env.PRE_M0C_TEST_DB_IDENTITY_FILE || "").trim();
 
   const clientUrl = String(client?.supabaseUrl || process.env.SUPABASE_URL || "").trim().replace(/\/$/, "");
   const dbUrl = String(process.env.DATABASE_URL || process.env.LOCAL_TEST_DB_URL || "").trim();
 
-  if (!expectedUrl || !expectedDbUrl || !environmentFingerprint) {
+  if (!expectedUrl || !expectedDbUrl || !environmentFingerprint || !verifiedSystemIdentifier || !identityFileRaw || !targetVerified) {
     throw new Error(
-      "SECURITY VIOLATION: Synthetic operations require server-controlled PRE_M0C_TEST_SUPABASE_URL, PRE_M0C_TEST_DATABASE_URL, and PRE_M0C_TEST_ENVIRONMENT_FINGERPRINT."
+      "SECURITY VIOLATION: Synthetic operations require an independently verified PRE_M0C test-target identity context."
     );
   }
 
   const forbiddenTargets = ["yyiavtiwtekkocqpephr", "aqozjkfwzmyfunqvcyjv"];
   for (const forbidden of forbiddenTargets) {
-    if (clientUrl.includes(forbidden) || dbUrl.includes(forbidden) || expectedUrl.includes(forbidden) || expectedDbUrl.includes(forbidden)) {
+    if ([clientUrl, dbUrl, expectedUrl, expectedDbUrl].some((value) => value.includes(forbidden))) {
       throw new Error(`SECURITY VIOLATION: Synthetic operations are forbidden against protected project ${forbidden}.`);
     }
   }
 
-  if (clientUrl !== expectedUrl) {
-    throw new Error(`SECURITY VIOLATION: Supabase client target does not match the server-controlled pre-M0C test target.`);
+  let parsedDb;
+  let parsedExpectedSupabase;
+  let parsedClient;
+  try {
+    parsedDb = new URL(expectedDbUrl);
+    parsedExpectedSupabase = new URL(expectedUrl);
+    parsedClient = new URL(clientUrl);
+  } catch {
+    throw new Error("SECURITY VIOLATION: Synthetic target URLs are invalid.");
+  }
+
+  const loopbackHosts = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+  if (!["postgres:", "postgresql:"].includes(parsedDb.protocol) || !loopbackHosts.has(parsedDb.hostname)) {
+    throw new Error("SECURITY VIOLATION: Synthetic database target must use an explicit loopback PostgreSQL hostname.");
+  }
+  if (!loopbackHosts.has(parsedExpectedSupabase.hostname) || !loopbackHosts.has(parsedClient.hostname)) {
+    throw new Error("SECURITY VIOLATION: Synthetic Supabase target must use an explicit loopback hostname.");
+  }
+
+  const identityFile = path.resolve(identityFileRaw);
+  const cwd = path.resolve(process.cwd());
+  const relative = path.relative(cwd, identityFile);
+  if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
+    throw new Error("SECURITY VIOLATION: PRE_M0C_TEST_DB_IDENTITY_FILE must live outside the repository working tree.");
+  }
+
+  let pinned;
+  try {
+    pinned = JSON.parse(fs.readFileSync(identityFile, "utf8"));
+  } catch (error) {
+    throw new Error(`SECURITY VIOLATION: Unable to read pinned test-target identity: ${error.message}`);
+  }
+
+  const pinnedSystemIdentifier = String(pinned?.systemIdentifier || "").trim();
+  const pinnedDatabaseName = String(pinned?.databaseName || "").trim();
+  const pinnedSupabaseUrl = String(pinned?.supabaseUrl || "").trim().replace(/\/$/, "");
+  if (pinned?.version !== 1 || !/^\d+$/.test(pinnedSystemIdentifier) || !pinnedDatabaseName || !pinnedSupabaseUrl) {
+    throw new Error("SECURITY VIOLATION: Pinned pre-M0C test-target identity file is invalid.");
+  }
+
+  if (verifiedSystemIdentifier !== pinnedSystemIdentifier) {
+    throw new Error("SECURITY VIOLATION: Verified PostgreSQL system_identifier does not match the pinned isolated-test identity.");
+  }
+  if (expectedUrl !== pinnedSupabaseUrl || clientUrl !== expectedUrl) {
+    throw new Error("SECURITY VIOLATION: Supabase client target does not match the pinned isolated-test identity.");
   }
   if (dbUrl !== expectedDbUrl) {
     throw new Error("SECURITY VIOLATION: Database target does not match PRE_M0C_TEST_DATABASE_URL.");
   }
 
-  return Object.freeze({ supabaseUrl: expectedUrl, databaseUrl: expectedDbUrl, environmentFingerprint });
+  const derivedFingerprint = crypto
+    .createHash("sha256")
+    .update(`${pinnedSystemIdentifier}\n${pinnedDatabaseName}\n${pinnedSupabaseUrl}`)
+    .digest("hex");
+  if (environmentFingerprint !== derivedFingerprint) {
+    throw new Error("SECURITY VIOLATION: Synthetic test-target fingerprint was not produced by the verified pinned identity.");
+  }
+
+  return Object.freeze({
+    supabaseUrl: expectedUrl,
+    databaseUrl: expectedDbUrl,
+    systemIdentifier: pinnedSystemIdentifier,
+    environmentFingerprint
+  });
 }
 
 /**
