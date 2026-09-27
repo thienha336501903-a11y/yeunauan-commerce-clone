@@ -14,7 +14,10 @@ import {
 import { requireAgencyMembership } from "../utils/agency-auth.js";
 import {
   checkoutOffering,
-  approveAgencyOrder
+  approveAgencyOrder,
+  getAgencyOrder,
+  getAgencyCommerceConfig,
+  getAuthoritativeQuote
 } from "../utils/agency-commerce.js";
 import {
   submitAgencyHomework,
@@ -22,6 +25,30 @@ import {
 } from "../utils/agency-homework.js";
 import { _clearTenantCache, resolveTenant } from "../utils/tenant-resolver.js";
 import { resolveRequestRoute } from "../utils/agency-routing.js";
+import {
+  handleAgencyLearnerDashboard,
+  handleAgencyV5Play,
+  requireAgencyCourseAccess
+} from "../utils/agency-lms-bridge.js";
+import {
+  installPreM0cTestTargetGuard,
+  removePreM0cTestTargetGuard
+} from "../test/helpers/pre-m0c-test-target.js";
+
+function createCaptureResponse() {
+  const state = { status: 200, body: null, headers: {} };
+  return {
+    state,
+    setHeader(name, value) { state.headers[String(name).toLowerCase()] = value; },
+    status(code) { state.status = code; return this; },
+    json(body) { state.body = body; return body; }
+  };
+}
+
+function makePlaybackProofHeader() {
+  const { publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  return Buffer.from(JSON.stringify(publicKey.export({ format: "jwk" })), "utf8").toString("base64url");
+}
 
 export const MANDATORY_CATEGORIES = [
   "HOST",
@@ -33,12 +60,14 @@ export const MANDATORY_CATEGORIES = [
   "ENTITLEMENT",
   "LEARNER",
   "HOMEWORK",
-  "LEGACY_FALLBACK"
+  "LEGACY_FALLBACK",
+  "PLAYBACK_AUTHORIZATION"
 ];
 
 export async function runPreM0cFunctionalHarness(options = {}) {
   const nonce = Date.now().toString().slice(-6);
   const rehearsalRunId = crypto.randomUUID();
+  await installPreM0cTestTargetGuard(rehearsalRunId);
   const slug = `syn-acc-${nonce}`;
   const hostCommerce = `commerce-${slug}.local`;
   const hostLms = `lms-${slug}.local`;
@@ -47,10 +76,6 @@ export async function runPreM0cFunctionalHarness(options = {}) {
   for (const cat of MANDATORY_CATEGORIES) {
     results[cat] = { status: "FAIL", reason: "Not yet evaluated" };
   }
-  results.PLAYBACK_AUTHORIZATION = {
-    status: "DEFERRED",
-    reason: "Production positive Agency A playback strictly deferred until live M0C cutover (REQUIRED_DURING_M0C)."
-  };
 
   const anonClient = createClient(
     process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -202,28 +227,26 @@ export async function runPreM0cFunctionalHarness(options = {}) {
     }
 
     // -------------------------------------------------------------------------
-    // 4. CATALOG PROBE: Host-bound catalog query for tenant offerings & items
+    // 4. CATALOG PROBE: actual host-bound Agency commerce application seams.
     // -------------------------------------------------------------------------
     let offeringId = null;
     let canonicalCourseId = null;
 
-    const catalogHostRes = await resolveTenant({ headers: { host: hostCommerce } });
-    if (!catalogHostRes.ok || !catalogHostRes.tenant?.agencyId) {
-      results.CATALOG = { status: "FAIL", reason: `Catalog tenant resolution failed: ${catalogHostRes.error}` };
+    const catalogReq = { headers: { host: hostCommerce } };
+    const commerceConfig = await getAgencyCommerceConfig(catalogReq);
+    const quote = await getAuthoritativeQuote(catalogReq, "acc-offering");
+    if (!commerceConfig.ok || !quote.ok || !quote.quote?.offeringId || !quote.quote?.items?.length) {
+      results.CATALOG = {
+        status: "FAIL",
+        reason: `Host-bound catalog application probe failed: config=${JSON.stringify(commerceConfig)}, quote=${JSON.stringify(quote)}`
+      };
     } else {
-      const { data: offerings, error: offErr } = await anonClient
-        .from("agency_offerings")
-        .select("id, slug, is_published, agency_offering_items(id, canonical_course_id)")
-        .eq("agency_id", catalogHostRes.tenant.agencyId)
-        .eq("is_published", true);
-
-      if (offErr || !offerings || offerings.length === 0 || offerings[0].agency_offering_items.length === 0) {
-        results.CATALOG = { status: "FAIL", reason: "Catalog probe found 0 offerings or missing materialized offering items." };
-      } else {
-        results.CATALOG = { status: "PASS", details: `Host-bound catalog verified with offering '${offerings[0].slug}' and materialized items.` };
-        offeringId = offerings[0].id;
-        canonicalCourseId = offerings[0].agency_offering_items[0].canonical_course_id;
-      }
+      offeringId = quote.quote.offeringId;
+      canonicalCourseId = quote.quote.items[0].canonical_course_id;
+      results.CATALOG = {
+        status: "PASS",
+        details: `Host-bound commerce config + authoritative quote returned offering '${quote.quote.slug}' with ${quote.quote.items.length} item(s).`
+      };
     }
 
     // -------------------------------------------------------------------------
@@ -243,18 +266,16 @@ export async function runPreM0cFunctionalHarness(options = {}) {
     const orderId = checkoutRes.order?.orderId;
 
     // -------------------------------------------------------------------------
-    // 6. ORDER PROBE: Verify stored order state & immutable snapshot
+    // 6. ORDER PROBE: signed request-bound order read application seam.
     // -------------------------------------------------------------------------
-    const { data: storedOrder, error: stOrdErr } = await supabase
-      .from("agency_orders")
-      .select("id, status, total_amount_vnd, order_items(id, canonical_course_id)")
-      .eq("id", orderId)
-      .single();
-
-    if (stOrdErr || !storedOrder || storedOrder.order_items.length === 0) {
-      results.ORDER = { status: "FAIL", reason: "Stored order lookup failed or items missing." };
+    const orderRead = await getAgencyOrder(studentReq, orderId);
+    if (!orderRead.ok || orderRead.order?.id !== orderId) {
+      results.ORDER = { status: "FAIL", reason: `Request-bound order read failed: ${JSON.stringify(orderRead)}` };
     } else {
-      results.ORDER = { status: "PASS", details: `Order verified in DB with status '${storedOrder.status}' and ${storedOrder.order_items.length} materialized item(s).` };
+      results.ORDER = {
+        status: "PASS",
+        details: `Signed student request read its own tenant-scoped order '${orderId}' through getAgencyOrder.`
+      };
     }
 
     // -------------------------------------------------------------------------
@@ -296,42 +317,58 @@ export async function runPreM0cFunctionalHarness(options = {}) {
 
     const approveRes = await approveAgencyOrder(staffReq, orderId);
     if (!approveRes.ok || approveRes.status !== "completed") {
-      results.ENTITLEMENT = { status: "FAIL", reason: `Order approval failed: ${approveRes.error}` };
+      results.ENTITLEMENT = { status: "FAIL", reason: `Order approval failed: ${approveRes.error || approveRes.code}` };
     } else {
-      const { data: activeEnt } = await supabase
-        .from("student_entitlements")
-        .select("id, status")
-        .eq("agency_id", agencyId)
-        .eq("membership_id", studentMembershipId)
-        .eq("status", "active")
-        .maybeSingle();
-
-      if (activeEnt) {
-        results.ENTITLEMENT = { status: "PASS", details: `Active student entitlement verified post-approval (ID: ${activeEnt.id}).` };
+      const courseAccess = await requireAgencyCourseAccess(
+        { headers: { host: hostLms, authorization: `Bearer ${studentJwt}` } },
+        `CC-ACC-${nonce}`
+      );
+      if (courseAccess.ok && courseAccess.entitlement?.status === "active") {
+        results.ENTITLEMENT = {
+          status: "PASS",
+          details: `Signed learner request verified active entitlement '${courseAccess.entitlement.id}' through requireAgencyCourseAccess.`
+        };
       } else {
-        results.ENTITLEMENT = { status: "FAIL", reason: "Entitlement not active post-approval." };
+        results.ENTITLEMENT = {
+          status: "FAIL",
+          reason: `Request-bound entitlement verification failed: ${courseAccess.error || courseAccess.code}`
+        };
       }
     }
 
     // -------------------------------------------------------------------------
-    // 8. LEARNER PROBE: Authenticated learner course content & progress probe
+    // 8. LEARNER PROBE: signed host-bound learner dashboard application seam.
     // -------------------------------------------------------------------------
-    const authLearnerClient = createClient(
-      process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-      { global: { headers: { Authorization: `Bearer ${studentJwt}` } } }
-    );
-    const { data: lessons, error: lessErr } = await authLearnerClient
-      .from("canonical_lessons")
-      .select("id, title, v5_lesson_id")
-      .eq("canonical_course_id", canonicalCourseId);
-
-    if (lessons && lessons.length > 0 && lessons[0].v5_lesson_id) {
-      results.LEARNER = { status: "PASS", details: `Authenticated learner course content verified with ${lessons.length} canonical lesson(s) mapped to V5.` };
+    const learnerReq = {
+      headers: { host: hostLms, authorization: `Bearer ${studentJwt}` }
+    };
+    const learnerRes = createCaptureResponse();
+    await handleAgencyLearnerDashboard(learnerReq, learnerRes);
+    if (
+      learnerRes.state.status === 200 &&
+      learnerRes.state.body?.success === true &&
+      learnerRes.state.body?.entitlements?.some((ent) => ent.canonical_course_id === canonicalCourseId)
+    ) {
+      results.LEARNER = {
+        status: "PASS",
+        details: "Signed learner dashboard request returned the active tenant-scoped entitlement."
+      };
     } else {
-      results.LEARNER = { status: "FAIL", reason: `Learner course probe failed: ${lessErr?.message || "0 lessons or null v5_lesson_id"}` };
+      results.LEARNER = {
+        status: "FAIL",
+        reason: `Host-bound learner dashboard failed: ${JSON.stringify(learnerRes.state.body)}`
+      };
     }
-    const canonicalLessonId = lessons?.[0]?.id;
+    const { data: canonicalLesson, error: canonicalLessonErr } = await supabase
+      .from("canonical_lessons")
+      .select("id")
+      .eq("canonical_course_id", canonicalCourseId)
+      .eq("v5_lesson_id", lessonId)
+      .maybeSingle();
+    if (canonicalLessonErr || !canonicalLesson) {
+      results.LEARNER = { status: "FAIL", reason: "Expected canonical lesson mapping missing after provisioning." };
+    }
+    const canonicalLessonId = canonicalLesson?.id;
 
     // -------------------------------------------------------------------------
     // 9. HOMEWORK PROBE: Request-bound homework submission & listing
@@ -356,56 +393,84 @@ export async function runPreM0cFunctionalHarness(options = {}) {
     }
 
     // -------------------------------------------------------------------------
-    // 10. LEGACY_FALLBACK PROBE: Verify routing decisions via resolveRequestRoute
+    // 10. LEGACY_FALLBACK PROBE: exercise actual route-decision boundary.
     // -------------------------------------------------------------------------
-    const unknownRoute = await resolveRequestRoute({ headers: { host: "unknown-unmapped-host.local" } });
-    const isUnknownDenied = unknownRoute.route === "DENY" && unknownRoute.status === 404;
+    const previousAllowlist = process.env.LEGACY_HOST_ALLOWLIST;
+    try {
+      process.env.LEGACY_HOST_ALLOWLIST = "explicit-legacy.local";
+      _clearTenantCache();
 
-    const prevAllowlist = process.env.LEGACY_HOST_ALLOWLIST;
-    process.env.LEGACY_HOST_ALLOWLIST = "explicit-legacy.local";
-    const explicitLegacyRoute = await resolveRequestRoute({ headers: { host: "explicit-legacy.local" } });
-    const isLegacyApproved = explicitLegacyRoute.route === "LEGACY";
-    if (prevAllowlist !== undefined) {
-      process.env.LEGACY_HOST_ALLOWLIST = prevAllowlist;
-    } else {
-      delete process.env.LEGACY_HOST_ALLOWLIST;
-    }
+      const explicitLegacyRoute = await resolveRequestRoute({ headers: { host: "explicit-legacy.local" } });
+      const unknownRoute = await resolveRequestRoute({ headers: { host: "unknown-unmapped-host.local" } });
 
-    const agencyRoute = await resolveRequestRoute({ headers: { host: hostCommerce } });
-    const isAgencyRouted = agencyRoute.route === "AGENCY" && agencyRoute.tenant?.agencyId === agencyId;
+      process.env.LEGACY_HOST_ALLOWLIST = `explicit-legacy.local,${hostCommerce}`;
+      _clearTenantCache();
+      const overlapRoute = await resolveRequestRoute({ headers: { host: hostCommerce } });
 
-    if (isUnknownDenied && isLegacyApproved && isAgencyRouted) {
-      results.LEGACY_FALLBACK = {
-        status: "PASS",
-        details: "resolveRequestRoute: Unmapped host -> DENY (404), explicit allowlist -> LEGACY, agency host -> AGENCY."
-      };
-    } else {
-      results.LEGACY_FALLBACK = {
-        status: "FAIL",
-        reason: `resolveRequestRoute failed expected boundary checks: unknown=${JSON.stringify(unknownRoute)}, legacy=${JSON.stringify(explicitLegacyRoute)}, agency=${JSON.stringify(agencyRoute)}`
-      };
-    }
-
-    // -------------------------------------------------------------------------
-    // Optional Playback Probe with valid fixture
-    // -------------------------------------------------------------------------
-    if (options.probePlayback) {
-      const authUserClient = createClient(
-        process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
-        process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-        { global: { headers: { Authorization: `Bearer ${studentJwt}` } } }
+      process.env.LEGACY_HOST_ALLOWLIST = "explicit-legacy.local";
+      _clearTenantCache();
+      const resolverErrorRoute = await resolveRequestRoute(
+        { headers: { host: "explicit-legacy.local" } },
+        {
+          supabaseClient: {
+            rpc: async () => ({ data: null, error: new Error("forced resolver failure") })
+          }
+        }
       );
-      const playbackRes = await authUserClient.rpc("v5_authorize_agency_playback", {
-        p_agency_id: agencyId,
-        p_membership_id: studentMembershipId,
-        p_lesson_id: canonicalLessonId,
-        p_asset_id: assetId
-      });
-      if (playbackRes.data?.authorized === true) {
-        results.PLAYBACK_AUTHORIZATION = { status: "PASS", details: "Playback authorization verified with valid current-release asset." };
-      } else {
-        results.PLAYBACK_AUTHORIZATION = { status: "FAIL", reason: `Playback authorization returned false: ${JSON.stringify(playbackRes.data)}` };
+
+      const legacyOk =
+        explicitLegacyRoute.route === "LEGACY" &&
+        unknownRoute.route === "DENY" &&
+        overlapRoute.route === "DENY" &&
+        overlapRoute.code === "overlapping_host_configuration" &&
+        resolverErrorRoute.route === "DENY" &&
+        resolverErrorRoute.status >= 500;
+
+      results.LEGACY_FALLBACK = legacyOk
+        ? {
+            status: "PASS",
+            details: "Route boundary verified: explicit Legacy -> LEGACY; resolver error, Agency/Legacy overlap, and unknown host -> DENY."
+          }
+        : {
+            status: "FAIL",
+            reason: `Unexpected route decisions: legacy=${JSON.stringify(explicitLegacyRoute)}, unknown=${JSON.stringify(unknownRoute)}, overlap=${JSON.stringify(overlapRoute)}, resolverError=${JSON.stringify(resolverErrorRoute)}`
+          };
+    } finally {
+      if (previousAllowlist === undefined) delete process.env.LEGACY_HOST_ALLOWLIST;
+      else process.env.LEGACY_HOST_ALLOWLIST = previousAllowlist;
+      _clearTenantCache();
+    }
+
+    // -------------------------------------------------------------------------
+    // 11. PLAYBACK_AUTHORIZATION: positive synthetic application playback seam.
+    // Real Agency A playback remains REQUIRED_DURING_M0C.
+    // -------------------------------------------------------------------------
+    const playReq = {
+      method: "GET",
+      headers: {
+        host: hostLms,
+        authorization: `Bearer ${studentJwt}`,
+        "x-v5-playback-key": makePlaybackProofHeader(),
+        "user-agent": "pre-m0c-acceptance"
+      },
+      query: {
+        course: `CC-ACC-${nonce}`,
+        lesson: canonicalLessonId,
+        asset: assetId
       }
+    };
+    const playRes = createCaptureResponse();
+    await handleAgencyV5Play(playReq, playRes);
+    if (playRes.state.status === 200 && playRes.state.body?.success === true) {
+      results.PLAYBACK_AUTHORIZATION = {
+        status: "PASS",
+        details: "Positive synthetic current-release playback passed through handleAgencyV5Play application seam."
+      };
+    } else {
+      results.PLAYBACK_AUTHORIZATION = {
+        status: "FAIL",
+        reason: `Synthetic application playback failed: status=${playRes.state.status}, body=${JSON.stringify(playRes.state.body)}`
+      };
     }
 
   } finally {
@@ -434,6 +499,7 @@ export async function runPreM0cFunctionalHarness(options = {}) {
         try { await supabase.auth.admin.deleteUser(uid); } catch (_) {}
       }
     }
+    await removePreM0cTestTargetGuard(rehearsalRunId);
   }
 
   return results;
@@ -448,7 +514,7 @@ export function printScorecard(results) {
   console.log("| Category | Status | Details / Evaluation |");
   console.log("|---|---|---|");
 
-  const allCategories = [...MANDATORY_CATEGORIES, "PLAYBACK_AUTHORIZATION"];
+  const allCategories = [...MANDATORY_CATEGORIES];
   for (const cat of allCategories) {
     const res = results[cat] || { status: "DEFERRED", reason: "Pending evaluation" };
     const detail = res.details || res.reason || "";
