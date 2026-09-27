@@ -1,15 +1,9 @@
-import { createClient } from '@supabase/supabase-js';
+// utils/supabase.js
+// Server-side database client adapter
+// Re-exports from server-only privileged module.
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+import { supabaseServiceRole, getServiceRoleClient } from "../server/supabase-service-role.js";
 
-if (!supabaseUrl || !supabaseServiceKey) {
-  console.warn("CẢNH BÁO: Thiếu biến môi trường SUPABASE_URL hoặc SUPABASE_SERVICE_ROLE_KEY.");
-}
-
-export const supabase = createClient(supabaseUrl || '', supabaseServiceKey || '', {
-  auth: {
-    persistSession: false,
-    autoRefreshToken: false
-  }
-});
+export const supabase = supabaseServiceRole;
+export { getServiceRoleClient };
+export default supabase;

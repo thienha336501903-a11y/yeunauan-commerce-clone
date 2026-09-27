@@ -361,3 +361,114 @@ test("B4.FINAL-5: getAgencyInfo correctly joins agency_ui_profiles attributes", 
   assert.equal(info.logo_url, "https://example.com/logo.png");
   assert.equal(info.storefront_variant, "classic");
 });
+
+test("B4.FINAL-6: Build/import graph gate: browser/static entrypoints CANNOT import privileged service-role or tenant-db-resolver", async () => {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const rootDir = path.resolve(".");
+  const privilegedModules = [
+    "server/supabase-service-role.js",
+    "utils/supabase.js",
+    "utils/tenant-db-resolver.js"
+  ].map((p) => path.resolve(rootDir, p).toLowerCase());
+
+  // 1. Discover all browser/static entrypoints
+  const browserEntrypoints = [];
+  function scanBrowserFiles(dir) {
+    for (const f of fs.readdirSync(dir)) {
+      if (["node_modules", ".git", "api", "server", "scripts", "test", "tests", "docs", ".next", ".vercel", "utils"].includes(f)) continue;
+      const full = path.join(dir, f);
+      if (fs.statSync(full).isDirectory()) {
+        scanBrowserFiles(full);
+      } else if (f.endsWith(".html") || (f.endsWith(".js") && !f.endsWith(".config.js"))) {
+        browserEntrypoints.push(full);
+      }
+    }
+  }
+  scanBrowserFiles(rootDir);
+  assert.ok(browserEntrypoints.length > 0, "Must have browser entrypoint files to check");
+
+  function resolveImport(sourceFile, specifier) {
+    if (!specifier.startsWith(".") && !specifier.startsWith("/")) return null;
+    const baseDir = path.dirname(sourceFile);
+    let resolved = path.resolve(baseDir, specifier);
+    if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) return resolved;
+    if (fs.existsSync(resolved + ".js")) return resolved + ".js";
+    if (fs.existsSync(path.join(resolved, "index.js"))) return path.join(resolved, "index.js");
+    return null;
+  }
+
+  function getImportedPaths(filePath, content) {
+    const imports = [];
+    const importRegex = /(?:import\s+(?:[\w*\s{},]*from\s+)?['"]([^'"]+)['"]|require\s*\(\s*['"]([^'"]+)['"]\s*\)|import\s*\(\s*['"]([^'"]+)['"]\s*\))/g;
+    let match;
+    while ((match = importRegex.exec(content)) !== null) {
+      const specifier = match[1] || match[2] || match[3];
+      const resolved = resolveImport(filePath, specifier);
+      if (resolved) imports.push(resolved);
+    }
+    return imports;
+  }
+
+  // 2. Build import graph from browser entrypoints
+  const visited = new Set();
+  const queue = [];
+
+  for (const ep of browserEntrypoints) {
+    const content = fs.readFileSync(ep, "utf8");
+    if (ep.endsWith(".html")) {
+      const srcMatches = content.matchAll(/<script[^>]+src=['"]([^'"]+)['"]/gi);
+      for (const sm of srcMatches) {
+        const src = sm[1];
+        if (!src.startsWith("http://") && !src.startsWith("https://") && !src.startsWith("//")) {
+          const resolved = resolveImport(ep, src.startsWith("/") ? "." + src : src);
+          if (resolved) queue.push(resolved);
+        }
+      }
+      const inlineScripts = content.matchAll(/<script(?![^>]*src=)[^>]*>([\s\S]*?)<\/script>/gi);
+      for (const is of inlineScripts) {
+        const scriptCode = is[1];
+        for (const priv of privilegedModules) {
+          assert.ok(
+            !scriptCode.includes(path.basename(priv)),
+            `Browser HTML '${path.relative(rootDir, ep)}' inline script directly references privileged module '${path.basename(priv)}'!`
+          );
+        }
+        const inlineImports = getImportedPaths(ep, scriptCode);
+        for (const imp of inlineImports) queue.push(imp);
+      }
+    } else {
+      queue.push(ep);
+    }
+  }
+
+  // 3. Traverse transitive imports
+  while (queue.length > 0) {
+    const current = queue.shift();
+    const normalized = current.toLowerCase();
+    if (visited.has(normalized)) continue;
+    visited.add(normalized);
+
+    for (const priv of privilegedModules) {
+      assert.notEqual(
+        normalized,
+        priv,
+        `SECURITY VIOLATION: Browser bundle transitively imports privileged module: ${path.relative(rootDir, current)}`
+      );
+    }
+
+    if (fs.existsSync(current) && fs.statSync(current).isFile() && (current.endsWith(".js") || current.endsWith(".mjs"))) {
+      const fileContent = fs.readFileSync(current, "utf8");
+      const subImports = getImportedPaths(current, fileContent);
+      for (const sub of subImports) {
+        queue.push(sub);
+      }
+    }
+  }
+
+  // 4. Negative regression test: prove gate fails if privileged import is introduced
+  const syntheticBrowserContent = `import { getServiceRoleClient } from "./server/supabase-service-role.js"; console.log(getServiceRoleClient);`;
+  const syntheticImports = getImportedPaths(path.resolve(rootDir, "index.html"), syntheticBrowserContent);
+  const hitsPrivileged = syntheticImports.some((imp) => privilegedModules.includes(imp.toLowerCase()));
+  assert.equal(hitsPrivileged, true, "Gate must detect synthetic browser import of privileged service-role client");
+});

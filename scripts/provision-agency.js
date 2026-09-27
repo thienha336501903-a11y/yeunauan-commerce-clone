@@ -27,6 +27,7 @@ function parseArgs() {
     slug: null,
     confirm: false,
     synthetic: false,
+    testTarget: false,
     rehearsalRunId: null
   };
 
@@ -42,6 +43,8 @@ function parseArgs() {
       options.confirm = true;
     } else if (arg === "--synthetic") {
       options.synthetic = true;
+    } else if (arg === "--test-target") {
+      options.testTarget = true;
     } else if (arg === "--rehearsal-run-id" && args[i + 1]) {
       options.rehearsalRunId = args[++i];
     }
@@ -127,10 +130,14 @@ async function main() {
           console.error("[ERROR] --rehearsal-run-id <run_id> is required for safe deprovisioning.");
           process.exit(1);
         }
-        console.log(`[PROVISION-AGENCY] Deprovisioning synthetic test fixture slug: ${targetSlug}...`);
+        const isTestEnvironment = Boolean(
+          options.testTarget ||
+          options.synthetic ||
+          process.env.NODE_ENV === "test"
+        );
         const result = await deprovisionAgency(targetSlug, {
           confirm: options.confirm,
-          isTestTarget: true,
+          isTestTarget: isTestEnvironment,
           rehearsalRunId: options.rehearsalRunId
         });
         console.log(JSON.stringify(result, null, 2));

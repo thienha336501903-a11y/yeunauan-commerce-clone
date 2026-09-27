@@ -106,3 +106,66 @@ test("B6.COMMERCE-4: Unknown host is denied with 404 across all entrypoints", as
     assert.equal(res.statusCode, 404, `Endpoint ${ep.handler.name} must return 404 on unknown host`);
   }
 });
+
+test("B6.COMMERCE-5: Allowlisted host + resolver returns 500 => DENY (never falls back to Legacy)", async () => {
+  const originalAllowlist = process.env.LEGACY_HOST_ALLOWLIST;
+  try {
+    process.env.LEGACY_HOST_ALLOWLIST = "legacy.yeunauan.net";
+
+    const mockDbError = {
+      rpc: async () => ({
+        data: null,
+        error: { message: "Database connection failed", code: "57P01" }
+      })
+    };
+
+    const req = { headers: { host: "legacy.yeunauan.net" } };
+    let legacyInvoked = false;
+    const legacyHandler = () => { legacyInvoked = true; };
+
+    const { resolveRequestRoute } = await import("../utils/agency-routing.js");
+    const decision = await resolveRequestRoute(req, { supabaseClient: mockDbError });
+
+    assert.equal(decision.route, "DENY");
+    assert.equal(decision.status, 500);
+    assert.equal(decision.code, "resolver_error");
+
+    if (decision.route === "LEGACY") {
+      legacyHandler();
+    }
+    assert.equal(legacyInvoked, false, "Legacy handler callback must NOT be invoked on resolver 500");
+  } finally {
+    process.env.LEGACY_HOST_ALLOWLIST = originalAllowlist;
+  }
+});
+
+test("B6.COMMERCE-6: Allowlisted host + resolver throws => DENY (never falls back to Legacy)", async () => {
+  const originalAllowlist = process.env.LEGACY_HOST_ALLOWLIST;
+  try {
+    process.env.LEGACY_HOST_ALLOWLIST = "legacy.yeunauan.net";
+
+    const mockDbThrows = {
+      rpc: async () => {
+        throw new Error("Fatal RPC transport exception");
+      }
+    };
+
+    const req = { headers: { host: "legacy.yeunauan.net" } };
+    let legacyInvoked = false;
+    const legacyHandler = () => { legacyInvoked = true; };
+
+    const { resolveRequestRoute } = await import("../utils/agency-routing.js");
+    const decision = await resolveRequestRoute(req, { supabaseClient: mockDbThrows });
+
+    assert.equal(decision.route, "DENY");
+    assert.equal(decision.status, 500);
+    assert.equal(decision.code, "resolver_error");
+
+    if (decision.route === "LEGACY") {
+      legacyHandler();
+    }
+    assert.equal(legacyInvoked, false, "Legacy handler callback must NOT be invoked when resolver throws");
+  } finally {
+    process.env.LEGACY_HOST_ALLOWLIST = originalAllowlist;
+  }
+});

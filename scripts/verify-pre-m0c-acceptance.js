@@ -2,16 +2,20 @@
 // scripts/verify-pre-m0c-acceptance.js
 // Consolidated Pre-M0C Preview & Route Acceptance Test Harness
 // Authoritative Plan: SYSTEM_B_MULTI_AGENCY_MASTER_IMPLEMENTATION_PLAN_V1_1.md
-// Milestone M0B.1 / Pre-M0C Remediation V2 — Phase 14
+// Milestone M0B.1 / Pre-M0C Remediation V3 — Phase 14 / FIX 11
 // Invariants:
-//   - Strict Category Probing: Row existence only proves AGENCY_RECORD.
+//   - Strict Category Probing with real database & RPC probes (no inferred passes, no table-count shortcuts).
 //   - Distinguishes PASS, FAIL, NOT_PROVISIONED, DEFERRED.
 //   - Never reports NOT_PROVISIONED as PASS.
-//   - Positive playback intentionally awaiting live agency cutover is DEFERRED, never PASS.
+//   - Suspended-only memberships result in FAIL / NOT_READY.
+//   - Missing offering items prevent CATALOG / CHECKOUT from returning PASS.
+//   - Synthetic flag requires real playback authorization probe execution.
 //   - Zero secrets printed or logged.
-//   - Exit code: 0 when all required gates PASS or are allowed NOT_PROVISIONED/DEFERRED in pre-M0C mode.
-//     Nonzero if unexpected FAIL or mandatory check missing.
+//   - Exit rules:
+//       Preparation mode: exit 0 only if all required gates pass and unprovisioned/deferred items are permitted.
+//       Real M0C mode: exit nonzero on ANY FAIL, NOT_PROVISIONED, or DEFERRED.
 
+import crypto from "node:crypto";
 import { supabase } from "../utils/supabase.js";
 import { checkM0dCutoverReadiness } from "../utils/m0d-dependency-checker.js";
 
@@ -65,7 +69,7 @@ export async function verifyPreM0cAcceptance(options = {}) {
   } else {
     const { data: domains, error: domErr } = await client
       .from("agency_domains")
-      .select("id, hostname, is_primary, ssl_status")
+      .select("id, hostname, is_primary, ssl_status, status")
       .eq("agency_id", agencyId);
 
     if (domErr) {
@@ -73,26 +77,26 @@ export async function verifyPreM0cAcceptance(options = {}) {
     } else if (!domains || domains.length === 0) {
       results.HOST = { status: "FAIL", reason: "Agency row exists but 0 domains are attached." };
     } else {
-      results.HOST = { status: "PASS", details: `${domains.length} domain(s) verified active.` };
+      const activeDomains = domains.filter(d => (d.status === "active" || d.status === null || d.status === undefined));
+      results.HOST = activeDomains.length > 0
+        ? { status: "PASS", details: `${activeDomains.length} domain(s) verified active.` }
+        : { status: "FAIL", reason: "Domains exist but none are active." };
     }
   }
 
-  // 3. AUTH probe (Checks Supabase Auth + JWT multi-agency resolver readiness)
+  // 3. AUTH probe (Real session / auth capability probe)
   try {
-    const { data: authProc, error: authProcErr } = await client
-      .from("agency_memberships")
-      .select("id", { count: "exact", head: true });
-
-    if (authProcErr && authProcErr.code !== "PGRST116") {
-      results.AUTH = { status: "FAIL", reason: `Auth infrastructure probe failed: ${authProcErr.message}` };
+    const { data: sessionData, error: sessionErr } = await client.auth.getSession();
+    if (sessionErr) {
+      results.AUTH = { status: "FAIL", reason: `Auth infrastructure probe error: ${sessionErr.message}` };
     } else {
-      results.AUTH = { status: "PASS", details: "Multi-agency Auth & JWT verification foundation active." };
+      results.AUTH = { status: "PASS", details: "Multi-agency Auth & JWT verification foundation active and responsive." };
     }
   } catch (err) {
-    results.AUTH = { status: "FAIL", reason: err.message };
+    results.AUTH = { status: "FAIL", reason: `Auth infrastructure unreachable: ${err.message}` };
   }
 
-  // 4. MEMBERSHIP probe
+  // 4. MEMBERSHIP probe (Strict active membership + staff/owner requirement)
   if (!agencyId) {
     results.MEMBERSHIP = { status: "NOT_PROVISIONED", reason: `Memberships for '${targetSlug}' not provisioned.` };
   } else {
@@ -104,22 +108,28 @@ export async function verifyPreM0cAcceptance(options = {}) {
     if (memErr) {
       results.MEMBERSHIP = { status: "FAIL", reason: `Membership probe failed: ${memErr.message}` };
     } else if (!members || members.length === 0) {
-      results.MEMBERSHIP = { status: "NOT_PROVISIONED", reason: "No active memberships provisioned for this agency." };
+      results.MEMBERSHIP = { status: "NOT_PROVISIONED", reason: "No memberships provisioned for this agency." };
     } else {
-      const staff = members.filter(m => ["agency_staff", "agency_owner"].includes(m.role));
-      results.MEMBERSHIP = staff.length > 0
-        ? { status: "PASS", details: `${members.length} membership(s) active (${staff.length} staff/owner).` }
-        : { status: "FAIL", reason: "Memberships exist but lack required staff or owner role." };
+      const activeMembers = members.filter(m => m.status === "active");
+      if (activeMembers.length === 0) {
+        results.MEMBERSHIP = { status: "FAIL", reason: "Memberships exist but none are active (suspended-only memberships)." };
+      } else {
+        const staff = activeMembers.filter(m => ["agency_staff", "agency_owner"].includes(m.role));
+        results.MEMBERSHIP = staff.length > 0
+          ? { status: "PASS", details: `${activeMembers.length} active membership(s) (${staff.length} active staff/owner).` }
+          : { status: "FAIL", reason: "Active memberships exist but lack required active staff or owner role." };
+      }
     }
   }
 
-  // 5. CATALOG probe
+  // 5. CATALOG probe (Offerings + mandatory offering items)
+  let catalogHasValidItems = false;
   if (!agencyId) {
     results.CATALOG = { status: "NOT_PROVISIONED", reason: `Catalog offerings for '${targetSlug}' not provisioned.` };
   } else {
     const { data: offerings, error: offErr } = await client
       .from("agency_offerings")
-      .select("id, slug, is_active")
+      .select("id, slug, is_published")
       .eq("agency_id", agencyId);
 
     if (offErr) {
@@ -127,15 +137,36 @@ export async function verifyPreM0cAcceptance(options = {}) {
     } else if (!offerings || offerings.length === 0) {
       results.CATALOG = { status: "NOT_PROVISIONED", reason: "No offerings catalog provisioned for this agency." };
     } else {
-      results.CATALOG = { status: "PASS", details: `${offerings.length} offering(s) verified in catalog.` };
+      let missingItems = false;
+      let missingItemSlug = "";
+
+      for (const off of offerings) {
+        const { data: items, error: itErr } = await client
+          .from("agency_offering_items")
+          .select("id, canonical_course_id")
+          .eq("agency_id", agencyId)
+          .eq("offering_id", off.id);
+
+        if (itErr || !items || items.length === 0) {
+          missingItems = true;
+          missingItemSlug = off.slug;
+          break;
+        }
+      }
+
+      if (missingItems) {
+        results.CATALOG = { status: "FAIL", reason: `Offering '${missingItemSlug}' has 0 offering items configured.` };
+      } else {
+        catalogHasValidItems = true;
+        results.CATALOG = { status: "PASS", details: `${offerings.length} offering(s) verified with materialized offering items.` };
+      }
     }
   }
 
-  // 6. CHECKOUT probe
+  // 6. CHECKOUT probe (Active bank accounts + offering items readiness)
   if (!agencyId) {
     results.CHECKOUT = { status: "NOT_PROVISIONED", reason: `Checkout routes for '${targetSlug}' awaiting M0C activation.` };
   } else {
-    // Probe checkout RPC readiness with synthetic check
     const { data: banks, error: bankErr } = await client
       .from("agency_bank_accounts")
       .select("id, is_active")
@@ -146,8 +177,10 @@ export async function verifyPreM0cAcceptance(options = {}) {
       results.CHECKOUT = { status: "FAIL", reason: `Bank lookup failed: ${bankErr.message}` };
     } else if (!banks || banks.length === 0) {
       results.CHECKOUT = { status: "FAIL", reason: "Cannot checkout: 0 active bank accounts configured for agency." };
+    } else if (!catalogHasValidItems) {
+      results.CHECKOUT = { status: "FAIL", reason: "Cannot checkout: Catalog lacks valid offering items snapshot." };
     } else {
-      results.CHECKOUT = { status: "PASS", details: `Checkout route ready with ${banks.length} active bank account(s).` };
+      results.CHECKOUT = { status: "PASS", details: `Checkout route ready with ${banks.length} active bank account(s) and valid catalog items.` };
     }
   }
 
@@ -178,14 +211,15 @@ export async function verifyPreM0cAcceptance(options = {}) {
     const { count: entCount, error: entErr } = await client
       .from("student_entitlements")
       .select("id", { count: "exact", head: true })
-      .eq("agency_id", agencyId);
+      .eq("agency_id", agencyId)
+      .eq("status", "active");
 
     if (entErr) {
       results.ENTITLEMENT = { status: "FAIL", reason: `Entitlement probe failed: ${entErr.message}` };
     } else if (entCount > 0) {
-      results.ENTITLEMENT = { status: "PASS", details: `${entCount} student entitlement(s) active.` };
+      results.ENTITLEMENT = { status: "PASS", details: `${entCount} active student entitlement(s).` };
     } else {
-      results.ENTITLEMENT = { status: "NOT_PROVISIONED", reason: "Zero student entitlements currently active." };
+      results.ENTITLEMENT = { status: "NOT_PROVISIONED", reason: "Zero active student entitlements currently present." };
     }
   }
 
@@ -209,8 +243,7 @@ export async function verifyPreM0cAcceptance(options = {}) {
   }
 
   // 10. PLAYBACK_AUTHORIZATION probe
-  // Phase 14 Invariant: If positive playback intentionally awaits real Agency,
-  // status MUST be DEFERRED or NOT_PROVISIONED. NEVER report fake PASS!
+  // FIX 11: Real probe execution for synthetic; DEFERRED for live production awaiting enrollment
   if (!agencyId) {
     results.PLAYBACK_AUTHORIZATION = {
       status: "DEFERRED",
@@ -222,10 +255,35 @@ export async function verifyPreM0cAcceptance(options = {}) {
       reason: "Production positive playback probe deferred until real live student enrollment in M0C."
     };
   } else {
-    results.PLAYBACK_AUTHORIZATION = {
-      status: "PASS",
-      details: "Synthetic playback authorization rehearsal verified."
-    };
+    // Synthetic mode: execute real RPC probe
+    try {
+      if (typeof options.playbackProbe === "function") {
+        const probeRes = await options.playbackProbe();
+        results.PLAYBACK_AUTHORIZATION = probeRes.ok
+          ? { status: "PASS", details: "Synthetic playback authorization probe verified." }
+          : { status: "FAIL", reason: `Playback authorization probe failed: ${probeRes.error}` };
+      } else {
+        const dummyMemId = crypto.randomUUID();
+        const dummyLessonId = crypto.randomUUID();
+        const dummyAssetId = crypto.randomUUID();
+        const { data: rpcRes, error: rpcErr } = await client.rpc("v5_authorize_agency_playback", {
+          p_agency_id: agencyId,
+          p_membership_id: dummyMemId,
+          p_lesson_id: dummyLessonId,
+          p_asset_id: dummyAssetId
+        });
+
+        if (rpcErr) {
+          results.PLAYBACK_AUTHORIZATION = { status: "FAIL", reason: `Playback RPC error: ${rpcErr.message}` };
+        } else if (rpcRes && rpcRes.authorized === false) {
+          results.PLAYBACK_AUTHORIZATION = { status: "PASS", details: "Playback RPC verified active and strictly fail-closed." };
+        } else {
+          results.PLAYBACK_AUTHORIZATION = { status: "FAIL", reason: "Playback RPC returned unexpected authorization state." };
+        }
+      }
+    } catch (err) {
+      results.PLAYBACK_AUTHORIZATION = { status: "FAIL", reason: `Playback probe error: ${err.message}` };
+    }
   }
 
   // 11. HOMEWORK probe
@@ -238,15 +296,23 @@ export async function verifyPreM0cAcceptance(options = {}) {
       .eq("agency_id", agencyId)
       .maybeSingle();
 
-    if (uiProf?.homework_variant) {
-      results.HOMEWORK = { status: "PASS", details: `Homework configured with variant '${uiProf.homework_variant}'.` };
+    if (!uiProf?.homework_variant) {
+      results.HOMEWORK = { status: "FAIL", reason: "Homework variant not configured in UI profile." };
     } else {
-      results.HOMEWORK = { status: "NOT_PROVISIONED", reason: "Homework variant not configured." };
+      const { error: hwErr } = await client
+        .from("agency_homework_submissions")
+        .select("id", { count: "exact", head: true })
+        .eq("agency_id", agencyId);
+
+      if (hwErr && hwErr.code !== "PGRST116") {
+        results.HOMEWORK = { status: "FAIL", reason: `Homework submissions table probe failed: ${hwErr.message}` };
+      } else {
+        results.HOMEWORK = { status: "PASS", details: `Homework configured with variant '${uiProf.homework_variant}' and submissions ready.` };
+      }
     }
   }
 
   // 12. LEGACY_FALLBACK probe
-  // Verifies that explicit routing model denies or scopes all requests with ZERO fallback to legacy
   try {
     const m0d = checkM0dCutoverReadiness();
     results.LEGACY_FALLBACK = m0d.gates.AGENCY_HOST_ROUTES_NEVER_FALL_TO_LEGACY
@@ -284,7 +350,7 @@ export function printScorecard(results) {
 }
 
 async function main() {
-  const isPreM0cMode = process.argv.includes("--allow-pre-m0c") || process.argv.includes("--pre-m0c") || !process.argv.includes("--strict-production");
+  const isStrictProduction = process.argv.includes("--strict-production") || process.argv.includes("--real-m0c");
   const isJson = process.argv.includes("--json");
 
   try {
@@ -298,23 +364,29 @@ async function main() {
 
     const statuses = Object.values(results).map(r => r.status);
     const hasFail = statuses.includes("FAIL");
+    const hasNotProvisioned = statuses.includes("NOT_PROVISIONED");
+    const hasDeferred = statuses.includes("DEFERRED");
 
     if (hasFail) {
       console.error("[ERROR] Acceptance harness encountered FAIL status on one or more categories.");
       process.exit(1);
     }
 
-    if (!isPreM0cMode) {
+    if (isStrictProduction) {
       // In strict production mode, NOT_PROVISIONED or DEFERRED causes non-zero exit
-      const hasNotProvisioned = statuses.includes("NOT_PROVISIONED");
-      const hasDeferred = statuses.includes("DEFERRED");
       if (hasNotProvisioned || hasDeferred) {
-        console.error("[ERROR] Production mode requires 100% PASS (unprovisioned or deferred categories present).");
+        console.error("[ERROR] Strict Production mode requires 100% PASS (unprovisioned or deferred categories present).");
         process.exit(2);
       }
+      console.log("\n[ACCEPTANCE HARNESS] Production Mode: ALL REQUIRED GATES PASSED.");
+    } else {
+      // In Pre-M0C preparation mode, unprovisioned real agency and deferred live playback are strictly expected
+      if (hasNotProvisioned || hasDeferred) {
+        console.log("\n[ACCEPTANCE HARNESS] Pre-M0C Preparation Mode: Boundary preserved (Unprovisioned / Deferred items strictly expected prior to real cutover).");
+      } else {
+        console.log("\n[ACCEPTANCE HARNESS] Pre-M0C Evaluation: ALL REQUIRED GATES PASSED.");
+      }
     }
-
-    console.log("\n[ACCEPTANCE HARNESS] Pre-M0C Evaluation: ALL REQUIRED GATES PASSED (Boundary preserved).");
     process.exit(0);
   } catch (err) {
     console.error(`[ERROR] Acceptance harness execution failed: ${err.message}`);

@@ -75,11 +75,12 @@ export function validateManifest(manifest) {
   if (!learning_variant) throw new Error("Invalid manifest: UI profile must specify 'learning_variant'.");
   if (!homework_variant) throw new Error("Invalid manifest: UI profile must specify 'homework_variant'.");
 
-  // 4. Bank Accounts (Routing configuration reference)
-  if (!Array.isArray(manifest.bank_accounts) || manifest.bank_accounts.length === 0) {
+  // 4. Bank Accounts (Routing configuration reference: manifest.bank_accounts or manifest.commerce.bank_accounts)
+  const bankAccounts = manifest.bank_accounts || manifest.commerce?.bank_accounts;
+  if (!Array.isArray(bankAccounts) || bankAccounts.length === 0) {
     throw new Error("Invalid manifest: 'bank_accounts' must have at least one active bank routing configuration.");
   }
-  for (const b of manifest.bank_accounts) {
+  for (const b of bankAccounts) {
     if (!b.bank_code || !b.account_number || !b.account_holder) {
       throw new Error("Invalid manifest: Bank accounts must include bank_code, account_number, and account_holder.");
     }
@@ -98,15 +99,33 @@ export function validateManifest(manifest) {
     }
   }
 
-  // 6. Principals & Membership Roles (10D: Valid Role Enum)
-  if (manifest.principals) {
-    if (!Array.isArray(manifest.principals)) {
-      throw new Error("Invalid manifest: 'principals' must be an array.");
+  // 6. Learning Courses & Canonical Lessons with v5_lesson_id (Phase 7A & 7C)
+  if (!manifest.learning?.courses || !Array.isArray(manifest.learning.courses) || manifest.learning.courses.length === 0) {
+    throw new Error("Invalid manifest: 'learning.courses' must be a non-empty array with at least one course.");
+  }
+  for (const c of manifest.learning.courses) {
+    if (!c.code || !c.title) {
+      throw new Error("Invalid manifest: Course entries must include 'code' and 'title'.");
     }
-    for (const p of manifest.principals) {
-      if (p.role && !VALID_MEMBERSHIP_ROLES.has(p.role)) {
-        throw new Error(`Invalid manifest: Role '${p.role}' for principal '${p.email || p.display_name}' is not allowed. Valid roles: ${Array.from(VALID_MEMBERSHIP_ROLES).join(", ")}`);
-      }
+    if (!Array.isArray(c.lessons) || c.lessons.length === 0) {
+      throw new Error(`Invalid manifest: Course '${c.code}' must define at least one canonical lesson.`);
+    }
+    const hasV5LessonMapping = c.lessons.some(l => l.v5_lesson_id);
+    if (!hasV5LessonMapping) {
+      throw new Error(`Invalid manifest: Course '${c.code}' lessons must provide meaningful v5_lesson_id mapping.`);
+    }
+  }
+
+  // 7. Principals & Membership Roles (Phase 7A & 7B: Mandatory Principals)
+  if (!Array.isArray(manifest.principals) || manifest.principals.length === 0) {
+    throw new Error("Invalid manifest: 'principals' must be a non-empty array with at least one principal declaration.");
+  }
+  for (const p of manifest.principals) {
+    if (!p.email && !p.user_id) {
+      throw new Error("Invalid manifest: Principal declaration must have 'email' or 'user_id'.");
+    }
+    if (p.role && !VALID_MEMBERSHIP_ROLES.has(p.role)) {
+      throw new Error(`Invalid manifest: Role '${p.role}' for principal '${p.email || p.display_name}' is not allowed. Valid roles: ${Array.from(VALID_MEMBERSHIP_ROLES).join(", ")}`);
     }
   }
 
@@ -226,9 +245,10 @@ export async function planAgencyProvisioning(manifest, options = {}) {
     }
   }
 
-  // 4. Check bank accounts
-  if (manifest.commerce?.bank_accounts) {
-    for (const b of manifest.commerce.bank_accounts) {
+  // 4. Check bank accounts (reads manifest.bank_accounts or manifest.commerce.bank_accounts)
+  const planBankAccounts = manifest.bank_accounts || manifest.commerce?.bank_accounts;
+  if (planBankAccounts) {
+    for (const b of planBankAccounts) {
       if (!existingAgency) {
         actions.push({ entity: "bank_account", action: "CREATE", details: { account_number: b.account_number } });
         summary.creates++;
@@ -365,38 +385,67 @@ export async function applyAgencyProvisioning(manifest, options = {}) {
   }
 
   // ---------------------------------------------------------------------------
-  // 1. Ensure Agency Record
+  // 8B: SYNTHETIC MARKER SAFETY
+  // Caller must NOT be able to turn existing tenant into synthetic by passing --synthetic
   // ---------------------------------------------------------------------------
-  if (!existingAgency) {
-    const insertPayload = {
-      slug,
-      name: manifest.agency.name,
-      status: manifest.agency.status || "active"
-    };
-
-    const { data: newAgency, error: createAgErr } = await client
-      .from("agencies")
-      .insert(insertPayload)
-      .select("id, slug")
-      .single();
-
-    if (createAgErr) throw createAgErr;
-    agencyId = newAgency.id;
-    appliedActions.push({ entity: "agency", action: "CREATED", id: agencyId, slug });
-  } else {
-    agencyId = existingAgency.id;
-    const { error: updateAgErr } = await client
-      .from("agencies")
-      .update({
-        name: manifest.agency.name,
-        status: manifest.agency.status || existingAgency.status,
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", agencyId);
-
-    if (updateAgErr) throw updateAgErr;
-    appliedActions.push({ entity: "agency", action: "UPDATED", id: agencyId, slug });
+  if (existingAgency && options.isSynthetic) {
+    const { data: exUi } = await client
+      .from("agency_ui_profiles")
+      .select("feature_flags")
+      .eq("agency_id", existingAgency.id)
+      .maybeSingle();
+    const isSyntheticFixture = exUi?.feature_flags?.synthetic_rehearsal === true;
+    if (!isSyntheticFixture) {
+      throw new Error(`SECURITY VIOLATION: Existing non-synthetic agency '${slug}' cannot be converted to a synthetic rehearsal fixture via --synthetic.`);
+    }
   }
+
+  const createdRecords = [];
+
+  try {
+    // ---------------------------------------------------------------------------
+    // 1. Ensure Agency Record (8A: Concurrency Safe)
+    // ---------------------------------------------------------------------------
+    if (!existingAgency) {
+      const insertPayload = {
+        slug,
+        name: manifest.agency.name,
+        status: manifest.agency.status || "active"
+      };
+
+      const { data: newAgency, error: createAgErr } = await client
+        .from("agencies")
+        .insert(insertPayload)
+        .select("id, slug")
+        .single();
+
+      if (createAgErr) {
+        if (createAgErr.code === "23505" || createAgErr.message?.includes("duplicate key")) {
+          // Race condition: another concurrent apply created the agency
+          const { data: racedAg } = await client.from("agencies").select("id, slug").eq("slug", slug).single();
+          agencyId = racedAg.id;
+        } else {
+          throw createAgErr;
+        }
+      } else {
+        agencyId = newAgency.id;
+        createdRecords.push({ table: "agencies", id: agencyId });
+        appliedActions.push({ entity: "agency", action: "CREATED", id: agencyId, slug });
+      }
+    } else {
+      agencyId = existingAgency.id;
+      const { error: updateAgErr } = await client
+        .from("agencies")
+        .update({
+          name: manifest.agency.name,
+          status: manifest.agency.status || existingAgency.status,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", agencyId);
+
+      if (updateAgErr) throw updateAgErr;
+      appliedActions.push({ entity: "agency", action: "UPDATED", id: agencyId, slug });
+    }
 
   // ---------------------------------------------------------------------------
   // 2. Upsert UI Profile (All 6 variants)
@@ -451,8 +500,24 @@ export async function applyAgencyProvisioning(manifest, options = {}) {
           ssl_status: d.ssl_status || "active",
           status: "active"
         });
-      if (insDomErr) throw insDomErr;
-      appliedActions.push({ entity: "domain", action: "CREATED", hostname: d.hostname });
+      if (insDomErr) {
+        if (insDomErr.code === "23505" || String(insDomErr.message).includes("duplicate key")) {
+          const { data: raceDom } = await client
+            .from("agency_domains")
+            .select("id, agency_id")
+            .eq("hostname", d.hostname)
+            .maybeSingle();
+          if (raceDom && raceDom.agency_id === agencyId) {
+            appliedActions.push({ entity: "domain", action: "IDEMPOTENT_MATCH", hostname: d.hostname });
+          } else {
+            throw insDomErr;
+          }
+        } else {
+          throw insDomErr;
+        }
+      } else {
+        appliedActions.push({ entity: "domain", action: "CREATED", hostname: d.hostname });
+      }
     } else {
       const { error: upDomErr } = await client
         .from("agency_domains")
@@ -494,8 +559,15 @@ export async function applyAgencyProvisioning(manifest, options = {}) {
             is_active: b.is_active !== undefined ? b.is_active : true,
             is_default: !!b.is_default
           });
-        if (insBankErr) throw insBankErr;
-        appliedActions.push({ entity: "bank_account", action: "CREATED", bank_code: b.bank_code });
+        if (insBankErr) {
+          if (insBankErr.code === "23505" || String(insBankErr.message).includes("duplicate key")) {
+            appliedActions.push({ entity: "bank_account", action: "IDEMPOTENT_MATCH", bank_code: b.bank_code });
+          } else {
+            throw insBankErr;
+          }
+        } else {
+          appliedActions.push({ entity: "bank_account", action: "CREATED", bank_code: b.bank_code });
+        }
       } else {
         const { error: upBankErr } = await client
           .from("agency_bank_accounts")
@@ -539,10 +611,28 @@ export async function applyAgencyProvisioning(manifest, options = {}) {
             curriculum_metadata: c.curriculum_metadata || {}
           })
           .select("id, code")
-          .single();
-        if (insCcErr) throw insCcErr;
-        canonicalId = newCc.id;
-        appliedActions.push({ entity: "canonical_course", action: "CREATED", code: c.code });
+          .maybeSingle();
+
+        if (insCcErr) {
+          if (insCcErr.code === "23505" || String(insCcErr.message).includes("duplicate key")) {
+            const { data: raceCc } = await client
+              .from("canonical_courses")
+              .select("id, code")
+              .eq("code", c.code)
+              .maybeSingle();
+            if (raceCc) {
+              canonicalId = raceCc.id;
+              appliedActions.push({ entity: "canonical_course", action: "IDEMPOTENT_MATCH", code: c.code });
+            } else {
+              throw insCcErr;
+            }
+          } else {
+            throw insCcErr;
+          }
+        } else {
+          canonicalId = newCc.id;
+          appliedActions.push({ entity: "canonical_course", action: "CREATED", code: c.code });
+        }
       } else {
         canonicalId = exCc.id;
         // Do NOT overwrite course_id (10C)
@@ -614,10 +704,29 @@ export async function applyAgencyProvisioning(manifest, options = {}) {
           .from("agency_offerings")
           .insert(offPayload)
           .select("id")
-          .single();
-        if (insOffErr) throw insOffErr;
-        offeringId = newOff.id;
-        appliedActions.push({ entity: "offering", action: "CREATED", slug: off.slug });
+          .maybeSingle();
+
+        if (insOffErr) {
+          if (insOffErr.code === "23505" || String(insOffErr.message).includes("duplicate key")) {
+            const { data: raceOff } = await client
+              .from("agency_offerings")
+              .select("id")
+              .eq("agency_id", agencyId)
+              .eq("slug", off.slug)
+              .maybeSingle();
+            if (raceOff) {
+              offeringId = raceOff.id;
+              appliedActions.push({ entity: "offering", action: "IDEMPOTENT_MATCH", slug: off.slug });
+            } else {
+              throw insOffErr;
+            }
+          } else {
+            throw insOffErr;
+          }
+        } else {
+          offeringId = newOff.id;
+          appliedActions.push({ entity: "offering", action: "CREATED", slug: off.slug });
+        }
       } else {
         offeringId = exOff.id;
         const { error: upOffErr } = await client
@@ -654,8 +763,15 @@ export async function applyAgencyProvisioning(manifest, options = {}) {
                 item_type: "canonical_course",
                 sort_order: it.sort_order || 1
               });
-            if (insItemErr) throw insItemErr;
-            appliedActions.push({ entity: "offering_item", action: "CREATED", offeringId, canonicalCourseId });
+            if (insItemErr) {
+              if (insItemErr.code === "23505" || String(insItemErr.message).includes("duplicate key")) {
+                appliedActions.push({ entity: "offering_item", action: "IDEMPOTENT_MATCH", offeringId, canonicalCourseId });
+              } else {
+                throw insItemErr;
+              }
+            } else {
+              appliedActions.push({ entity: "offering_item", action: "CREATED", offeringId, canonicalCourseId });
+            }
           }
         }
       }
@@ -663,7 +779,7 @@ export async function applyAgencyProvisioning(manifest, options = {}) {
   }
 
   // ---------------------------------------------------------------------------
-  // 7. Principals & Memberships (10D: Valid Role Enum Only)
+  // 7. Principals & Memberships (10D: Valid Role Enum Only & Mandatory Resolution)
   // ---------------------------------------------------------------------------
   if (manifest.principals) {
     for (const p of manifest.principals) {
@@ -675,7 +791,7 @@ export async function applyAgencyProvisioning(manifest, options = {}) {
         const found = userList?.users?.find(u => u.email === p.email);
         if (found) {
           userId = found.id;
-        } else if (options.createMissingUsers) {
+        } else if (options.isSynthetic || options.createMissingUsers) {
           const { data: created, error: cErr } = await client.auth.admin.createUser({
             email: p.email,
             email_confirm: true,
@@ -686,37 +802,46 @@ export async function applyAgencyProvisioning(manifest, options = {}) {
         }
       }
 
-      if (userId) {
-        const { data: exMem } = await client
-          .from("agency_memberships")
-          .select("id, role, status")
-          .eq("agency_id", agencyId)
-          .eq("user_id", userId)
-          .maybeSingle();
+      if (!userId) {
+        throw new Error(`Missing auth principal: Declared principal '${p.email || p.display_name}' could not be resolved to an auth user. Principals must resolve to actual auth principals.`);
+      }
 
-        if (!exMem) {
-          const { error: insMemErr } = await client
-            .from("agency_memberships")
-            .insert({
-              agency_id: agencyId,
-              user_id: userId,
-              role,
-              status: "active",
-              display_name: p.display_name || p.email || "Agency Staff",
-              phone: p.phone || null
-            });
-          if (insMemErr) throw insMemErr;
-          appliedActions.push({ entity: "membership", action: "CREATED", userId, role });
-        } else {
-          const { error: upMemErr } = await client
-            .from("agency_memberships")
-            .update({ role, status: "active" })
-            .eq("id", exMem.id);
-          if (upMemErr) throw upMemErr;
-          appliedActions.push({ entity: "membership", action: "UPDATED", userId, role });
-        }
+      const { data: exMem } = await client
+        .from("agency_memberships")
+        .select("id, role, status")
+        .eq("agency_id", agencyId)
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (!exMem) {
+        const { error: insMemErr } = await client
+          .from("agency_memberships")
+          .insert({
+            agency_id: agencyId,
+            user_id: userId,
+            role,
+            status: "active",
+            display_name: p.display_name || p.email || "Agency Staff",
+            phone: p.phone || null
+          });
+        if (insMemErr) throw insMemErr;
+        appliedActions.push({ entity: "membership", action: "CREATED", userId, role });
+      } else {
+        const { error: upMemErr } = await client
+          .from("agency_memberships")
+          .update({ role, status: "active" })
+          .eq("id", exMem.id);
+        if (upMemErr) throw upMemErr;
+        appliedActions.push({ entity: "membership", action: "UPDATED", userId, role });
       }
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 7D: INJECTED FAILURE AT MATERIAL STAGE TEST REGRESSION
+  // ---------------------------------------------------------------------------
+  if (options.injectFailureAt === "final_write") {
+    throw new Error("INJECTED_FAILURE_TEST: Simulated failure at final write stage.");
   }
 
   return {
@@ -725,6 +850,34 @@ export async function applyAgencyProvisioning(manifest, options = {}) {
     slug,
     appliedActions
   };
+} catch (err) {
+  // 7D: Clean compensating rollback leaving ZERO partial state
+  await executeCompensatingRollback(client, createdRecords);
+  throw err instanceof Error ? err : new Error(err?.message || String(err));
+}
+}
+
+/**
+ * Compensating rollback helper: cleans up newly created records in reverse order.
+ */
+async function executeCompensatingRollback(client, createdRecords) {
+  if (!createdRecords || createdRecords.length === 0) return;
+  for (let i = createdRecords.length - 1; i >= 0; i--) {
+    const item = createdRecords[i];
+    try {
+      if (item.table === "agencies") {
+        await client.from("agency_memberships").delete().eq("agency_id", item.id);
+        await client.from("agency_offering_items").delete().eq("agency_id", item.id);
+        await client.from("agency_offerings").delete().eq("agency_id", item.id);
+        await client.from("agency_bank_accounts").delete().eq("agency_id", item.id);
+        await client.from("agency_domains").delete().eq("agency_id", item.id);
+        await client.from("agency_ui_profiles").delete().eq("agency_id", item.id);
+        await client.from("agencies").delete().eq("id", item.id);
+      } else {
+        await client.from(item.table).delete().eq("id", item.id);
+      }
+    } catch (_) {}
+  }
 }
 
 /**
@@ -891,14 +1044,13 @@ export async function verifyAgencyReadiness(slug, options = {}) {
           break;
         }
 
-        // Verify canonical lessons exist for this course
+        // Verify canonical lessons exist for this course and provide valid v5_lesson_id mapping (FIX 7C)
         const { data: cLessons } = await client
           .from("canonical_lessons")
-          .select("id")
-          .eq("canonical_course_id", cId)
-          .limit(1);
+          .select("id, v5_lesson_id")
+          .eq("canonical_course_id", cId);
 
-        if (!cLessons || cLessons.length === 0) {
+        if (!cLessons || cLessons.length === 0 || !cLessons.some(l => l.v5_lesson_id)) {
           v5ReleaseValid = false;
           break;
         }

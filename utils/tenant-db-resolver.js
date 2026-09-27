@@ -3,7 +3,7 @@
 // Authoritative Plan: SYSTEM_B_MULTI_AGENCY_MASTER_IMPLEMENTATION_PLAN_V1_1.md
 // Milestone M0B.1 / Pre-M0C Remediation V2 Hardened Implementation
 
-import { supabase as defaultSupabase } from "./supabase.js";
+import { getServiceRoleClient } from "../server/supabase-service-role.js";
 import { resolveTenant, isTrustedTenantContext, getTrustedHost } from "./tenant-resolver.js";
 import { requireAgencyMembership, requireAgencyRole } from "./agency-auth.js";
 
@@ -12,7 +12,7 @@ import { requireAgencyMembership, requireAgencyRole } from "./agency-auth.js";
  * Prevents service_role access or privileged repository instantiation in browser bundles.
  */
 export function assertServerEnvironment() {
-  if (typeof window !== "undefined") {
+  if (typeof window !== "undefined" || typeof document !== "undefined") {
     throw new Error("SECURITY VIOLATION: Privileged database operations cannot be executed in browser context.");
   }
 }
@@ -60,7 +60,7 @@ function _getScopedDbClient(tenantContext, options = {}) {
   if (!tenantContext || !isTrustedTenantContext(tenantContext)) {
     throw new Error("SECURITY VIOLATION: Scoped database operations require a trusted TenantContext issued by tenant-resolver. Plain or fabricated objects are strictly rejected.");
   }
-  return options.supabaseClient || defaultSupabase;
+  return options.supabaseClient || getServiceRoleClient();
 }
 
 /**

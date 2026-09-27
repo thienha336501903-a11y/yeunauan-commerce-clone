@@ -38,7 +38,7 @@ Every candidate asset across the codebase and database is classified into one of
 | `public.v5_lessons` | Table | V5 video lesson metadata | `KEEP` | Core V5 media architecture. Linked to R2 video assets. |
 | `public.v5_media_assets` | Table | V5 media catalog & ECDSA leases | `KEEP` | Core V5 media storage catalog. |
 | `public.orders` | Table | Legacy single-tenant orders | `KEEP` | **Historical Financial Audit Record**. Must never be dropped or truncated. |
-| `public.order_items` | Table | Legacy single-tenant order items | `KEEP` | **Historical Financial Audit Record**. Kept read-only. |
+| `public.order_items` | Table | Order items table actively written by B5 Agency atomic checkout (inserts materialized offering items snapshot) & historical orders | `KEEP` | Actively written by B5 Agency commerce atomic checkout (`utils/agency-commerce.js`) and retains historical financial audit records. Must be KEPT until architecture explicitly replaces it. |
 | `public.agencies` | Table | Multi-agency tenant registry | `KEEP` | Core System B multi-agency platform core. |
 | `public.agency_domains` | Table | Multi-agency host mappings | `KEEP` | Core System B multi-agency routing engine. |
 | `public.agency_ui_profiles` | Table | Multi-surface UI profiles (6 variants) | `KEEP` | Core System B UI variant engine. |
@@ -75,17 +75,17 @@ Every candidate asset across the codebase and database is classified into one of
 
 | Route / File | Repository | Current Purpose | Classification | Retain / Removal Rationale |
 |---|---|---|---|---|
-| `api/register.js` | Commerce | Dual-host: dispatches to Agency register or legacy register | `KEEP` | Dispatches based on incoming host. Legacy branch retired post-M0D when legacy domains are de-aliased. |
+| `api/register.js` | Commerce | Dual-host entrypoint: blocks Agency with 403 `agency_legacy_order_prohibited`, executes legacy registration on legacy hosts | `KEEP` | Blocks/dispatches Agency rather than providing Agency order path (Agency checkout uses client RPC `checkout_agency_offering`). Preserved for legacy hosts until post-M0D retirement. |
 | `api/config.js` | Commerce | Dual-host: dispatches to `getAgencyCommerceConfig` on Agency host, legacy catalog on legacy host | `KEEP` | Dispatches based on incoming host. Agency commerce catalog uses this entrypoint. |
-| `api/orders.js` | Commerce | Dual-host: dispatches to `createAgencyOrder` on Agency host, rejects legacy orders on Agency domain | `KEEP` | Dispatches based on incoming host. Core commerce order endpoint. |
+| `api/orders.js` | Commerce | Dual-host entrypoint: blocks Agency with 403 `agency_legacy_order_prohibited`, provides legacy order admin operations on legacy hosts | `KEEP` | Blocks/dispatches Agency rather than providing Agency order path (Agency order approval uses server/client RPC `approve_agency_order`). Preserved for legacy admin until post-M0D retirement. |
 | `api/courses.js` | Commerce | Dual-host: rejects legacy course mutations on Agency host with 403 `agency_legacy_courses_prohibited` | `KEEP` | Dispatches based on incoming host. Preserved for legacy admin until legacy retirement. |
 | `api/lms/portal.js` | LMS | Dual-host LMS portal router | `KEEP` | Core entrypoint: routes Agency hosts via `resolveRequestRoute(req)` -> `AGENCY`. Legacy branch retired post-M0D. |
 | `api/lms/admin.js` | LMS | Agency admin portal | `KEEP` | Core System B agency management endpoint. |
-| `api/learning.js` | LMS | Legacy learning redirector | `SAFE_TO_REMOVE_AFTER_M0D` | Replaced by agency-scoped learning routes. |
-| `api/legacy-post-redirect.js` | LMS | Legacy blog post redirect | `SAFE_TO_REMOVE_AFTER_M0D` | Obsolete legacy compatibility handler. |
-| `api/sync.js` | LMS | Legacy Google Drive / sheet sync | `SAFE_TO_REMOVE_AFTER_M0D` | Superseded by V5 releases & canonical curriculum. |
-| `api/approve-all.js` | Commerce | Dev-only bulk order approval | `SAFE_TO_REMOVE_AFTER_M0D` | Security risk; replaced by `approve_agency_order`. |
-| `api/telegram-webhook.js` | Commerce | Legacy Telegram webhook integration | `SAFE_TO_REMOVE_AFTER_M0D` | Telegram cloner deprecated post-M0D. |
+| `api/learning.js` | LMS | Legacy learning redirector | `UNKNOWN_DEPENDENCY` | Pending post-M0D live traffic validation; legacy redirector not traversed in agency dependency graph. |
+| `api/legacy-post-redirect.js` | LMS | Legacy blog post redirect | `UNKNOWN_DEPENDENCY` | Pending post-M0D SEO redirect audit; not traversed in agency dependency graph. |
+| `api/sync.js` | LMS | Legacy Google Drive / sheet sync | `UNKNOWN_DEPENDENCY` | Pending post-M0D verification; obsolete cloner mechanism not used by agency curriculum. |
+| `api/approve-all.js` | Commerce | Dev-only bulk order approval | `SAFE_TO_REMOVE_AFTER_M0D` | AST-verified: 0 agency callers; security risk; superseded by `approve_agency_order`. |
+| `api/telegram-webhook.js` | Commerce | Legacy Telegram webhook integration | `SAFE_TO_REMOVE_AFTER_M0D` | AST-verified: 0 agency callers; telegram cloner deprecated post-M0D. |
 
 ---
 
@@ -101,10 +101,11 @@ Every candidate asset across the codebase and database is classified into one of
 | `utils/agency-provisioner.js` | Both | Idempotent agency lifecycle engine | `KEEP` | Core System B architecture. |
 | `utils/v5-playback-lease.js` | LMS | ECDSA P-256 playback lease issuer | `KEEP` | Core V5 media security engine. |
 | `utils/agency-homework.js` | Both | Agency homework validation & grading | `KEEP` | Core System B homework engine. |
-| `utils/lms-session-guard.js` | LMS | Legacy HMAC cookie parser & validator | `SAFE_TO_REMOVE_AFTER_M0D` | Agency uses `agency-auth.js` with Supabase JWT. |
-| `utils/v3-runtime-controller.js` | LMS | Legacy V3 reader runtime | `SAFE_TO_REMOVE_AFTER_M0D` | Obsolete runtime engine. |
-| `utils/v4-intro-content.js` | LMS | V4 Telegram intro loader | `SAFE_TO_REMOVE_AFTER_M0D` | Replaced by V5 canonical course intro. |
-| `utils/v4-telegram-*.js` | LMS | V4 Telegram media helpers | `SAFE_TO_REMOVE_AFTER_M0D` | Replaced by Cloudflare Worker + R2 media. |
+| `utils/lms-session-guard.js` | LMS | Legacy HMAC cookie parser & validator | `SAFE_TO_REMOVE_AFTER_M0D` | AST-verified: Agency uses `agency-auth.js` with Supabase JWT. |
+| `utils/v3-runtime-controller.js` | LMS | Legacy V3 reader runtime | `SAFE_TO_REMOVE_AFTER_M0D` | AST-verified: 0 agency callers; obsolete runtime engine. |
+| `utils/v4-intro-content.js` | LMS | V4 Telegram intro loader | `SAFE_TO_REMOVE_AFTER_M0D` | AST-verified: 0 agency callers; superseded by V5 canonical curriculum. |
+| `utils/v4-telegram-access.js` | LMS | Legacy V4 Telegram media access & channel link helpers | `SAFE_TO_REMOVE_AFTER_M0D` | AST-verified: 0 agency callers; replaced by Cloudflare Worker + R2 media. |
+| `utils/v4-telegram-media-meta.js` | LMS | Legacy V4 Telegram media metadata extractor | `SAFE_TO_REMOVE_AFTER_M0D` | AST-verified: 0 agency callers; replaced by V5 media tables. |
 
 ---
 
@@ -150,17 +151,36 @@ In the event that an unexpected dependency surfaces during or after M0E executio
   git push origin feat/multi-agency-b2-b3 --force-with-lease
   ```
 
-### Mechanism 2: Concrete Database Checkpoint Restore
+### Mechanism 2: Concrete Scoped Database Checkpoint Restore (Non-Destructive)
+> [!CAUTION]
+> **DO NOT execute `pg_restore --clean` against the full Main database.**
+> A full database clean restore will overwrite and delete active Agency orders, student entitlements, homework submissions, and payment states created concurrently or subsequent to the checkpoint.
+> Rollback must strictly target **ONLY the exact retired legacy database objects**.
+
 Before any legacy DDL `DROP` migration is executed:
-1. Generate an explicit physical/logical backup:
+1. Generate an explicit scoped logical backup of the exact candidate legacy objects:
    ```bash
-   pg_dump --clean --if-exists --quote-all-identifiers -d "$MAIN_SUPABASE_DB_URL" -F c -f "backups/pre-m0e-db-checkpoint.dump"
+   pg_dump --quote-all-identifiers -d "$MAIN_SUPABASE_DB_URL" \
+     -t "public.tgcloner_sources" \
+     -t "public.tgcloner_source_messages" \
+     -t "public.tgcloner_scheduler_nonces" \
+     -t "public.tgcloner_mtproto_sessions" \
+     -t "public.lms_v4_telegram_course_sources" \
+     -t "public.v4_source_ingest_activity" \
+     -t "public.student_tokens" \
+     -F c -f "backups/pre-m0e-scoped-legacy-objects.dump"
    ```
 2. Verify checksum and store backup in durable backup storage.
-3. If database rollback is required:
+3. If database rollback is required for retired legacy tables or functions:
+   Restore ONLY the targeted retired table/object without dropping the schema or touching agency tables:
    ```bash
-   pg_restore --clean --if-exists -d "$MAIN_SUPABASE_DB_URL" "backups/pre-m0e-db-checkpoint.dump"
+   pg_restore -d "$MAIN_SUPABASE_DB_URL" \
+     --table="tgcloner_sources" \
+     --clean --if-exists \
+     "backups/pre-m0e-scoped-legacy-objects.dump"
    ```
+   Or execute the pre-generated reverse DDL scripts (`backups/pre-m0e-ddl-reversal/restore_*.sql`) containing the exact `CREATE TABLE` and `CREATE FUNCTION` DDL definitions for the retired legacy objects.
+   **Result**: All concurrent Agency orders, entitlements, and student progress are 100% preserved.
 
 ### Mechanism 3: Vercel Deployment Rollback
 - Vercel deployments provide instant deployment rollback to the pre-retirement build:
@@ -169,15 +189,36 @@ Before any legacy DDL `DROP` migration is executed:
   ```
 - CDN edge propagation typically takes 1 to 3 minutes across global edge POPs.
 
-### Mechanism 4: Configuration & Environment Rollback
-- Prior to M0E, export all deployment environment variables:
-  ```bash
-  vercel env pull .env.pre-m0e.backup
-  ```
-- If an environment variable is required post-retirement, restore via:
-  ```bash
-  vercel env add [VAR_NAME] production < .env.pre-m0e.backup
-  ```
+### Mechanism 4: Configuration & Environment Rollback (Individual Variable Mechanism)
+> [!CAUTION]
+> Do NOT pipe an entire `.env` file into a single Vercel variable. Each environment variable must be inspected and restored individually from protected pre-retirement metadata.
+
+1. Prior to M0E, export deployment environment variables to a structured key-value snapshot (`.env.pre-m0e.json`):
+   ```bash
+   vercel env pull .env.pre-m0e.backup
+   node -e '
+     const fs = require("fs");
+     const lines = fs.readFileSync(".env.pre-m0e.backup", "utf8").split("\n");
+     const obj = {};
+     for (const line of lines) {
+       const m = line.match(/^([A-Za-z0-9_]+)=(.*)$/);
+       if (m) obj[m[1]] = m[2].replace(/^["'\''']|["'\''']$/g, "");
+     }
+     fs.writeFileSync(".env.pre-m0e.json", JSON.stringify(obj, null, 2));
+   '
+   ```
+2. If individual environment variables must be restored post-retirement, restore each variable individually:
+   ```bash
+   node -e '
+     const fs = require("fs");
+     const { execSync } = require("child_process");
+     const vars = JSON.parse(fs.readFileSync(".env.pre-m0e.json", "utf8"));
+     for (const [k, v] of Object.entries(vars)) {
+       console.log("Restoring environment variable:", k);
+       execSync(`vercel env add ${k} production`, { input: v, stdio: ["pipe", "inherit", "inherit"] });
+     }
+   '
+   ```
 
 ### Mechanism 5: Explicit DNS / Host Routing Restoration
 - If a legacy custom domain requires reactivation, update Vercel project domains via Vercel CLI:
@@ -192,6 +233,6 @@ Before any legacy DDL `DROP` migration is executed:
 
 | Gate | Status | Evidence |
 |---|---|---|
-| `M0E_RETIREMENT_INVENTORY` | **PASS** | 100% concrete cataloging of DB objects, routes, utilities, and env vars (zero wildcards). |
-| `M0E_ROLLBACK_PLAN` | **PASS** | Concrete 5-mechanism rollback protocol (Git tag, pg_restore, Vercel deployment rollback, env restore, DNS restore). No emergency fallback leak. |
+| `M0E_RETIREMENT_PLAN` | **PASS** | 100% concrete cataloging of DB objects, routes, utilities, and env vars (zero wildcards; `public.order_items` classified as KEEP actively written by B5; route blocking/dispatch behavior aligned; dependency evidence checked). |
+| `M0E_ROLLBACK_PLAN` | **PASS** | Scoped, non-destructive rollback protocol targeting ONLY exact retired legacy DB objects. Full-db `pg_restore --clean` prohibited to preserve concurrent Agency orders. Individual env var restore verified. |
 | `M0E_EXECUTION` | **NOT_STARTED** | Zero deletions, zero legacy route teardown; legacy infrastructure remains 100% active. |

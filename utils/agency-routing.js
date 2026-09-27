@@ -60,28 +60,37 @@ export async function resolveRequestRoute(req, options = {}) {
     };
   }
 
-  const isLegacy = isExplicitLegacyHost(host);
-
-  // Authoritatively resolve agency tenant from DB
+  // 2. Run tenant lookup
   let resolved;
   try {
     resolved = await resolveTenant(req, options);
   } catch (err) {
+    // 3. Exception thrown by resolver: DENY regardless of Legacy allowlist
     return {
       route: "DENY",
       status: 500,
-      code: "tenant_resolution_error",
+      code: "resolver_error",
       error: err.message || "Tenant resolution failed."
     };
   }
 
+  // 3. If tenant lookup ERRORS: DENY regardless of Legacy allowlist
+  if (resolved && !resolved.ok && (resolved.code === "resolver_error" || (resolved.status && resolved.status >= 500))) {
+    return {
+      route: "DENY",
+      status: resolved.status || 500,
+      code: resolved.code || "resolver_error",
+      error: resolved.error || "Tenant resolver error."
+    };
+  }
+
+  // 4. If tenant lookup succeeds: determine isAgency
   const isAgency = Boolean(resolved?.ok && resolved?.tenant?.agencyId);
 
-  // ---------------------------------------------------------------------------
-  // 5A: OVERLAPPING HOST DETECTION
-  // A hostname must NOT simultaneously be Agency domain and Legacy allowlist host!
-  // If overlap detected: DENY / configuration error (409). Do NOT prefer Legacy.
-  // ---------------------------------------------------------------------------
+  // 5. Determine isLegacy
+  const isLegacy = isExplicitLegacyHost(host);
+
+  // 6. If isAgency && isLegacy: DENY overlap
   if (isLegacy && isAgency) {
     return {
       route: "DENY",
@@ -91,17 +100,17 @@ export async function resolveRequestRoute(req, options = {}) {
     };
   }
 
-  // Permitted explicit Legacy host
-  if (isLegacy) {
-    return { route: "LEGACY", host };
-  }
-
-  // Permitted verified Agency host
+  // 7. If isAgency: AGENCY
   if (isAgency) {
     return { route: "AGENCY", tenant: resolved.tenant, host };
   }
 
-  // Unknown host fails closed
+  // 8. If isLegacy: LEGACY
+  if (isLegacy) {
+    return { route: "LEGACY", host };
+  }
+
+  // 9. Otherwise: DENY
   return {
     route: "DENY",
     status: resolved?.status || 404,

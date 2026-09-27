@@ -1,12 +1,16 @@
 // scripts/test-phase-i-ingress.js
 // Multi-Agency Milestone M0B.1 — Phase I Vercel Host Ingress Verification Test
 // Authoritative Plan: SYSTEM_B_MULTI_AGENCY_MASTER_IMPLEMENTATION_PLAN_V1_1.md
-// Milestone M0B.1 / Pre-M0C Remediation V2 — Phase 8 Hardening
+// Milestone M0B.1 / Pre-M0C Remediation V3 — FIX 5: Final-Head Vercel Ingress Harness
 // Invariants:
-//   - Verifies preview deployment Commit SHA against expected Git HEAD.
-//   - LMS assertions prove tenant identity (agency ID/slug), not just status: ok.
-//   - Explicitly verifies Legacy spoof cases fail closed on both LMS and Commerce.
-//   - Real business route probe (Commerce /api/config) verified alongside health.
+//   - MANDATORY inputs: EXPECTED_LMS_SHA, EXPECTED_COMMERCE_SHA, LMS_PREVIEW_URL, COMMERCE_PREVIEW_URL.
+//   - Missing expected SHA or preview URL: immediate FAIL.
+//   - Deployed SHA != expected SHA: immediate FAIL.
+//   - No default stale deployment URLs.
+//   - LMS assertions prove tenant identity (agency ID & slug); missing tenant identity => FAIL.
+//   - Sends normal request, unknown Host, conflicting x-forwarded-host, malformed forwarded-host, legacy spoof.
+//   - Commerce tests prove tenant identity, /api/config agency result, /api/orders & /api/register agency block (403),
+//     unknown host deny (404), forwarded-host conflict deny.
 //   - Secrets accessed strictly via ephemeral environment, zero secret logging.
 
 import assert from "node:assert/strict";
@@ -15,8 +19,30 @@ import path from "node:path";
 import { execSync } from "node:child_process";
 import { supabase } from "../utils/supabase.js";
 
-const LMS_PREVIEW_URL = process.env.LMS_PREVIEW_URL || "https://yeunauan-lms-clone-izvm9ukjh.vercel.app";
-const COMMERCE_PREVIEW_URL = process.env.COMMERCE_PREVIEW_URL || "https://yeunauan-commerce-clone-gpbtbatdi.vercel.app";
+// ---------------------------------------------------------------------------
+// 1. Validate Mandatory Inputs
+// ---------------------------------------------------------------------------
+const LMS_PREVIEW_URL = process.env.LMS_PREVIEW_URL;
+const COMMERCE_PREVIEW_URL = process.env.COMMERCE_PREVIEW_URL;
+const EXPECTED_LMS_SHA = process.env.EXPECTED_LMS_SHA;
+const EXPECTED_COMMERCE_SHA = process.env.EXPECTED_COMMERCE_SHA;
+
+assert.ok(
+  LMS_PREVIEW_URL,
+  "MANDATORY input missing: LMS_PREVIEW_URL must be provided via environment variable (no stale defaults permitted)."
+);
+assert.ok(
+  COMMERCE_PREVIEW_URL,
+  "MANDATORY input missing: COMMERCE_PREVIEW_URL must be provided via environment variable (no stale defaults permitted)."
+);
+assert.ok(
+  EXPECTED_LMS_SHA,
+  "MANDATORY input missing: EXPECTED_LMS_SHA must be provided via environment variable."
+);
+assert.ok(
+  EXPECTED_COMMERCE_SHA,
+  "MANDATORY input missing: EXPECTED_COMMERCE_SHA must be provided via environment variable."
+);
 
 function getEphemeralSecret(varName, fallbackKey) {
   if (process.env[varName]) return process.env[varName];
@@ -45,7 +71,7 @@ const commerceHost = new URL(COMMERCE_PREVIEW_URL).hostname;
 function getDeploymentCommitSha(url) {
   try {
     const host = new URL(url).hostname;
-    const logs = execSync(`npx vercel inspect ${host} --logs 2>&1`, { shell: true, encoding: "utf8", timeout: 15000 });
+    const logs = execSync(`npx vercel inspect ${host} --logs 2>&1`, { shell: true, encoding: "utf8", timeout: 20000 });
     const match = logs.match(/Commit:\s*([a-f0-9]+)/i);
     return match ? match[1] : null;
   } catch (err) {
@@ -54,33 +80,36 @@ function getDeploymentCommitSha(url) {
 }
 
 async function runPhaseITests() {
-  console.log("=== PHASE I: VERCEL HOST INGRESS PREVIEW TESTS (PHASE 8 HARDENED) ===");
+  console.log("=== PHASE I: VERCEL HOST INGRESS PREVIEW TESTS (FINAL-HEAD HARNESS) ===");
   console.log("LMS Target:", LMS_PREVIEW_URL, `(Host: ${lmsHost})`);
   console.log("Commerce Target:", COMMERCE_PREVIEW_URL, `(Host: ${commerceHost})`);
+  console.log("Expected LMS Commit SHA:", EXPECTED_LMS_SHA);
+  console.log("Expected Commerce Commit SHA:", EXPECTED_COMMERCE_SHA);
 
   // ---------------------------------------------------------------------------
-  // 1. Git SHA Verification (Phase 8 Requirement 2 & 3)
+  // 2. Git Commit SHA Verification against Expected HEADs
   // ---------------------------------------------------------------------------
   console.log("\n--- VERIFYING VERCEL PREVIEW GIT COMMIT SHAS ---");
   const lmsCommit = getDeploymentCommitSha(LMS_PREVIEW_URL);
   const commerceCommit = getDeploymentCommitSha(COMMERCE_PREVIEW_URL);
-  console.log(`LMS Preview Deployment Commit: ${lmsCommit || "unknown"}`);
-  console.log(`Commerce Preview Deployment Commit: ${commerceCommit || "unknown"}`);
 
-  if (process.env.EXPECTED_LMS_SHA) {
-    assert.ok(
-      lmsCommit && (process.env.EXPECTED_LMS_SHA.startsWith(lmsCommit) || lmsCommit.startsWith(process.env.EXPECTED_LMS_SHA)),
-      `FAIL: LMS Deployment Commit SHA mismatch! Expected ${process.env.EXPECTED_LMS_SHA}, got ${lmsCommit}`
-    );
-    console.log("✓ LMS Preview Deployment Commit matches expected Git SHA");
-  }
-  if (process.env.EXPECTED_COMMERCE_SHA) {
-    assert.ok(
-      commerceCommit && (process.env.EXPECTED_COMMERCE_SHA.startsWith(commerceCommit) || commerceCommit.startsWith(process.env.EXPECTED_COMMERCE_SHA)),
-      `FAIL: Commerce Deployment Commit SHA mismatch! Expected ${process.env.EXPECTED_COMMERCE_SHA}, got ${commerceCommit}`
-    );
-    console.log("✓ Commerce Preview Deployment Commit matches expected Git SHA");
-  }
+  console.log(`LMS Deployed Commit: ${lmsCommit || "unknown"}`);
+  console.log(`Commerce Deployed Commit: ${commerceCommit || "unknown"}`);
+
+  assert.ok(lmsCommit, `FAIL: Could not extract Git Commit SHA from LMS deployment logs (${LMS_PREVIEW_URL})`);
+  assert.ok(commerceCommit, `FAIL: Could not extract Git Commit SHA from Commerce deployment logs (${COMMERCE_PREVIEW_URL})`);
+
+  assert.ok(
+    EXPECTED_LMS_SHA.startsWith(lmsCommit) || lmsCommit.startsWith(EXPECTED_LMS_SHA),
+    `FAIL: LMS Deployment SHA mismatch! Expected ${EXPECTED_LMS_SHA}, got ${lmsCommit}`
+  );
+  console.log("✓ LMS Preview Deployment Commit matches expected Git SHA");
+
+  assert.ok(
+    EXPECTED_COMMERCE_SHA.startsWith(commerceCommit) || commerceCommit.startsWith(EXPECTED_COMMERCE_SHA),
+    `FAIL: Commerce Deployment SHA mismatch! Expected ${EXPECTED_COMMERCE_SHA}, got ${commerceCommit}`
+  );
+  console.log("✓ Commerce Preview Deployment Commit matches expected Git SHA");
 
   let testAgency = null;
   let lmsDomain = null;
@@ -88,7 +117,7 @@ async function runPhaseITests() {
 
   try {
     // ---------------------------------------------------------------------------
-    // 2. BASELINE: Unknown Host Tests
+    // 3. BASELINE: Unknown Host Tests
     // ---------------------------------------------------------------------------
     console.log("\n--- BASELINE: Unknown Host Tests ---");
     {
@@ -96,28 +125,29 @@ async function runPhaseITests() {
         headers: { "x-vercel-protection-bypass": LMS_BYPASS_TOKEN }
       });
       console.log("LMS Unknown Host Status:", resLms.status);
-      assert.equal(resLms.status, 404);
+      assert.equal(resLms.status, 404, "Unknown host on LMS must return 404");
       const lmsBody = await resLms.json();
-      assert.equal(lmsBody.code, "tenant_not_found");
+      assert.equal(lmsBody.code, "tenant_not_found", "Expected error code 'tenant_not_found'");
       console.log("✓ LMS unknown host correctly returns 404 tenant_not_found");
 
       const resCom = await fetch(`${COMMERCE_PREVIEW_URL}/api/health?tenantCheck=1`, {
         headers: { "x-vercel-protection-bypass": COMMERCE_BYPASS_TOKEN }
       });
       console.log("Commerce Unknown Host Status:", resCom.status);
-      assert.equal(resCom.status, 404);
+      assert.equal(resCom.status, 404, "Unknown host on Commerce must return 404");
       const comBody = await resCom.json();
-      assert.equal(comBody.code, "tenant_not_found");
+      assert.equal(comBody.code, "tenant_not_found", "Expected error code 'tenant_not_found'");
       console.log("✓ Commerce unknown host correctly returns 404 tenant_not_found");
 
-      // Wait 5.5s for negative cache TTL (5000ms) to expire on Vercel instances
+      // Wait 5.5s for negative cache TTL (5000ms) to expire on edge instances
       console.log("Waiting 5.5s for negative cache TTL to expire...");
       await new Promise(resolve => setTimeout(resolve, 5500));
     }
 
     // ---------------------------------------------------------------------------
-    // 3. Setup Test Agency and Domain Fixtures in Main Supabase
+    // 4. Setup Test Agency and Domain Fixtures in Main Supabase
     // ---------------------------------------------------------------------------
+    console.log("\n--- Setting Up Test Agency & Domain Fixtures ---");
     const stamp = Date.now();
     const { data: agency, error: aErr } = await supabase
       .from("agencies")
@@ -171,57 +201,77 @@ async function runPhaseITests() {
     if (dComErr) throw new Error(`Failed to map Commerce domain: ${dComErr.message}`);
     commerceDomain = dCom;
 
-    console.log("✓ Fixtures created in DB: Agency ID:", testAgency.id);
+    console.log("✓ Fixtures created in DB: Agency ID:", testAgency.id, "Slug:", testAgency.slug);
 
     // ---------------------------------------------------------------------------
-    // 4. PART 1: LMS INGRESS TESTS
+    // 5. PART 1: LMS INGRESS ASSERTIONS
     // ---------------------------------------------------------------------------
-    console.log("\n--- PART 1: LMS Vercel Host Ingress ---");
+    console.log("\n--- PART 1: LMS Vercel Host Ingress Assertions ---");
 
-    // Test 1.1: Normal agency host -> correct agency resolved with tenant identity proven
+    // Test 1.1: Normal agency host -> returns 200, proves tenant identity (ID & slug)
     {
       const res = await fetch(`${LMS_PREVIEW_URL}/api/lms/portal?endpoint=health`, {
         headers: { "x-vercel-protection-bypass": LMS_BYPASS_TOKEN }
       });
-      console.log("LMS Test 1 (Normal Agency Host) Status:", res.status);
-      assert.equal(res.status, 200);
+      console.log("LMS Test 1.1 (Normal Agency Host) Status:", res.status);
+      assert.equal(res.status, 200, "LMS normal host request must return 200");
       const body = await res.json();
-      assert.equal(body.status, "ok");
-      if (body.tenant) {
-        assert.equal(body.tenant.agencyId, testAgency.id);
-        assert.equal(body.tenant.agencySlug, testAgency.slug);
-      }
-      console.log("✓ LMS Test 1 PASS: Normal agency host resolves to active tenant with identity verified");
+      assert.equal(body.status, "ok", "Expected status ok");
+      // Deterministic Tenant Identity Proof (REQUIRED: Missing identity => FAIL)
+      assert.ok(body.tenant, "FAIL: Tenant identity must be present in response");
+      assert.equal(body.tenant.agencyId, testAgency.id, `FAIL: Agency ID mismatch! Expected ${testAgency.id}, got ${body.tenant.agencyId}`);
+      assert.equal(body.tenant.agencySlug, testAgency.slug, `FAIL: Agency Slug mismatch! Expected ${testAgency.slug}, got ${body.tenant.agencySlug}`);
+      console.log("✓ LMS Test 1.1 PASS: Tenant identity conclusively proven (Agency ID:", body.tenant.agencyId, "Slug:", body.tenant.agencySlug, ")");
     }
 
-    // Test 1.2: Spoofed x-forwarded-host -> does NOT override host or must be rejected
+    // Test 1.2: Conflicting x-forwarded-host -> does NOT override host, must not resolve attacker tenant
     {
       const res = await fetch(`${LMS_PREVIEW_URL}/api/lms/portal?endpoint=health`, {
         headers: {
           "x-vercel-protection-bypass": LMS_BYPASS_TOKEN,
-          "x-forwarded-host": "evil-tenant.com"
+          "x-forwarded-host": "evil-tenant-attacker.com"
         }
       });
-      console.log("LMS Test 2 (Spoofed x-forwarded-host) Status:", res.status);
-      assert.ok(res.status === 400 || res.status === 200, `Expected 400 or 200, got ${res.status}`);
+      console.log("LMS Test 1.2 (Conflicting x-forwarded-host) Status:", res.status);
+      assert.ok(res.status === 400 || res.status === 403 || res.status === 200, `Expected 400, 403, or 200, got ${res.status}`);
       const body = await res.json();
-      assert.notEqual(body.code, "tenant_not_found", "Security violation: evil-tenant must not be resolved!");
-      console.log("✓ LMS Test 2 PASS: Spoofed x-forwarded-host does NOT override host (boundary enforced)");
+      if (res.status === 200) {
+        assert.ok(body.tenant, "Tenant object must be present");
+        assert.equal(body.tenant.agencyId, testAgency.id, "Security violation: host was overridden by evil-tenant!");
+      } else {
+        assert.ok(res.status >= 400, "Conflicting host header safely rejected");
+      }
+      console.log("✓ LMS Test 1.2 PASS: Conflicting x-forwarded-host does NOT override host (boundary enforced)");
     }
 
-    // Test 1.3: Legacy spoof: Agency host calling legacy feed -> must return 404 agency_endpoint_not_found
+    // Test 1.3: Malformed forwarded-host -> must fail closed (400 or 403 or 404)
+    {
+      const res = await fetch(`${LMS_PREVIEW_URL}/api/lms/portal?endpoint=health`, {
+        headers: {
+          "x-vercel-protection-bypass": LMS_BYPASS_TOKEN,
+          "x-forwarded-host": "malformed..host:::80"
+        }
+      });
+      console.log("LMS Test 1.3 (Malformed forwarded-host) Status:", res.status);
+      assert.ok(res.status === 400 || res.status === 403 || res.status === 404, `Expected 400/403/404 for malformed host, got ${res.status}`);
+      const body = await res.json();
+      assert.notEqual(body.status, "ok", "Malformed forwarded-host must not return ok status");
+      console.log("✓ LMS Test 1.3 PASS: Malformed forwarded-host rejected fail-closed with status", res.status);
+    }
+
+    // Test 1.4: Legacy spoof: Agency host calling legacy feed -> must return 404 agency_endpoint_not_found
     {
       const res = await fetch(`${LMS_PREVIEW_URL}/api/lms/portal?endpoint=v4-telegram-feed`, {
         headers: { "x-vercel-protection-bypass": LMS_BYPASS_TOKEN }
       });
-      console.log("LMS Test 3 (Legacy endpoint on Agency host) Status:", res.status);
-      assert.equal(res.status, 404);
+      console.log("LMS Test 1.4 (Legacy endpoint on Agency host) Status:", res.status);
+      assert.equal(res.status, 404, "Legacy endpoint on Agency host must return 404");
       const body = await res.json();
-      assert.equal(body.code, "agency_endpoint_not_found");
-      console.log("✓ LMS Test 3 PASS: Legacy feed denied on Agency host with agency_endpoint_not_found");
+      assert.equal(body.code, "agency_endpoint_not_found", "Expected error code 'agency_endpoint_not_found'");
+      console.log("✓ LMS Test 1.4 PASS: Legacy feed denied on Agency host with agency_endpoint_not_found");
     }
 
-    // Test 1.4: Spoofed legacy host header on agency domain -> fails closed
+    // Test 1.5: Spoofed legacy host header on agency domain -> fails closed
     {
       const res = await fetch(`${LMS_PREVIEW_URL}/api/lms/portal?endpoint=v4-telegram-feed`, {
         headers: {
@@ -229,27 +279,28 @@ async function runPhaseITests() {
           "x-forwarded-host": "yeunauan.com"
         }
       });
-      console.log("LMS Test 4 (Spoofed legacy x-forwarded-host) Status:", res.status);
-      assert.ok(res.status === 400 || res.status === 404 || res.status === 403);
-      console.log("✓ LMS Test 4 PASS: Spoofed legacy host header fails closed");
+      console.log("LMS Test 1.5 (Spoofed legacy x-forwarded-host) Status:", res.status);
+      assert.ok(res.status === 400 || res.status === 404 || res.status === 403, `Expected denial status, got ${res.status}`);
+      console.log("✓ LMS Test 1.5 PASS: Spoofed legacy host header fails closed with status", res.status);
     }
 
     // ---------------------------------------------------------------------------
-    // 5. PART 2: COMMERCE INGRESS TESTS
+    // 6. PART 2: COMMERCE INGRESS ASSERTIONS
     // ---------------------------------------------------------------------------
-    console.log("\n--- PART 2: Commerce Vercel Host Ingress ---");
+    console.log("\n--- PART 2: Commerce Vercel Host Ingress Assertions ---");
 
-    // Test 2.1: Normal agency host -> correct agency resolved
+    // Test 2.1: Normal agency host -> proves tenant identity
     {
       const res = await fetch(`${COMMERCE_PREVIEW_URL}/api/health?tenantCheck=1`, {
         headers: { "x-vercel-protection-bypass": COMMERCE_BYPASS_TOKEN }
       });
-      console.log("Commerce Test 1 (Tenant Health) Status:", res.status);
-      assert.equal(res.status, 200);
+      console.log("Commerce Test 2.1 (Tenant Health) Status:", res.status);
+      assert.equal(res.status, 200, "Commerce tenant check must return 200");
       const body = await res.json();
       assert.equal(body.success, true);
-      assert.equal(body.tenant.agencyId, testAgency.id);
-      console.log("✓ Commerce Test 1 PASS: Normal agency host resolves to correct agency ID:", body.tenant.agencyId);
+      assert.ok(body.tenant, "Tenant object must be present in response");
+      assert.equal(body.tenant.agencyId, testAgency.id, `Agency ID mismatch: expected ${testAgency.id}, got ${body.tenant.agencyId}`);
+      console.log("✓ Commerce Test 2.1 PASS: Tenant identity proven on commerce domain:", body.tenant.agencyId);
     }
 
     // Test 2.2: Real business route: /api/config catalog returns agency config
@@ -257,46 +308,64 @@ async function runPhaseITests() {
       const res = await fetch(`${COMMERCE_PREVIEW_URL}/api/config`, {
         headers: { "x-vercel-protection-bypass": COMMERCE_BYPASS_TOKEN }
       });
-      console.log("Commerce Test 2 (Real Business Route /api/config) Status:", res.status);
-      assert.equal(res.status, 200);
+      console.log("Commerce Test 2.2 (Real Business Route /api/config) Status:", res.status);
+      assert.equal(res.status, 200, "Commerce /api/config must return 200");
       const body = await res.json();
       assert.equal(body.success, true);
-      assert.equal(body.agency.id, testAgency.id);
-      assert.equal(body.agency.slug, testAgency.slug);
-      assert.ok(Array.isArray(body.offerings));
-      console.log("✓ Commerce Test 2 PASS: Real business route /api/config resolves catalog for agency:", body.agency.slug);
+      assert.ok(body.agency, "Agency object must be present in /api/config response");
+      assert.equal(body.agency.id, testAgency.id, "Agency ID mismatch in /api/config");
+      assert.equal(body.agency.slug, testAgency.slug, "Agency Slug mismatch in /api/config");
+      assert.ok(Array.isArray(body.offerings), "Offerings array must be present");
+      console.log("✓ Commerce Test 2.2 PASS: Real business route /api/config resolves catalog for agency:", body.agency.slug);
     }
 
-    // Test 2.3: Legacy courses spoof on Agency host is forbidden
+    // Test 2.3: Agency host cannot execute Legacy order handler via /api/orders (403 agency_legacy_order_prohibited)
     {
-      const res = await fetch(`${COMMERCE_PREVIEW_URL}/api/courses`, {
-        headers: { "x-vercel-protection-bypass": COMMERCE_BYPASS_TOKEN }
-      });
-      console.log("Commerce Test 3 (Legacy courses route on Agency host) Status:", res.status);
-      assert.equal(res.status, 403);
-      const body = await res.json();
-      assert.equal(body.code, "agency_legacy_courses_prohibited");
-      console.log("✓ Commerce Test 3 PASS: Legacy courses route blocked on Agency host");
-    }
-
-    // Test 2.4: Legacy order action on Agency host is forbidden
-    {
-      const res = await fetch(`${COMMERCE_PREVIEW_URL}/api/orders?action=create_legacy_order`, {
+      const res = await fetch(`${COMMERCE_PREVIEW_URL}/api/orders`, {
         method: "POST",
         headers: {
           "x-vercel-protection-bypass": COMMERCE_BYPASS_TOKEN,
           "content-type": "application/json"
         },
-        body: JSON.stringify({ course_slug: "donut" })
+        body: JSON.stringify({ action: "legacy_order_mutation" })
       });
-      console.log("Commerce Test 4 (Legacy order action on Agency host) Status:", res.status);
-      assert.equal(res.status, 403);
+      console.log("Commerce Test 2.3 (/api/orders on Agency host) Status:", res.status);
+      assert.equal(res.status, 403, "Legacy order handler on Agency host must return 403");
       const body = await res.json();
-      assert.equal(body.code, "agency_legacy_order_prohibited");
-      console.log("✓ Commerce Test 4 PASS: Legacy order creation blocked on Agency host");
+      assert.equal(body.code, "agency_legacy_order_prohibited", "Expected error code 'agency_legacy_order_prohibited'");
+      console.log("✓ Commerce Test 2.3 PASS: /api/orders rejects legacy execution on Agency host with 403");
     }
 
-    // Test 2.5: Spoofed x-forwarded-host -> does NOT override host
+    // Test 2.4: Agency host cannot execute Legacy register handler via /api/register (403 agency_legacy_order_prohibited)
+    {
+      const res = await fetch(`${COMMERCE_PREVIEW_URL}/api/register`, {
+        method: "POST",
+        headers: {
+          "x-vercel-protection-bypass": COMMERCE_BYPASS_TOKEN,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({ gmail: "test@example.com", billName: "bill.jpg" })
+      });
+      console.log("Commerce Test 2.4 (/api/register on Agency host) Status:", res.status);
+      assert.equal(res.status, 403, "Legacy register handler on Agency host must return 403");
+      const body = await res.json();
+      assert.equal(body.code, "agency_legacy_order_prohibited", "Expected error code 'agency_legacy_order_prohibited'");
+      console.log("✓ Commerce Test 2.4 PASS: /api/register rejects legacy registration on Agency host with 403");
+    }
+
+    // Test 2.5: Legacy courses route prohibited on Agency host (403 agency_legacy_courses_prohibited)
+    {
+      const res = await fetch(`${COMMERCE_PREVIEW_URL}/api/courses`, {
+        headers: { "x-vercel-protection-bypass": COMMERCE_BYPASS_TOKEN }
+      });
+      console.log("Commerce Test 2.5 (/api/courses on Agency host) Status:", res.status);
+      assert.equal(res.status, 403, "Legacy courses route on Agency host must return 403");
+      const body = await res.json();
+      assert.equal(body.code, "agency_legacy_courses_prohibited", "Expected error code 'agency_legacy_courses_prohibited'");
+      console.log("✓ Commerce Test 2.5 PASS: Legacy courses route blocked on Agency host");
+    }
+
+    // Test 2.6: Conflicting x-forwarded-host on Commerce -> does NOT override host
     {
       const res = await fetch(`${COMMERCE_PREVIEW_URL}/api/health?tenantCheck=1`, {
         headers: {
@@ -304,19 +373,19 @@ async function runPhaseITests() {
           "x-forwarded-host": "evil-commerce-attacker.com"
         }
       });
-      console.log("Commerce Test 5 (Spoofed x-forwarded-host) Status:", res.status);
-      assert.ok(res.status === 400 || res.status === 200);
+      console.log("Commerce Test 2.6 (Conflicting x-forwarded-host) Status:", res.status);
+      assert.ok(res.status === 400 || res.status === 403 || res.status === 200, `Expected 400/403/200, got ${res.status}`);
       const body = await res.json();
       if (res.status === 200) {
         assert.equal(body.tenant.agencyId, testAgency.id, "Host was overridden by spoofed header!");
       }
-      console.log("✓ Commerce Test 5 PASS: Spoofed x-forwarded-host does NOT override host");
+      console.log("✓ Commerce Test 2.6 PASS: Conflicting x-forwarded-host does NOT override host");
     }
 
     console.log("\n==============================================");
-    console.log("PHASE I ALL INGRESS TESTS PASSED (PHASE 8 COMPLETE)!");
-    console.log("LMS_VERCEL_HOST_BOUNDARY = PASS");
-    console.log("COMMERCE_VERCEL_HOST_BOUNDARY = PASS");
+    console.log("PHASE I ALL INGRESS TESTS PASSED (FIX 5 COMPLETE)!");
+    console.log("LMS_VERCEL_INGRESS = PASS");
+    console.log("COMMERCE_VERCEL_INGRESS = PASS");
     console.log("==============================================");
 
   } finally {
@@ -336,6 +405,6 @@ async function runPhaseITests() {
 }
 
 runPhaseITests().catch((err) => {
-  console.error("PHASE I TEST FAILED:", err);
+  console.error("PHASE I INGRESS HARNESS FAILED:", err);
   process.exit(1);
 });
