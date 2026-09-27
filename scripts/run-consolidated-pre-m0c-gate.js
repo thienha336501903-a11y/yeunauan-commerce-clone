@@ -442,6 +442,13 @@ async function main() {
     await verifyDatabaseConnectivity();
     await verifySentinelRoundTrip();
 
+    // 0. Suite: isolated-target identity spoofing regressions
+    await runSubProcess(
+      "Pre-M0C Test Target Identity Boundary",
+      "node",
+      ["test/pre-m0c-test-target-security.test.js"]
+    );
+
     // 1. Suite: B5 Real DB Concurrency & Kernel Lock Contention
     await runSubProcess(
       "B5 Real Database Advisory Lock Contention",
