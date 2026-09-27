@@ -30,7 +30,8 @@ const anonClient = createClient(SUPABASE_URL, ANON_KEY, {
 // Category definitions:
 // - SERVER_ONLY_RPC: Function callable via RPC by service_role only. anon and authenticated MUST be revoked.
 // - PUBLIC_SAFE_RPC: Function intentionally exposed to public/authenticated (e.g. domain lookup, login).
-// - INTERNAL_NOT_POSTGREST: Triggers, internal helpers, or functions not intended as external RPC endpoints.
+// - INTERNAL_NOT_POSTGREST: Internal helpers not intended as external RPC endpoints.
+// - INTERNAL_TRIGGER: Trigger-only functions (RETURNS trigger); never application RPCs.
 const FUNCTION_CLASSIFICATIONS = {
   // B5 & B7 Multi-Agency Privileged RPCs
   "approve_agency_order(p_agency_id uuid, p_order_id uuid, p_approved_by_membership_id uuid)": "SERVER_ONLY_RPC",
@@ -80,7 +81,8 @@ const FUNCTION_CLASSIFICATIONS = {
   "v5_authorize_playback_asset(p_course_id uuid, p_asset_id uuid)": "INTERNAL_NOT_POSTGREST",
   "v5_clone_factory_cleanup_allowed(p_course_id uuid)": "INTERNAL_NOT_POSTGREST",
   "v5_retire_purge_release_delete_allowed(p_course_id uuid)": "INTERNAL_NOT_POSTGREST",
-  "validate_v5_retire_purge_r2_delete_safe(p_operation_id uuid)": "INTERNAL_NOT_POSTGREST"
+  "validate_v5_retire_purge_r2_delete_safe(p_operation_id uuid)": "INTERNAL_NOT_POSTGREST",
+  "trg_prevent_agency_test_fixture_mutation()": "INTERNAL_TRIGGER"
 };
 
 /**
@@ -93,7 +95,8 @@ export function validateCatalogInventory(catalogFunctions) {
     SERVER_ONLY_RPC: [],
     PUBLIC_SAFE_RPC: [],
     AUTHENTICATED_PLAYBACK_RPC: [],
-    INTERNAL_NOT_POSTGREST: []
+    INTERNAL_NOT_POSTGREST: [],
+    INTERNAL_TRIGGER: []
   };
 
   for (const fn of catalogFunctions) {
@@ -141,7 +144,7 @@ async function main() {
 
   // 2. Validate Inventory & Classifications
   const classified = validateCatalogInventory(catalogFunctions);
-  console.log(`Classified: ${classified.SERVER_ONLY_RPC.length} SERVER_ONLY_RPC, ${classified.PUBLIC_SAFE_RPC.length} PUBLIC_SAFE_RPC, ${classified.AUTHENTICATED_PLAYBACK_RPC.length} AUTHENTICATED_PLAYBACK_RPC, ${classified.INTERNAL_NOT_POSTGREST.length} INTERNAL_NOT_POSTGREST.`);
+  console.log(`Classified: ${classified.SERVER_ONLY_RPC.length} SERVER_ONLY_RPC, ${classified.PUBLIC_SAFE_RPC.length} PUBLIC_SAFE_RPC, ${classified.AUTHENTICATED_PLAYBACK_RPC.length} AUTHENTICATED_PLAYBACK_RPC, ${classified.INTERNAL_NOT_POSTGREST.length} INTERNAL_NOT_POSTGREST, ${classified.INTERNAL_TRIGGER.length} INTERNAL_TRIGGER.`);
 
   // 3. Synthetic Negative Test: Verify unclassified signature fails immediately
   console.log("\n--- Testing Synthetic Fixture Failure (Unclassified Signature Must Fail) ---");
