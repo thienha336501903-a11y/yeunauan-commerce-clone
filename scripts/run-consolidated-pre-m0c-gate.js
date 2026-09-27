@@ -8,6 +8,7 @@ import crypto from "node:crypto";
 import http from "node:http";
 import pg from "pg";
 import { createClient } from "@supabase/supabase-js";
+import { validateExplicitLoopbackTargetUrls, verifyPreM0cTestTargetIdentity } from "../test/helpers/pre-m0c-test-target.js";
 
 // One explicit isolated integration target. No fallback credentials or localhost
 // defaults are accepted by the consolidated gate.
@@ -15,7 +16,8 @@ const REQUIRED_PRE_M0C_ENV = [
   "PRE_M0C_TEST_DATABASE_URL",
   "PRE_M0C_TEST_SUPABASE_URL",
   "PRE_M0C_TEST_SUPABASE_ANON_KEY",
-  "PRE_M0C_TEST_SUPABASE_SERVICE_ROLE_KEY"
+  "PRE_M0C_TEST_SUPABASE_SERVICE_ROLE_KEY",
+  "PRE_M0C_TEST_DB_IDENTITY_FILE"
 ];
 
 function normalizeExplicitTestEnvironment() {
@@ -24,32 +26,7 @@ function normalizeExplicitTestEnvironment() {
     throw new Error(`Missing mandatory isolated integration environment: ${missing.join(", ")}`);
   }
 
-  const dbUrl = String(process.env.PRE_M0C_TEST_DATABASE_URL).trim();
-  const supabaseUrl = String(process.env.PRE_M0C_TEST_SUPABASE_URL).trim().replace(/\/$/, "");
-  const forbidden = ["yyiavtiwtekkocqpephr", "aqozjkfwzmyfunqvcyjv"];
-  if (forbidden.some((projectRef) => dbUrl.includes(projectRef) || supabaseUrl.includes(projectRef))) {
-    throw new Error("Protected Main/Legacy Supabase targets are forbidden for destructive synthetic integration tests.");
-  }
-
-  let parsed;
-  try {
-    parsed = new URL(supabaseUrl);
-  } catch {
-    throw new Error("PRE_M0C_TEST_SUPABASE_URL is invalid.");
-  }
-
-  const localHosts = new Set(["127.0.0.1", "localhost", "::1"]);
-  if (!localHosts.has(parsed.hostname)) {
-    throw new Error("PRE_M0C_TEST_SUPABASE_URL must point to an isolated local test stack.");
-  }
-  if (!/(127\.0\.0\.1|localhost|\[::1\])/.test(dbUrl)) {
-    throw new Error("PRE_M0C_TEST_DATABASE_URL must point to the same isolated local test stack.");
-  }
-
-  const fingerprint = crypto
-    .createHash("sha256")
-    .update(`${supabaseUrl}\n${dbUrl}`)
-    .digest("hex");
+  const { dbUrl, supabaseUrl } = validateExplicitLoopbackTargetUrls();
 
   process.env.DATABASE_URL = dbUrl;
   process.env.LOCAL_TEST_DB_URL = dbUrl;
@@ -59,9 +36,8 @@ function normalizeExplicitTestEnvironment() {
   process.env.NEXT_PUBLIC_SUPABASE_URL = supabaseUrl;
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = process.env.PRE_M0C_TEST_SUPABASE_ANON_KEY;
   process.env.REQUIRE_INTEGRATION_TESTS = "true";
-  process.env.PRE_M0C_TEST_ENVIRONMENT_FINGERPRINT = fingerprint;
 
-  return { dbUrl, supabaseUrl, fingerprint };
+  return { dbUrl, supabaseUrl };
 }
 
 const TEST_TARGET = normalizeExplicitTestEnvironment();
@@ -73,7 +49,6 @@ const MANDATORY_ENV_VARS = [
   "SUPABASE_URL",
   "SUPABASE_SERVICE_ROLE_KEY",
   "SUPABASE_ANON_KEY",
-  "PRE_M0C_TEST_ENVIRONMENT_FINGERPRINT",
   "V5_PLAYBACK_PRIVATE_JWK",
   "V5_MEDIA_PUBLIC_URL"
 ];
@@ -167,8 +142,22 @@ function checkEnvironment() {
   console.log("  ✓ Main and Legacy project refs rejected");
 }
 
+async function verifyPinnedDatabaseIdentity() {
+  console.log("\n[2/9] Verifying independently pinned isolated database identity...");
+  const identity = await verifyPreM0cTestTargetIdentity({ requireGuardAbsent: true });
+
+  process.env.PRE_M0C_TEST_VERIFIED_SYSTEM_IDENTIFIER = identity.systemIdentifier;
+  process.env.PRE_M0C_TEST_ENVIRONMENT_FINGERPRINT = identity.environmentFingerprint;
+  process.env.PRE_M0C_TEST_TARGET_VERIFIED = "true";
+
+  console.log(`  ✓ PostgreSQL system_identifier matched pinned isolated identity: ${identity.systemIdentifier}`);
+  console.log(`  ✓ Pinned database name matched: ${identity.databaseName}`);
+  console.log("  ✓ No synthetic test-target guard exists before identity verification");
+  return identity;
+}
+
 async function verifyDatabaseConnectivity() {
-  console.log("\n[2/8] Verifying Direct PostgreSQL Database Connectivity...");
+  console.log("\n[3/9] Verifying Direct PostgreSQL Database Connectivity...");
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
   try {
     await client.connect();
@@ -182,7 +171,7 @@ async function verifyDatabaseConnectivity() {
 }
 
 async function verifySentinelRoundTrip() {
-  console.log("\n[3/8] Verifying Sentinel Round-Trip Between PostgreSQL and PostgREST...");
+  console.log("\n[4/9] Verifying Sentinel Round-Trip Between PostgreSQL and PostgREST...");
   const nonce = Date.now().toString().slice(-6);
   const sentinelSlug = `sentinel-probe-${nonce}`;
   const sentinelName = `Sentinel Probe ${nonce}`;
@@ -269,7 +258,10 @@ function runSubProcess(label, command, args, timeoutMs = 90000) {
         SUPABASE_SERVICE_ROLE_KEY: process.env.PRE_M0C_TEST_SUPABASE_SERVICE_ROLE_KEY,
         NEXT_PUBLIC_SUPABASE_URL: process.env.PRE_M0C_TEST_SUPABASE_URL.replace(/\/$/, ""),
         NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.PRE_M0C_TEST_SUPABASE_ANON_KEY,
-        PRE_M0C_TEST_ENVIRONMENT_FINGERPRINT: TEST_TARGET.fingerprint,
+        PRE_M0C_TEST_DB_IDENTITY_FILE: process.env.PRE_M0C_TEST_DB_IDENTITY_FILE,
+        PRE_M0C_TEST_VERIFIED_SYSTEM_IDENTIFIER: process.env.PRE_M0C_TEST_VERIFIED_SYSTEM_IDENTIFIER,
+        PRE_M0C_TEST_ENVIRONMENT_FINGERPRINT: process.env.PRE_M0C_TEST_ENVIRONMENT_FINGERPRINT,
+        PRE_M0C_TEST_TARGET_VERIFIED: process.env.PRE_M0C_TEST_TARGET_VERIFIED,
         REQUIRE_INTEGRATION_TESTS: "true"
       }
     });
@@ -446,6 +438,7 @@ async function main() {
   try {
     checkEnvironment();
     await ensureLocalGateway();
+    await verifyPinnedDatabaseIdentity();
     await verifyDatabaseConnectivity();
     await verifySentinelRoundTrip();
 
@@ -498,7 +491,7 @@ async function main() {
     console.log("  - Synthetic Cleanup Safety: PASS (deprovision_synthetic_agency_atomic via fixture registry)");
     console.log("  - Synthetic Agency Rehearsal: PASS (Full request lifecycle verified)");
     console.log("  - Second Tenant Isolation: PASS (2-way playback, orders, homework strictly isolated)");
-    console.log("  - Pre-M0C Acceptance: PASS (10/10 mandatory categories verified)");
+    console.log("  - Pre-M0C Acceptance: PASS (11/11 mandatory categories verified)");
     console.log("  - B7 PostgREST Write Denials: PASS (INSERT/UPDATE/DELETE denied for anon and authenticated)");
     console.log("================================================================================");
     console.log("CONSOLIDATED_TEST_QUALITY = PASS");
