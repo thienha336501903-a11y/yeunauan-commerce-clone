@@ -31,12 +31,13 @@ export function assertTrustedSyntheticTestTarget(_options = {}, client = default
   const environmentFingerprint = String(process.env.PRE_M0C_TEST_ENVIRONMENT_FINGERPRINT || "").trim();
   const verifiedSystemIdentifier = String(process.env.PRE_M0C_TEST_VERIFIED_SYSTEM_IDENTIFIER || "").trim();
   const targetVerified = process.env.PRE_M0C_TEST_TARGET_VERIFIED === "true";
+  const sameStackVerified = process.env.PRE_M0C_TEST_SAME_STACK_VERIFIED === "true";
   const identityFileRaw = String(process.env.PRE_M0C_TEST_DB_IDENTITY_FILE || "").trim();
 
   const clientUrl = String(client?.supabaseUrl || process.env.SUPABASE_URL || "").trim().replace(/\/$/, "");
   const dbUrl = String(process.env.DATABASE_URL || process.env.LOCAL_TEST_DB_URL || "").trim();
 
-  if (!expectedUrl || !expectedDbUrl || !environmentFingerprint || !verifiedSystemIdentifier || !identityFileRaw || !targetVerified) {
+  if (!expectedUrl || !expectedDbUrl || !environmentFingerprint || !verifiedSystemIdentifier || !identityFileRaw || !targetVerified || !sameStackVerified) {
     throw new Error(
       "SECURITY VIOLATION: Synthetic operations require an independently verified PRE_M0C test-target identity context."
     );
