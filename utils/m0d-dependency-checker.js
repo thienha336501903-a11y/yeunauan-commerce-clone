@@ -49,7 +49,7 @@ export const REQUIRED_SURFACES = [
     surface: "agency admin",
     description: "Role-gated management, agency order approval, refund state machine",
     entrypoints: [
-      { repo: "lms", file: "api/lms/admin.js" }
+      { repo: "lms", file: "api/lms/agency-admin.js" }
     ],
     agencyModules: [
       "utils/agency-auth.js",
