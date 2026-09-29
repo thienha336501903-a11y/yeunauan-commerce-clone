@@ -25,12 +25,16 @@ export const REQUIRED_SURFACES = [
     entrypoints: [
       { repo: "lms", file: "api/lms/portal.js" },
       { repo: "commerce", file: "api/config.js" },
-      { repo: "commerce", file: "api/courses.js" }
+      { repo: "commerce", file: "api/courses.js" },
+      { repo: "commerce", file: "api/hero.js" },
+      { repo: "commerce", file: "api/health.js" }
     ],
     agencyModules: [
       "utils/agency-routing.js",
       "utils/agency-commerce.js",
-      "utils/ui-variant-engine.js"
+      "utils/ui-variant-engine.js",
+      "index.html",
+      "agency-storefront.html"
     ]
   },
   {
@@ -73,7 +77,9 @@ export const REQUIRED_SURFACES = [
     surface: "learning/player",
     description: "Canonical courses & lessons hierarchy, learning UI cinema/card variants",
     entrypoints: [
-      { repo: "lms", file: "api/lms/portal.js" }
+      { repo: "lms", file: "api/lms/portal.js" },
+      { repo: "lms", file: "api/learning.js" },
+      { repo: "lms", file: "api/legacy-post-redirect.js" }
     ],
     agencyModules: [
       "utils/agency-lms-bridge.js",
@@ -128,7 +134,9 @@ export const REQUIRED_SURFACES = [
   {
     surface: "background/sync jobs",
     description: "Agency runtime modules remain independent from Legacy sync/outbox/session helpers before M0E retirement",
-    entrypoints: [],
+    entrypoints: [
+      { repo: "lms", file: "api/sync.js" }
+    ],
     agencyModules: [
       "utils/agency-commerce.js",
       "utils/agency-lms-bridge.js",
@@ -202,17 +210,18 @@ export function auditFileContent(filePath, content) {
  */
 export function traceTransitiveLocalImports(filePath, rootDir, visited = new Set()) {
   const fullPath = path.resolve(rootDir, filePath);
-  if (visited.has(fullPath) || !fs.existsSync(fullPath)) {
+  if (visited.has(fullPath)) {
     return visited;
   }
   visited.add(fullPath);
+  if (!fs.existsSync(fullPath)) return visited;
 
   try {
     const content = fs.readFileSync(fullPath, "utf8");
-    const importRegex = /(?:import\s+.*?from\s+["'](\.[^"']+)["']|import\(["'](\.[^"']+)["']\)|from\s+["'](\.[^"']+)["'])/g;
+    const importRegex = /(?:import\s+.*?from\s+["'](\.[^"']+)["']|import\(["'](\.[^"']+)["']\)|from\s+["'](\.[^"']+)["']|import\s+["'](\.[^"']+)["'])/g;
     let match;
     while ((match = importRegex.exec(content)) !== null) {
-      const relPath = match[1] || match[2] || match[3];
+      const relPath = match[1] || match[2] || match[3] || match[4];
       if (relPath) {
         const dir = path.dirname(fullPath);
         let resolved = path.resolve(dir, relPath);
@@ -220,7 +229,7 @@ export function traceTransitiveLocalImports(filePath, rootDir, visited = new Set
           if (fs.existsSync(resolved + ".js")) resolved = resolved + ".js";
           else if (fs.existsSync(path.join(resolved, "index.js"))) resolved = path.join(resolved, "index.js");
         }
-        if (fs.existsSync(resolved) && !visited.has(resolved)) {
+        if (!visited.has(resolved)) {
           traceTransitiveLocalImports(path.relative(rootDir, resolved), rootDir, visited);
         }
       }
@@ -454,6 +463,16 @@ export function generateLegacyDependencyMatrix(rootDir = process.cwd()) {
           if (auditedFiles.includes(tracedName)) continue;
           auditedFiles.push(tracedName);
 
+          if (!fs.existsSync(tFile)) {
+            violations.push({
+              repo: repoType,
+              file: relTFile,
+              pattern: "missing_import",
+              description: `Required Agency import '${relTFile}' cannot be resolved.`
+            });
+            continue;
+          }
+
           const tContent = fs.readFileSync(tFile, "utf8");
           const tViolations = auditFileContent(relTFile, tContent)
             .map((v) => ({ ...v, repo: repoType }));
@@ -632,12 +651,12 @@ export function checkM0dCutoverReadiness(rootDir = process.cwd()) {
 
   const directLegacyRoutesBlocked =
     fileHas(lmsDir, "api/sync.js", [
-      "isAgencyRequest",
+      "resolveRequestRoute",
       "agency_legacy_sync_blocked"
     ]) &&
     fileHas(lmsDir, "api/legacy-post-redirect.js", [
-      "isAgencyRequest",
-      "agency_legacy_post_blocked"
+      "resolveRequestRoute",
+      "agency_legacy_post_redirect_prohibited"
     ]);
 
   const gates = {

@@ -19,6 +19,7 @@ import {
   checkM0dCutoverReadiness,
   auditFileContent,
   auditEntrypointRouting,
+  traceTransitiveLocalImports,
   REQUIRED_SURFACES
 } from "../utils/m0d-dependency-checker.js";
 
@@ -110,6 +111,28 @@ test("M0D-DEPENDENCY-CHECKER: Real Entrypoint & Surface Dependency Matrix", asyn
     ];
     for (const req of required) {
       assert.ok(surfaceNames.includes(req), `Missing required surface: ${req}`);
+    }
+  });
+
+  await t.test("M0D.5a: storefront image and learning redirects are audited", () => {
+    assert.ok(REQUIRED_SURFACES.find(row => row.surface === "storefront")
+      .entrypoints.some(item => item.file === "api/hero.js"));
+    assert.ok(REQUIRED_SURFACES.find(row => row.surface === "learning/player")
+      .entrypoints.some(item => item.file === "api/learning.js"));
+  });
+
+  await t.test("M0D.5b: side-effect and unresolved Agency imports remain visible", () => {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "m0d-import-"));
+    try {
+      fs.writeFileSync(path.join(temp, "entry.js"), 'import "./legacy.js";\nimport "./missing.js";');
+      fs.writeFileSync(path.join(temp, "legacy.js"), 'export const x = db.from("student_enrollments");');
+      const traced = traceTransitiveLocalImports("entry.js", temp);
+      assert.ok(traced.has(path.join(temp, "legacy.js")));
+      assert.ok(traced.has(path.join(temp, "missing.js")));
+      assert.equal(auditFileContent("legacy.js", fs.readFileSync(path.join(temp, "legacy.js"), "utf8"))[0].pattern,
+        "unscoped_student_enrollments");
+    } finally {
+      fs.rmSync(temp, { recursive: true, force: true });
     }
   });
 
