@@ -49,7 +49,7 @@ export const REQUIRED_SURFACES = [
     surface: "agency admin",
     description: "Role-gated management, agency order approval, refund state machine",
     entrypoints: [
-      { repo: "lms", file: "api/lms/agency-admin.js" }
+      { repo: "lms", file: "api/lms/admin.js" }
     ],
     agencyModules: [
       "utils/agency-auth.js",
@@ -109,6 +109,7 @@ export const REQUIRED_SURFACES = [
     ],
     agencyModules: [
       "utils/agency-lms-bridge.js",
+      "utils/agency-progress.js",
       "utils/agency-auth.js"
     ]
   },
@@ -556,19 +557,22 @@ export function checkM0dCutoverReadiness(rootDir = process.cwd()) {
     fileHas(lmsDir, "utils/v5-playback-lease.js", ["issueV5PlaybackLease"]);
 
   const progressEvidence =
-    fileHas(lmsDir, "utils/agency-lms-bridge.js", [
-      "handleAgencyLessonProgress",
+    fileHas(lmsDir, "utils/agency-progress.js", [
       "agency_lesson_progress",
       "canonical_lesson_id",
-      "membership_id"
+      "membership.id",
+      "tenant.agencyId",
+      "listAgencyLessonProgress",
+      "upsertAgencyLessonProgress"
     ]) &&
     fileHas(lmsDir, "api/lms/portal.js", [
       'endpoint === "agency-progress"',
-      "handleAgencyLessonProgress"
+      "listAgencyLessonProgress",
+      "upsertAgencyLessonProgress"
     ]) &&
     fileHas(lmsDir, "v5/app.js", [
       "agencyMode",
-      "syncAgencySeenProgress",
+      "syncAgencyProgress",
       "endpoint=agency-progress"
     ]);
 
