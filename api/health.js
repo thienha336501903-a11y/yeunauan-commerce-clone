@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { resolveTenant } from "../utils/tenant-resolver.js";
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -6,6 +7,28 @@ export default async function handler(req, res) {
 
   if (req.method === "OPTIONS") {
     return res.status(200).end();
+  }
+
+  // Tenant ingress boundary check
+  if (req.query?.tenantCheck === "1") {
+    const tenantRes = await resolveTenant(req, { surface: "storefront" });
+    if (!tenantRes.ok) {
+      return res.status(tenantRes.status || 400).json({
+        success: false,
+        code: tenantRes.code,
+        error: tenantRes.error
+      });
+    }
+    return res.status(200).json({
+      success: true,
+      status: "ok",
+      surface: "storefront",
+      tenant: {
+        agencyId: tenantRes.tenant.agencyId,
+        slug: tenantRes.tenant.slug,
+        name: tenantRes.tenant.name
+      }
+    });
   }
 
   let dbStatus = "ok";
@@ -30,3 +53,4 @@ export default async function handler(req, res) {
     timestamp: new Date().toISOString()
   });
 }
+

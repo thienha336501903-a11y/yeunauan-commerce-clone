@@ -7,6 +7,8 @@ import { cloneConfig } from '../utils/clone-config.js';
 import { getV5Readiness } from '../utils/v5-readiness.js';
 import { isSalePaused } from '../utils/sale-state.js';
 
+import { resolveRequestRoute } from '../utils/agency-routing.js';
+
 const MAX_BILL_BYTES = 5 * 1024 * 1024;
 const ALLOWED_BILL_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const DEFAULT_COURSE_SLUG = 'banhmi4k';
@@ -31,6 +33,18 @@ async function cleanupUnpersistedBill(publicId) {
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  // Phase 5B: Host dispatch before running legacy handler
+  const routeDecision = await resolveRequestRoute(req);
+  if (routeDecision.route === "DENY") {
+    return res.status(routeDecision.status || 403).json({ error: routeDecision.error, code: routeDecision.code });
+  }
+  if (routeDecision.route === "AGENCY") {
+    return res.status(403).json({
+      error: "Tạo đơn hàng Legacy không được phép trên tên miền Agency. Hãy sử dụng luồng checkout của Agency.",
+      code: "agency_legacy_order_prohibited"
+    });
+  }
   try {
     const runtime = cloneConfig();
     const { gmail, telegramNick, billName, billType, billData, course } = req.body || {};

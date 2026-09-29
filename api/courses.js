@@ -5,6 +5,7 @@ import { normalizeDeliveryMode, requireDeliveryMode } from '../utils/delivery-po
 import { handleV4Workflow } from '../utils/v4-workflow.js';
 import { getV5Readiness } from '../utils/v5-readiness.js';
 import { enforceSameOriginAdminRequest } from '../utils/admin-cors.js';
+import { resolveRequestRoute } from '../utils/agency-routing.js';
 
 const normalizeExpectedStartDate = value => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim()) ? String(value).trim() : null;
 const validDateInput = value => String(value || '').trim() === '' || /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
@@ -192,6 +193,17 @@ async function validateV4ReadySource(courseSlug) {
 }
 
 export default async function handler(req, res) {
+  // Phase 5B: Host dispatch before running legacy handler
+  const routeDecision = await resolveRequestRoute(req);
+  if (routeDecision.route === "DENY") {
+    return res.status(routeDecision.status || 403).json({ error: routeDecision.error, code: routeDecision.code });
+  }
+  if (routeDecision.route === "AGENCY") {
+    return res.status(403).json({
+      error: "Quản lý khóa học Legacy không được phép trên tên miền Agency.",
+      code: "agency_legacy_courses_prohibited"
+    });
+  }
   if (!enforceSameOriginAdminRequest(req, res, ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])) return;
   const adminPassword = req.headers['x-admin-password'];
   if (!adminPassword || adminPassword !== process.env.ADMIN_PASSWORD) return res.status(401).json({ error: 'Unauthorized: Mật khẩu Admin không chính xác hoặc trống.' });
