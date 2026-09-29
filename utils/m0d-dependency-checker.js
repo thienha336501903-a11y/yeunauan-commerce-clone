@@ -607,7 +607,10 @@ export function checkM0dCutoverReadiness(rootDir = process.cwd()) {
   const agencyCommerceEvidence =
     fileHas(commerceDir, "api/config.js", [
       "getAgencyCommerceConfig",
-      'routeDecision.route === "AGENCY"'
+      'routeDecision.route === "AGENCY"',
+      "bridgeGoogleAccessTokenToSupabaseSession",
+      "requireAgencyMembership",
+      "agencySession"
     ]) &&
     fileHas(commerceDir, "api/register.js", [
       "checkoutOffering",
@@ -617,12 +620,8 @@ export function checkM0dCutoverReadiness(rootDir = process.cwd()) {
       "getAgencyOrder",
       'routeDecision.route === "AGENCY"'
     ]) &&
-    fileHas(commerceDir, "api/agency-session.js", [
-      "bridgeGoogleAccessTokenToSupabaseSession",
-      "requireAgencyMembership"
-    ]) &&
     fileHas(commerceDir, "agency-storefront.html", [
-      "/api/agency-session",
+      "/api/config?agencySession=1",
       "/api/register",
       "/api/orders?id="
     ]);
