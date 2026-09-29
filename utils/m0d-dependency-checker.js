@@ -604,6 +604,39 @@ export function checkM0dCutoverReadiness(rootDir = process.cwd()) {
   const progressDeviceEvidence = surfacePass("progress/device") && progressEvidence && deviceEvidence;
   const authBoundaryEvidence = surfacePass("auth/session") && authSessionEvidence;
 
+  const agencyCommerceEvidence =
+    fileHas(commerceDir, "api/config.js", [
+      "getAgencyCommerceConfig",
+      'routeDecision.route === "AGENCY"'
+    ]) &&
+    fileHas(commerceDir, "api/register.js", [
+      "checkoutOffering",
+      'routeDecision.route === "AGENCY"'
+    ]) &&
+    fileHas(commerceDir, "api/orders.js", [
+      "getAgencyOrder",
+      'routeDecision.route === "AGENCY"'
+    ]) &&
+    fileHas(commerceDir, "api/agency-session.js", [
+      "bridgeGoogleAccessTokenToSupabaseSession",
+      "requireAgencyMembership"
+    ]) &&
+    fileHas(commerceDir, "agency-storefront.html", [
+      "/api/agency-session",
+      "/api/register",
+      "/api/orders?id="
+    ]);
+
+  const directLegacyRoutesBlocked =
+    fileHas(lmsDir, "api/sync.js", [
+      "isAgencyRequest",
+      "agency_legacy_sync_blocked"
+    ]) &&
+    fileHas(lmsDir, "api/legacy-post-redirect.js", [
+      "isAgencyRequest",
+      "agency_legacy_post_blocked"
+    ]);
+
   const gates = {
     AGENCY_HOST_ROUTES_NEVER_FALL_TO_LEGACY: routingClean && matrixResult.ok,
     AUTHENTICATED_AGENCY_USER_NEVER_USES_HMAC: matrixResult.ok,
@@ -614,6 +647,8 @@ export function checkM0dCutoverReadiness(rootDir = process.cwd()) {
     DEVICE_USES_AGENCY_SCOPED_MODEL: progressDeviceEvidence,
     AUTH_SESSION_USES_AGENCY_IDENTITY: authBoundaryEvidence,
     BACKGROUND_SYNC_NOT_REQUIRED_BY_AGENCY_RUNTIME: backgroundSyncEvidence,
+    AGENCY_COMMERCE_MAIN_ONLY_FLOW: agencyCommerceEvidence,
+    DIRECT_LEGACY_ROUTES_BLOCKED: directLegacyRoutesBlocked,
     HOMEWORK_USES_AGENCY_SCOPED_MODEL: homeworkEvidence,
     NO_AGENCY_REQUESTS_REQUIRE_LEGACY_DB: matrixResult.ok
   };
