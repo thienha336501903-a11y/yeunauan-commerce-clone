@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Agency Checkout</title>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <style>
+    :root{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111827;background:#f3f4f6}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;background:linear-gradient(180deg,#f9fafb,#eef2f7)}
+    .wrap{width:min(760px,100%);margin:0 auto;padding:24px 16px 48px}.card{background:#fff;border:1px solid #e5e7eb;border-radius:22px;padding:20px;box-shadow:0 12px 34px rgba(17,24,39,.07);margin-bottom:16px}
+    h1,h2,p{margin-top:0}.eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;font-weight:800;color:#6b7280}.muted{color:#6b7280;line-height:1.55}.brand{display:flex;align-items:center;gap:12px}.brand img{width:44px;height:44px;border-radius:12px;object-fit:cover;border:1px solid #e5e7eb}
+    .offer{border:1px solid #e5e7eb;border-radius:16px;padding:14px;margin-top:10px;display:flex;gap:12px;align-items:flex-start;cursor:pointer}.offer:has(input:checked){border-color:#111827;box-shadow:0 0 0 2px #11182714}
+    .offer input{margin-top:4px}.grow{flex:1}.price{font-weight:900}.old{text-decoration:line-through;color:#9ca3af;font-size:13px;margin-left:6px}
+    button{width:100%;border:0;border-radius:14px;padding:14px 16px;background:#111827;color:#fff;font-weight:800;font-size:15px;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}.secondary{background:#fff;color:#111827;border:1px solid #d1d5db}
+    .status{padding:12px 14px;border-radius:14px;background:#f9fafb;border:1px solid #e5e7eb;font-size:13px;line-height:1.5}.error{background:#fef2f2;border-color:#fecaca;color:#991b1b}.ok{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
+    .payment{display:grid;gap:10px}.row{display:flex;justify-content:space-between;gap:16px;padding:10px 0;border-bottom:1px solid #f1f5f9}.row:last-child{border-bottom:0}.label{color:#6b7280}.value{text-align:right;font-weight:800;word-break:break-word}
+    .qr{display:block;width:min(320px,100%);margin:16px auto 0;border-radius:18px;border:1px solid #e5e7eb;background:white}.hidden{display:none!important}
+    code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}.actions{display:grid;gap:10px;margin-top:14px}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="card">
+      <div class="eyebrow">System B · Agency Checkout</div>
+      <div class="brand">
+        <img id="logo" class="hidden" alt="">
+        <div>
+          <h1 id="brandName" style="margin-bottom:4px">Đang tải…</h1>
+          <p id="agencyName" class="muted" style="margin-bottom:0"></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Chọn khóa học</h2>
+      <p class="muted">Giá và tài khoản nhận tiền sẽ được server xác nhận lại khi tạo đơn. Trình duyệt không quyết định các giá trị này.</p>
+      <div id="offerings"><div class="status">Đang tải offering…</div></div>
+    </section>
+
+    <section class="card">
+      <h2>Xác thực & tạo đơn</h2>
+      <p class="muted">Đăng nhập bằng Gmail đã có membership tại Agency này.</p>
+      <div id="status" class="status">Đang chuẩn bị đăng nhập Google…</div>
+      <div class="actions">
+        <button id="checkoutBtn" disabled>Đăng nhập Google & tạo đơn</button>
+      </div>
+    </section>
+
+    <section id="paymentCard" class="card hidden">
+      <div class="eyebrow">Authoritative Order Snapshot</div>
+      <h2>Thông tin chuyển khoản</h2>
+      <div class="payment">
+        <div class="row"><span class="label">Mã đơn</span><span id="orderCode" class="value"></span></div>
+        <div class="row"><span class="label">Số tiền</span><span id="amount" class="value"></span></div>
+        <div class="row"><span class="label">Ngân hàng</span><span id="bankCode" class="value"></span></div>
+        <div class="row"><span class="label">Số tài khoản</span><span id="accountNumber" class="value"></span></div>
+        <div class="row"><span class="label">Chủ tài khoản</span><span id="accountHolder" class="value"></span></div>
+        <div class="row"><span class="label">Nội dung</span><span id="transferContent" class="value"></span></div>
+        <div class="row"><span class="label">Trạng thái</span><span id="orderStatus" class="value"></span></div>
+      </div>
+      <img id="qr" class="qr hidden" alt="Mã QR chuyển khoản">
+      <div class="actions">
+        <button id="refreshOrderBtn" class="secondary" type="button">Kiểm tra lại trạng thái đơn</button>
+      </div>
+      <p class="muted" style="margin:12px 0 0">Order ID: <code id="orderId"></code></p>
+    </section>
+  </main>
+
+<script>
+(() => {
+  const state = { config: null, tokenClient: null, selectedOfferingId: "", orderId: "" };
+  const $ = id => document.getElementById(id);
+  const money = value => new Intl.NumberFormat("vi-VN").format(Number(value || 0)) + " ₫";
+
+  function setStatus(message, kind = "") {
+    const el = $("status");
+    el.className = "status" + (kind ? " " + kind : "");
+    el.textContent = message;
+  }
+
+  function renderConfig(config) {
+    state.config = config;
+    $("brandName").textContent = config.agency?.brand_name || config.agency?.name || "Agency";
+    $("agencyName").textContent = config.agency?.name || "";
+    if (config.agency?.logo_url) {
+      $("logo").src = config.agency.logo_url;
+      $("logo").classList.remove("hidden");
+    }
+
+    const offerings = Array.isArray(config.offerings) ? config.offerings : [];
+    if (!offerings.length) {
+      $("offerings").innerHTML = '<div class="status">Agency chưa có offering đang mở.</div>';
+      return;
+    }
+
+    $("offerings").innerHTML = "";
+    for (const offering of offerings) {
+      const label = document.createElement("label");
+      label.className = "offer";
+      const finalPrice = offering.sale_price_vnd ?? offering.price_vnd;
+      label.innerHTML =
+        '<input type="radio" name="offering" value="' + String(offering.id).replace(/"/g, "&quot;") + '">' +
+        '<div class="grow"><strong></strong><div class="muted" style="font-size:13px;margin-top:4px"></div></div>' +
+        '<div class="price"></div>';
+      label.querySelector("strong").textContent = offering.display_title || offering.slug;
+      label.querySelector(".muted").textContent = offering.display_description || offering.slug || "";
+      const price = label.querySelector(".price");
+      price.textContent = money(finalPrice);
+      if (offering.sale_price_vnd != null && Number(offering.sale_price_vnd) !== Number(offering.price_vnd)) {
+        const old = document.createElement("span");
+        old.className = "old";
+        old.textContent = money(offering.price_vnd);
+        price.appendChild(old);
+      }
+      label.querySelector("input").addEventListener("change", event => {
+        state.selectedOfferingId = event.target.value;
+      });
+      $("offerings").appendChild(label);
+    }
+  }
+
+  async function loadGoogle() {
+    if (!state.config?.googleClientId) throw new Error("Google OAuth client chưa được cấu hình.");
+    for (let i = 0; i < 80 && !window.google?.accounts?.oauth2; i++) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    if (!window.google?.accounts?.oauth2) throw new Error("Google Identity chưa tải được.");
+
+    state.tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: state.config.googleClientId,
+      scope: "openid email profile",
+      prompt: "select_account",
+      callback: async response => {
+        if (!response?.access_token) {
+          setStatus("Không nhận được Google access token.", "error");
+          return;
+        }
+        await createOrder(response.access_token);
+      },
+      error_callback: () => setStatus("Google chưa hoàn tất đăng nhập.", "error")
+    });
+
+    $("checkoutBtn").disabled = false;
+    setStatus("Sẵn sàng. Chọn offering rồi đăng nhập Google.", "ok");
+  }
+
+  async function createOrder(accessToken) {
+    if (!state.selectedOfferingId) {
+      setStatus("Hãy chọn một offering trước.", "error");
+      return;
+    }
+    $("checkoutBtn").disabled = true;
+    setStatus("Đang xác thực và tạo đơn trên Main Supabase…");
+
+    try {
+      const idempotencyOrderCode = "WEB-" + crypto.randomUUID();
+      const response = await fetch("/api/register", {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accessToken,
+          offeringId: state.selectedOfferingId,
+          idempotencyOrderCode
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success || !data.order) {
+        throw new Error(data.error || data.code || "Không tạo được đơn.");
+      }
+      renderOrder(data.order);
+      setStatus("Đã tạo đơn Agency trên Main Supabase.", "ok");
+    } catch (error) {
+      setStatus(error.message || "Không tạo được đơn.", "error");
+    } finally {
+      $("checkoutBtn").disabled = false;
+    }
+  }
+
+  function renderOrder(order) {
+    state.orderId = order.orderId || state.orderId;
+    $("orderId").textContent = state.orderId || "";
+    $("orderCode").textContent = order.orderCode || "";
+    $("amount").textContent = money(order.amountVnd);
+    $("bankCode").textContent = order.bankCode || "";
+    $("accountNumber").textContent = order.accountNumber || "";
+    $("accountHolder").textContent = order.accountHolder || "";
+    $("transferContent").textContent = order.transferContent || "";
+    $("orderStatus").textContent = order.status || "";
+    if (order.vietQrUrl) {
+      $("qr").src = order.vietQrUrl;
+      $("qr").classList.remove("hidden");
+    }
+    $("paymentCard").classList.remove("hidden");
+  }
+
+  async function refreshOrder() {
+    if (!state.orderId) return;
+    try {
+      const response = await fetch("/api/orders?id=" + encodeURIComponent(state.orderId), {
+        credentials: "same-origin",
+        cache: "no-store"
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success || !data.order) {
+        throw new Error(data.error || data.code || "Không đọc được đơn.");
+      }
+      $("orderStatus").textContent = data.order.status || "";
+      setStatus("Đã đọc lại đơn bằng membership hiện tại.", "ok");
+    } catch (error) {
+      setStatus(error.message || "Không đọc được đơn.", "error");
+    }
+  }
+
+  async function init() {
+    try {
+      const response = await fetch("/api/config", { credentials: "same-origin", cache: "no-store" });
+      const config = await response.json();
+      if (!response.ok || !config.success || !config.agency) {
+        throw new Error("Trang này chỉ dùng trên Agency Commerce host.");
+      }
+      renderConfig(config);
+      await loadGoogle();
+    } catch (error) {
+      setStatus(error.message || "Không tải được Agency checkout.", "error");
+      $("checkoutBtn").disabled = true;
+    }
+  }
+
+  $("checkoutBtn").addEventListener("click", () => {
+    if (!state.selectedOfferingId) {
+      setStatus("Hãy chọn một offering trước.", "error");
+      return;
+    }
+    if (!state.tokenClient) {
+      setStatus("Google Identity chưa sẵn sàng.", "error");
+      return;
+    }
+    state.tokenClient.requestAccessToken({ prompt: "select_account" });
+  });
+  $("refreshOrderBtn").addEventListener("click", refreshOrder);
+  init();
+})();
+</script>
+</body>
+</html>
