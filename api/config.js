@@ -70,7 +70,8 @@ export default async function handler(req, res) {
       success: true,
       agency: configResult.agency,
       banks: configResult.banks,
-      offerings: configResult.offerings
+      offerings: configResult.offerings,
+      googleClientId: process.env.GOOGLE_CLIENT_ID || ""
     });
   }
   try {
