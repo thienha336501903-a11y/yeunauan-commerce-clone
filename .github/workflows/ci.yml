@@ -37,7 +37,7 @@ jobs:
           node --check utils/v5-sync-helpers.js
           node --check utils/v5-order-approval.js
           node --check utils/v5-readiness.js
-      - name: Regression tests
-        run: npm test
+      - name: Hermetic regression tests
+        run: npm run test:ci
       - name: Clone configuration isolation
         run: npm run check:clone
