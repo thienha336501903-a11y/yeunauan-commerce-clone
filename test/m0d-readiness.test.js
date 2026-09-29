@@ -38,6 +38,8 @@ test("M0D-READINESS: Legacy Dependency Matrix & Operational Cutover Gates", () =
   assert.equal(readiness.gates.DEVICE_USES_AGENCY_SCOPED_MODEL, true);
   assert.equal(readiness.gates.AUTH_SESSION_USES_AGENCY_IDENTITY, true);
   assert.equal(readiness.gates.BACKGROUND_SYNC_NOT_REQUIRED_BY_AGENCY_RUNTIME, true);
+  assert.equal(readiness.gates.AGENCY_COMMERCE_MAIN_ONLY_FLOW, true);
+  assert.equal(readiness.gates.DIRECT_LEGACY_ROUTES_BLOCKED, true);
   assert.equal(readiness.gates.HOMEWORK_USES_AGENCY_SCOPED_MODEL, true);
   assert.equal(readiness.gates.NO_AGENCY_REQUESTS_REQUIRE_LEGACY_DB, true);
 });
