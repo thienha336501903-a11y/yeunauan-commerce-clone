@@ -19,6 +19,7 @@ import {
   checkM0dCutoverReadiness,
   auditFileContent,
   auditEntrypointRouting,
+  traceTransitiveLocalImports,
   REQUIRED_SURFACES
 } from "../utils/m0d-dependency-checker.js";
 
@@ -26,21 +27,14 @@ test("M0D-DEPENDENCY-CHECKER: Real Entrypoint & Surface Dependency Matrix", asyn
   // ---------------------------------------------------------------------------
   // 1. Audit Live Codebase
   // ---------------------------------------------------------------------------
-  await t.test("M0D.1: Live codebase matrix verifies all surfaces pass without legacy leaks", () => {
+  await t.test("M0D.1: Live matrix reports its actual cutover status", () => {
     const res = checkM0dCutoverReadiness();
-    assert.equal(res.ok, true);
-    assert.equal(res.M0D_DEPENDENCY_MATRIX, "PASS");
-    assert.equal(res.M0D_CUTOVER_CHECKER, "PASS");
+    assert.equal(res.ok, Object.values(res.gates).every(Boolean));
+    assert.equal(res.M0D_DEPENDENCY_MATRIX, res.matrix.every(row => row.status === "PASS") ? "PASS" : "FAIL");
+    assert.equal(res.M0D_CUTOVER_CHECKER, res.ok ? "PASS" : "FAIL");
     assert.equal(res.M0D_EXECUTION, "NOT_STARTED");
 
-    assert.equal(res.gates.AGENCY_HOST_ROUTES_NEVER_FALL_TO_LEGACY, true);
-    assert.equal(res.gates.AUTHENTICATED_AGENCY_USER_NEVER_USES_HMAC, true);
-    assert.equal(res.gates.COMMERCE_USES_AGENCY_TABLES_EXCLUSIVELY, true);
-    assert.equal(res.gates.ENTITLEMENT_USES_NEW_GRANT_MODEL, true);
-    assert.equal(res.gates.PLAYBACK_USES_B1_1_AGENCY_AUTHORIZATION, true);
-    assert.equal(res.gates.PROGRESS_USES_AGENCY_SCOPED_PROGRESS, true);
-    assert.equal(res.gates.HOMEWORK_USES_AGENCY_SCOPED_MODEL, true);
-    assert.equal(res.gates.NO_AGENCY_REQUESTS_REQUIRE_LEGACY_DB, true);
+    assert.equal(res.summary.totalSurfaces, REQUIRED_SURFACES.length);
   });
 
   // ---------------------------------------------------------------------------
@@ -118,6 +112,23 @@ test("M0D-DEPENDENCY-CHECKER: Real Entrypoint & Surface Dependency Matrix", asyn
         assert.equal(row.status, "UNKNOWN");
         assert.equal(row.LEGACY_REQUIRED, "UNKNOWN");
       }
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  await t.test("M0D.7: Transitive import reaches prohibited legacy dependency and missing import is visible", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "m0d-import-"));
+    try {
+      fs.writeFileSync(path.join(tempDir, "entry.js"), 'import "./middle.js";');
+      fs.writeFileSync(path.join(tempDir, "middle.js"), 'export { load } from "./legacy.js";');
+      fs.writeFileSync(path.join(tempDir, "legacy.js"), 'export const load = () => supabase.from("student_enrollments");');
+      const traced = traceTransitiveLocalImports("entry.js", tempDir);
+      assert.ok(traced.has(path.join(tempDir, "legacy.js")));
+      assert.ok([...traced].some(file => fs.existsSync(file) && auditFileContent(file, fs.readFileSync(file, "utf8")).length));
+      fs.writeFileSync(path.join(tempDir, "middle.js"), 'export { load } from "./missing.js";');
+      const missing = traceTransitiveLocalImports("entry.js", tempDir);
+      assert.ok(missing.has(path.join(tempDir, "missing.js")));
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }

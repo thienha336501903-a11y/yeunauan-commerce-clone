@@ -5,7 +5,7 @@
 // Invariants:
 //   - Read-only execution. Does not mutate database or disable legacy endpoints.
 //   - Outputs machine-readable JSON & human-readable markdown table.
-//   - Returns M0D_READINESS_TOOLING = PASS and M0D_EXECUTION = NOT_STARTED.
+//   - Fails when the seven-surface evidence or any operational gate is incomplete.
 
 import { checkM0dCutoverReadiness } from "../utils/m0d-dependency-checker.js";
 
@@ -14,12 +14,12 @@ function printMarkdownReport(result) {
   console.log(`Audited at: ${new Date().toISOString()}`);
   console.log("");
   console.log("## 1. LEGACY DEPENDENCY MATRIX");
-  console.log("| Path Name | Description | Legacy Required | Legacy Reference Found | Blocking Reference |");
-  console.log("|---|---|---|---|---|");
+  console.log("| Surface | Status | Description | Legacy Required | Legacy Reference Found | Violations |");
+  console.log("|---|---|---|---|---|---|");
 
   for (const row of result.matrix) {
-    const blocking = row.BLOCKING_REFERENCE ? JSON.stringify(row.BLOCKING_REFERENCE) : "NONE";
-    console.log(`| **${row.pathName}** | ${row.description} | \`${row.LEGACY_REQUIRED}\` | \`${row.LEGACY_REFERENCE_FOUND}\` | \`${blocking}\` |`);
+    const violations = row.violations ? JSON.stringify(row.violations) : "NONE";
+    console.log(`| **${row.surface}** | \`${row.status}\` | ${row.description} | \`${row.LEGACY_REQUIRED}\` | \`${row.LEGACY_REFERENCE_FOUND}\` | \`${violations}\` |`);
   }
 
   console.log("");
@@ -30,7 +30,8 @@ function printMarkdownReport(result) {
 
   console.log("");
   console.log("## 3. AUDIT RESULT");
-  console.log(`M0D_READINESS_TOOLING = ${result.M0D_READINESS_TOOLING}`);
+  console.log(`M0D_DEPENDENCY_MATRIX = ${result.M0D_DEPENDENCY_MATRIX}`);
+  console.log(`M0D_CUTOVER_CHECKER = ${result.M0D_CUTOVER_CHECKER}`);
   console.log(`M0D_EXECUTION = ${result.M0D_EXECUTION}`);
 }
 
@@ -43,7 +44,7 @@ function main() {
     printMarkdownReport(result);
   }
 
-  if (result.M0D_READINESS_TOOLING !== "PASS") {
+  if (!result.ok) {
     process.exit(1);
   }
 }

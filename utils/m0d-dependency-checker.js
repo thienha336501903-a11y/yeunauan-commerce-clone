@@ -163,17 +163,18 @@ export function auditFileContent(filePath, content) {
  */
 export function traceTransitiveLocalImports(filePath, rootDir, visited = new Set()) {
   const fullPath = path.resolve(rootDir, filePath);
-  if (visited.has(fullPath) || !fs.existsSync(fullPath)) {
+  if (visited.has(fullPath)) {
     return visited;
   }
   visited.add(fullPath);
+  if (!fs.existsSync(fullPath)) return visited;
 
   try {
     const content = fs.readFileSync(fullPath, "utf8");
-    const importRegex = /(?:import\s+.*?from\s+["'](\.[^"']+)["']|import\(["'](\.[^"']+)["']\)|from\s+["'](\.[^"']+)["'])/g;
+    const importRegex = /(?:import\s+.*?from\s+["'](\.[^"']+)["']|import\(["'](\.[^"']+)["']\)|from\s+["'](\.[^"']+)["']|import\s+["'](\.[^"']+)["'])/g;
     let match;
     while ((match = importRegex.exec(content)) !== null) {
-      const relPath = match[1] || match[2] || match[3];
+      const relPath = match[1] || match[2] || match[3] || match[4];
       if (relPath) {
         const dir = path.dirname(fullPath);
         let resolved = path.resolve(dir, relPath);
@@ -181,7 +182,7 @@ export function traceTransitiveLocalImports(filePath, rootDir, visited = new Set
           if (fs.existsSync(resolved + ".js")) resolved = resolved + ".js";
           else if (fs.existsSync(path.join(resolved, "index.js"))) resolved = path.join(resolved, "index.js");
         }
-        if (fs.existsSync(resolved) && !visited.has(resolved)) {
+        if (!visited.has(resolved)) {
           traceTransitiveLocalImports(path.relative(rootDir, resolved), rootDir, visited);
         }
       }
@@ -241,10 +242,11 @@ export function generateLegacyDependencyMatrix(rootDir = process.cwd()) {
   const currentRepoType = isLmsRepo ? "lms" : (isCommerceRepo ? "commerce" : "unknown");
 
   // Check if sibling repo exists for comprehensive cross-repo audit
-  const siblingDir = isLmsRepo
-    ? path.resolve(rootDir, "../yeunauan-commerce-clone")
-    : path.resolve(rootDir, "../yeunauan-lms-clone");
-  const hasSibling = fs.existsSync(siblingDir);
+  const siblingDir = process.env.M0D_SIBLING_ROOT || path.resolve(rootDir,
+    isLmsRepo ? "../yeunauan-commerce-clone" : "../yeunauan-lms-clone");
+  const siblingMarker = isLmsRepo ? "api/config.js" : "api/lms/portal.js";
+  const hasSibling = currentRepoType !== "unknown" &&
+    fs.existsSync(path.resolve(siblingDir, siblingMarker));
 
   for (const surf of REQUIRED_SURFACES) {
     let status = "UNKNOWN";
@@ -253,6 +255,7 @@ export function generateLegacyDependencyMatrix(rootDir = process.cwd()) {
     const auditedFiles = [];
     const violations = [];
     let entrypointGuarded = false;
+    let missingEvidence = !hasSibling;
 
     // 1. Audit Entrypoints
     for (const ep of surf.entrypoints) {
@@ -260,18 +263,13 @@ export function generateLegacyDependencyMatrix(rootDir = process.cwd()) {
       const targetDir = belongsToCurrent ? rootDir : (hasSibling ? siblingDir : null);
 
       if (!targetDir) {
+        missingEvidence = true;
         continue;
       }
 
       const fullPath = path.resolve(targetDir, ep.file);
       if (!fs.existsSync(fullPath)) {
-        if (belongsToCurrent) {
-          violations.push({
-            file: ep.file,
-            pattern: "missing_entrypoint",
-            description: `Required entrypoint '${ep.file}' is missing from repository.`
-          });
-        }
+        missingEvidence = true;
         continue;
       }
 
@@ -280,9 +278,8 @@ export function generateLegacyDependencyMatrix(rootDir = process.cwd()) {
 
       // Verify routing guard in entrypoint
       const routing = auditEntrypointRouting(ep.file, content);
-      if (routing.hasRoutingGuard && routing.hasAgencyBranch) {
-        entrypointGuarded = true;
-      }
+      if (!routing.hasRoutingGuard || !routing.hasAgencyBranch) missingEvidence = true;
+      else entrypointGuarded = true;
 
       // Audit Agency execution branch inside entrypoint
       const agencyBranchContent = extractAgencyBranchContent(content);
@@ -301,11 +298,13 @@ export function generateLegacyDependencyMatrix(rootDir = process.cwd()) {
       const targetDir = fs.existsSync(fullPath) ? rootDir : (hasSibling ? siblingDir : null);
 
       if (!targetDir) {
+        missingEvidence = true;
         continue;
       }
 
       const modPath = path.resolve(targetDir, mod);
       if (!fs.existsSync(modPath)) {
+        missingEvidence = true;
         continue;
       }
 
@@ -321,6 +320,10 @@ export function generateLegacyDependencyMatrix(rootDir = process.cwd()) {
       const traced = traceTransitiveLocalImports(mod, targetDir);
       for (const tFile of traced) {
         const relTFile = path.relative(targetDir, tFile);
+        if (!fs.existsSync(tFile)) {
+          missingEvidence = true;
+          continue;
+        }
         if (!auditedFiles.includes(relTFile)) {
           auditedFiles.push(relTFile);
           const tContent = fs.readFileSync(tFile, "utf8");
@@ -334,13 +337,55 @@ export function generateLegacyDependencyMatrix(rootDir = process.cwd()) {
     }
 
     // Determine Status
-    if (auditedFiles.length === 0) {
+    // A module's existence is not proof that an Agency request can reach it.
+    // These checks use the concrete entrypoint and browser caller at this HEAD.
+    const lmsDir = isLmsRepo ? rootDir : siblingDir;
+    const commerceDir = isCommerceRepo ? rootDir : siblingDir;
+    const read = (dir, file) => fs.existsSync(path.resolve(dir, file))
+      ? fs.readFileSync(path.resolve(dir, file), "utf8") : "";
+    const portal = hasSibling ? read(lmsDir, "api/lms/portal.js") : "";
+    const admin = hasSibling ? read(lmsDir, "api/lms/admin.js") : "";
+    const storefront = hasSibling ? read(commerceDir, "index.html") : "";
+    const register = hasSibling ? read(commerceDir, "api/register.js") : "";
+    const apiFiles = hasSibling ? [lmsDir, commerceDir].flatMap(dir => {
+      const apiDir = path.resolve(dir, "api");
+      const scan = current => fs.existsSync(current) ? fs.readdirSync(current, { withFileTypes: true }).flatMap(entry =>
+        entry.isDirectory() ? scan(path.join(current, entry.name)) :
+          entry.name.endsWith(".js") ? [fs.readFileSync(path.join(current, entry.name), "utf8")] : []) : [];
+      return scan(apiDir);
+    }) : [];
+    const reachable = symbol => apiFiles.some(code => code.includes(symbol));
+    const dependency = (pattern, description, file) => {
+      violations.push({ file, pattern, description });
+      legacyReferenceFound = "YES";
+    };
+    if (hasSibling && surf.surface === "storefront" &&
+        storefront.includes("fetch('/api/register'") && register.includes("agency_legacy_order_prohibited")) {
+      dependency("agency_storefront_legacy_registration", "Agency storefront still submits to the rejected Legacy registration endpoint.", "index.html");
+    }
+    if (hasSibling && surf.surface === "checkout" && !reachable("checkoutOffering(")) {
+      missingEvidence = true;
+    }
+    if (hasSibling && surf.surface === "agency admin" &&
+        (!admin.includes("resolveRequestRoute") || !admin.includes("requireAgencyRole"))) {
+      missingEvidence = true;
+    }
+    if (hasSibling && surf.surface === "homework" &&
+        !reachable("submitAgencyHomework(") && !reachable("agencyHomeworkOperations.submitHomework(")) {
+      missingEvidence = true;
+    }
+    if (hasSibling && surf.surface === "learner" && !portal.includes("handleAgencyLearnerDashboard(req, res)")) missingEvidence = true;
+    if (hasSibling && surf.surface === "learning/player" &&
+        (!portal.includes("handleAgencyV5Feed(req, res)") || !portal.includes("handleAgencyCourseIntro(req, res)"))) missingEvidence = true;
+    if (hasSibling && surf.surface === "V5 playback" && !portal.includes("handleAgencyV5Play(req, res)")) missingEvidence = true;
+
+    if (auditedFiles.length === 0 || missingEvidence) {
       status = "UNKNOWN";
       legacyRequired = "UNKNOWN";
     } else if (violations.length > 0) {
       status = "FAIL";
       legacyRequired = "YES";
-    } else if (entrypointGuarded || surf.agencyModules.some(m => auditedFiles.includes(m))) {
+    } else if (entrypointGuarded && surf.agencyModules.every(m => auditedFiles.includes(m))) {
       status = "PASS";
       legacyRequired = "NO";
     } else {
@@ -385,91 +430,83 @@ export function checkM0dCutoverReadiness(rootDir = process.cwd()) {
   const matrixResult = generateLegacyDependencyMatrix(rootDir);
 
   const isLmsRepo = fs.existsSync(path.resolve(rootDir, "api/lms/portal.js"));
-  const siblingDir = isLmsRepo
-    ? path.resolve(rootDir, "../yeunauan-commerce-clone")
-    : path.resolve(rootDir, "../yeunauan-lms-clone");
+  const siblingDir = process.env.M0D_SIBLING_ROOT || path.resolve(rootDir,
+    isLmsRepo ? "../yeunauan-commerce-clone" : "../yeunauan-lms-clone");
+  const lmsDir = isLmsRepo ? rootDir : siblingDir;
+  const commerceDir = isLmsRepo ? siblingDir : rootDir;
+  const read = (dir, file) => fs.existsSync(path.resolve(dir, file))
+    ? fs.readFileSync(path.resolve(dir, file), "utf8") : "";
+  const bothRepos = Boolean(read(lmsDir, "api/lms/portal.js") && read(commerceDir, "api/config.js"));
 
   // 1. Verify routing table integrity
-  let routingClean = false;
-  for (const dir of [rootDir, siblingDir]) {
-    const routingPath = path.resolve(dir, "utils/agency-routing.js");
-    if (fs.existsSync(routingPath)) {
-      const routingCode = fs.readFileSync(routingPath, "utf8");
-      if (routingCode.includes("resolveRequestRoute") &&
-          routingCode.includes('route: "AGENCY"') &&
-          routingCode.includes("overlapping_host_configuration") &&
-          routingCode.includes("resolver_error")) {
-        routingClean = true;
-        break;
-      }
-    }
-  }
+  const routingClean = bothRepos && [lmsDir, commerceDir].every(dir => {
+    const routingCode = read(dir, "utils/agency-routing.js");
+    return routingCode.includes('route: "AGENCY"') &&
+      routingCode.includes("overlapping_host_configuration") &&
+      routingCode.includes("resolver_error");
+  });
+  const lmsPortal = read(lmsDir, "api/lms/portal.js");
+  const lmsAdmin = read(lmsDir, "api/lms/admin.js");
+  const learning = read(lmsDir, "api/learning.js");
+  const commerceConfig = read(commerceDir, "api/config.js");
+  const storefront = read(commerceDir, "index.html");
+  const register = read(commerceDir, "api/register.js");
+  const guardedEntrypoints = [lmsPortal, lmsAdmin, learning, commerceConfig,
+    read(commerceDir, "api/courses.js"), register, read(commerceDir, "api/orders.js")]
+    .every(code => code.includes("resolveRequestRoute") && code.includes('routeDecision.route === "DENY"'));
+  // Other live Legacy endpoints are still callable on an Agency hostname.
+  // Do not claim a host-wide boundary from only the seven audited entrypoints.
+  const legacyEndpoints = [
+    [lmsDir, "api/sync.js"], [lmsDir, "api/v5-sync.js"],
+    [lmsDir, "api/legacy-post-redirect.js"],
+    [commerceDir, "api/approve-all.js"], [commerceDir, "api/check-auth.js"],
+    [commerceDir, "api/upload.js"], [commerceDir, "api/telegram-connect.js"],
+    [commerceDir, "api/telegram-setup.js"], [commerceDir, "api/telegram-webhook.js"]
+  ];
+  const legacyEndpointsGuarded = legacyEndpoints.every(([dir, file]) => {
+    const code = read(dir, file);
+    return !code || (code.includes("resolveRequestRoute") && code.includes('routeDecision.route === "AGENCY"'));
+  });
 
   // 2. Evidence-based verification for entitlement grant model
-  let entitlementGrantModelEvidence = false;
-  for (const dir of [rootDir, siblingDir]) {
-    const p1 = path.resolve(dir, "utils/agency-lms-bridge.js");
-    const p2 = path.resolve(dir, "utils/agency-commerce.js");
-    if (fs.existsSync(p1) && fs.existsSync(p2)) {
-      const c1 = fs.readFileSync(p1, "utf8");
-      const c2 = fs.readFileSync(p2, "utf8");
-      if (c1.includes("student_entitlements") && c2.includes("approve_agency_order")) {
-        entitlementGrantModelEvidence = true;
-        break;
-      }
-    }
-  }
+  const entitlementGrantModelEvidence = bothRepos &&
+    read(lmsDir, "utils/agency-lms-bridge.js").includes('.from("student_entitlements")') &&
+    read(commerceDir, "utils/agency-commerce.js").includes('rpc("approve_agency_order"');
 
   // 3. Evidence-based verification for B1.1 agency playback authorization
-  let playbackEvidence = false;
-  for (const dir of [rootDir, siblingDir]) {
-    const pb = path.resolve(dir, "utils/v5-playback-lease.js");
-    const br = path.resolve(dir, "utils/agency-lms-bridge.js");
-    if (fs.existsSync(pb) && fs.existsSync(br)) {
-      const cPb = fs.readFileSync(pb, "utf8");
-      const cBr = fs.readFileSync(br, "utf8");
-      if (cBr.includes("v5_authorize_agency_playback") && (cPb.includes("issueV5PlaybackLease") || cPb.includes("isV5PlaybackConfigured"))) {
-        playbackEvidence = true;
-        break;
-      }
-    }
-  }
+  const playbackBridge = read(lmsDir, "utils/agency-lms-bridge.js");
+  const playbackEvidence = bothRepos && lmsPortal.includes("handleAgencyV5Play(req, res)") &&
+    playbackBridge.includes('rpc("v5_authorize_agency_playback"') &&
+    playbackBridge.includes("issueV5PlaybackLease({") &&
+    read(lmsDir, "utils/v5-playback-lease.js").includes("export function issueV5PlaybackLease");
 
   // 4. Evidence-based verification for agency scoped progress
-  let progressEvidence = false;
-  for (const dir of [rootDir, siblingDir]) {
-    const prov = path.resolve(dir, "utils/agency-provisioner.js");
-    if (fs.existsSync(prov)) {
-      const cProv = fs.readFileSync(prov, "utf8");
-      if (cProv.includes("agency_lesson_progress")) {
-        progressEvidence = true;
-        break;
-      }
-    }
-  }
+  const progressEvidence = bothRepos &&
+    [lmsPortal, learning, read(lmsDir, "utils/agency-lms-bridge.js")]
+      .some(code => code.includes('.from("agency_lesson_progress")'));
 
   // 5. Evidence-based verification for agency homework model
-  let homeworkEvidence = false;
-  for (const dir of [rootDir, siblingDir]) {
-    const hw = path.resolve(dir, "utils/agency-homework.js");
-    if (fs.existsSync(hw)) {
-      const cHw = fs.readFileSync(hw, "utf8");
-      if (cHw.includes("agency_homework_submissions") && cHw.includes("submit_agency_homework") && cHw.includes("grade_agency_homework")) {
-        homeworkEvidence = true;
-        break;
-      }
-    }
-  }
+  const homeworkModule = read(lmsDir, "utils/agency-homework.js");
+  const homeworkEvidence = bothRepos &&
+    homeworkModule.includes('rpc("submit_agency_homework"') &&
+    homeworkModule.includes('rpc("grade_agency_homework"') &&
+    [lmsPortal, lmsAdmin].some(code => code.includes("submitAgencyHomework(") || code.includes("agencyHomeworkOperations.submitHomework("));
 
   const gates = {
-    AGENCY_HOST_ROUTES_NEVER_FALL_TO_LEGACY: routingClean,
-    AUTHENTICATED_AGENCY_USER_NEVER_USES_HMAC: matrixResult.ok,
-    COMMERCE_USES_AGENCY_TABLES_EXCLUSIVELY: matrixResult.ok,
+    AGENCY_HOST_ROUTES_NEVER_FALL_TO_LEGACY: routingClean && guardedEntrypoints && legacyEndpointsGuarded,
+    AUTHENTICATED_AGENCY_USER_NEVER_USES_HMAC: bothRepos && guardedEntrypoints && legacyEndpointsGuarded &&
+      read(lmsDir, "utils/agency-auth.js").includes("client.auth.getUser(token)") &&
+      read(commerceDir, "utils/agency-auth.js").includes("client.auth.getUser(token)"),
+    COMMERCE_USES_AGENCY_TABLES_EXCLUSIVELY: bothRepos &&
+      commerceConfig.includes("getAgencyCommerceConfig(req)") &&
+      !storefront.includes("fetch('/api/register'") &&
+      read(commerceDir, "utils/agency-commerce.js").includes('.from("agency_orders")'),
     ENTITLEMENT_USES_NEW_GRANT_MODEL: entitlementGrantModelEvidence,
     PLAYBACK_USES_B1_1_AGENCY_AUTHORIZATION: playbackEvidence,
     PROGRESS_USES_AGENCY_SCOPED_PROGRESS: progressEvidence,
     HOMEWORK_USES_AGENCY_SCOPED_MODEL: homeworkEvidence,
-    NO_AGENCY_REQUESTS_REQUIRE_LEGACY_DB: matrixResult.ok
+    NO_AGENCY_REQUESTS_REQUIRE_LEGACY_DB: matrixResult.ok && guardedEntrypoints && legacyEndpointsGuarded &&
+      !storefront.includes("fetch('/api/register'")
   };
 
   const allGatesPass = Object.values(gates).every(v => v === true);
