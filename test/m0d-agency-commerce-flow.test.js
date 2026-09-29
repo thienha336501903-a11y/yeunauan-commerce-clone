@@ -184,16 +184,18 @@ test("M0D Agency order lookup is scoped by current agency and membership", async
 test("M0D Agency Commerce static dispatch and session surface are present", () => {
   const index = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
   const storefront = fs.readFileSync(new URL("../agency-storefront.html", import.meta.url), "utf8");
-  const session = fs.readFileSync(new URL("../api/agency-session.js", import.meta.url), "utf8");
+  const config = fs.readFileSync(new URL("../api/config.js", import.meta.url), "utf8");
   const register = fs.readFileSync(new URL("../api/register.js", import.meta.url), "utf8");
   const orders = fs.readFileSync(new URL("../api/orders.js", import.meta.url), "utf8");
 
   assert.match(index, /config\?\.agency\?\.id|config\?\.agency\.id|config\?\.agency/);
   assert.match(index, /agency-storefront\.html/);
-  assert.match(storefront, /\/api\/agency-session/);
+  assert.match(storefront, /\/api\/config\?agencySession=1/);
   assert.match(storefront, /\/api\/register/);
   assert.match(storefront, /\/api\/orders\?id=/);
-  assert.match(session, /bridgeGoogleAccessTokenToSupabaseSession/);
+  assert.match(config, /bridgeGoogleAccessTokenToSupabaseSession/);
+  assert.match(config, /requireAgencyMembership/);
+  assert.match(config, /agencySession/);
   assert.match(register, /checkoutOffering/);
   assert.match(orders, /getAgencyOrder/);
   assert.doesNotMatch(
