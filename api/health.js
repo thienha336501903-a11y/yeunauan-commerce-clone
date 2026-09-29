@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { resolveTenant } from "../utils/tenant-resolver.js";
+import { resolveRequestRoute } from "../utils/agency-routing.js";
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -31,6 +32,18 @@ export default async function handler(req, res) {
     });
   }
 
+  const routeDecision = await resolveRequestRoute(req, req.__options || {});
+  if (routeDecision.route === "DENY") {
+    return res.status(routeDecision.status || 403).json({
+      success: false, code: routeDecision.code, error: routeDecision.error
+    });
+  }
+  if (routeDecision.route === "AGENCY") {
+    // Request-bound tenant resolution already exercised Main Supabase. A Legacy
+    // courses-table health probe must never run on an Agency hostname.
+    return res.status(200).json({ status: "ok", app: "ok", database: "ok" });
+  }
+
   let dbStatus = "ok";
   try {
     const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -53,4 +66,3 @@ export default async function handler(req, res) {
     timestamp: new Date().toISOString()
   });
 }
-
