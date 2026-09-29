@@ -42,6 +42,8 @@ test("M0D-DEPENDENCY-CHECKER: Real Entrypoint & Surface Dependency Matrix", asyn
     assert.equal(res.gates.DEVICE_USES_AGENCY_SCOPED_MODEL, true);
     assert.equal(res.gates.AUTH_SESSION_USES_AGENCY_IDENTITY, true);
     assert.equal(res.gates.BACKGROUND_SYNC_NOT_REQUIRED_BY_AGENCY_RUNTIME, true);
+    assert.equal(res.gates.AGENCY_COMMERCE_MAIN_ONLY_FLOW, true);
+    assert.equal(res.gates.DIRECT_LEGACY_ROUTES_BLOCKED, true);
     assert.equal(res.gates.HOMEWORK_USES_AGENCY_SCOPED_MODEL, true);
     assert.equal(res.gates.NO_AGENCY_REQUESTS_REQUIRE_LEGACY_DB, true);
   });
