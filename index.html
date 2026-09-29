@@ -8,7 +8,14 @@
 window.cloneRuntimeConfigPromise=fetch('/api/config?runtime=1',{cache:'no-store'}).then(response=>{
   if(!response.ok)throw new Error('clone_runtime_config_unavailable');
   return response.json();
-}).then(config=>(window.CLONE_RUNTIME_CONFIG=config));
+}).then(config=>{
+  window.CLONE_RUNTIME_CONFIG=config;
+  if(config?.agency){
+    const target='/agency-checkout.html'+window.location.search;
+    if(window.location.pathname!=='/agency-checkout.html') window.location.replace(target);
+  }
+  return config;
+});
 (async()=>{
   try{
     const config=await window.cloneRuntimeConfigPromise;
