@@ -518,8 +518,21 @@ export function checkM0dCutoverReadiness(rootDir = process.cwd()) {
     fileHas(lmsDir, "utils/v5-playback-lease.js", ["issueV5PlaybackLease"]);
 
   const progressEvidence =
-    fileHas(lmsDir, "utils/agency-provisioner.js", ["agency_lesson_progress"]) ||
-    fileHas(commerceDir, "utils/agency-provisioner.js", ["agency_lesson_progress"]);
+    fileHas(lmsDir, "utils/agency-lms-bridge.js", [
+      "handleAgencyLessonProgress",
+      "agency_lesson_progress",
+      "canonical_lesson_id",
+      "membership_id"
+    ]) &&
+    fileHas(lmsDir, "api/lms/portal.js", [
+      'endpoint === "agency-progress"',
+      "handleAgencyLessonProgress"
+    ]) &&
+    fileHas(lmsDir, "v5/app.js", [
+      "agencyMode",
+      "syncAgencySeenProgress",
+      "endpoint=agency-progress"
+    ]);
 
   const homeworkEvidence =
     fileHas(lmsDir, "utils/agency-homework.js", [
