@@ -8,7 +8,7 @@
 //       LMS: api/lms/portal.js, api/lms/admin.js, agency bridge, homework, playback
 //   - Never silently ignores missing files: reports UNKNOWN or FAIL.
 //   - Recursively traverses direct and transitive local imports in Agency execution paths.
-//   - Audits all 7 required surfaces: storefront, checkout, agency admin, learner, learning/player, homework, V5 playback.
+//   - Audits all 10 required M0D surfaces, including progress/device, auth/session, and background/sync dependency boundaries.
 //   - Cutover gates are computed from verifiable file audits (NO hardcoded true).
 //   - M0D_EXECUTION invariant: strictly NOT_STARTED.
 
@@ -100,6 +100,39 @@ export const REQUIRED_SURFACES = [
       "utils/agency-lms-bridge.js",
       "utils/v5-playback-lease.js"
     ]
+  },
+  {
+    surface: "progress/device",
+    description: "Agency-scoped lesson progress and device visibility without legacy lesson_progress/session fallback",
+    entrypoints: [
+      { repo: "lms", file: "api/lms/portal.js" }
+    ],
+    agencyModules: [
+      "utils/agency-lms-bridge.js",
+      "utils/agency-auth.js"
+    ]
+  },
+  {
+    surface: "auth/session",
+    description: "Google-to-Supabase Agency session bridge, trusted tenant resolution, and membership authorization",
+    entrypoints: [
+      { repo: "lms", file: "api/lms/portal.js" }
+    ],
+    agencyModules: [
+      "utils/agency-google-auth-bridge.js",
+      "utils/agency-auth.js",
+      "utils/tenant-resolver.js"
+    ]
+  },
+  {
+    surface: "background/sync jobs",
+    description: "Agency runtime modules remain independent from Legacy sync/outbox/session helpers before M0E retirement",
+    entrypoints: [],
+    agencyModules: [
+      "utils/agency-commerce.js",
+      "utils/agency-lms-bridge.js",
+      "utils/agency-auth.js"
+    ]
   }
 ];
 
@@ -136,6 +169,11 @@ export const PROHIBITED_LEGACY_PATTERNS = [
     name: "legacy_unscoped_lesson_progress",
     regex: /\.from\(\s*["']lesson_progress["']\s*\)/g,
     description: "Legacy lesson_progress table (agency uses agency_lesson_progress)"
+  },
+  {
+    name: "legacy_sync_runtime_import",
+    regex: /(?:from\s+|import\s*\(\s*)["'][^"']*(?:sync-helpers|v4-sync-helpers|legacy-entry-token|lms-session-guard)\.js["']/g,
+    description: "Agency runtime must not import Legacy sync/session compatibility helpers"
   }
 ];
 
@@ -534,12 +572,37 @@ export function checkM0dCutoverReadiness(rootDir = process.cwd()) {
       "endpoint=agency-progress"
     ]);
 
+  const deviceEvidence =
+    fileHas(lmsDir, "utils/agency-lms-bridge.js", [
+      "student_devices",
+      "tenant.agencyId",
+      "membership.id"
+    ]);
+
+  const authSessionEvidence =
+    fileHas(lmsDir, "utils/agency-google-auth-bridge.js", [
+      "GOOGLE_CLIENT_ID",
+      "googleTokenClientMatches",
+      "agency_memberships"
+    ]) &&
+    fileHas(lmsDir, "utils/agency-auth.js", [
+      "auth.getUser",
+      "agency_memberships"
+    ]);
+
   const homeworkEvidence =
     fileHas(lmsDir, "utils/agency-homework.js", [
       "agency_homework_submissions",
       "submit_agency_homework",
       "grade_agency_homework"
     ]);
+
+  const surfacePass = (name) =>
+    matrixResult.matrix.some((row) => row.surface === name && row.status === "PASS");
+
+  const backgroundSyncEvidence = surfacePass("background/sync jobs");
+  const progressDeviceEvidence = surfacePass("progress/device") && progressEvidence && deviceEvidence;
+  const authBoundaryEvidence = surfacePass("auth/session") && authSessionEvidence;
 
   const gates = {
     AGENCY_HOST_ROUTES_NEVER_FALL_TO_LEGACY: routingClean && matrixResult.ok,
@@ -548,6 +611,9 @@ export function checkM0dCutoverReadiness(rootDir = process.cwd()) {
     ENTITLEMENT_USES_NEW_GRANT_MODEL: entitlementGrantModelEvidence,
     PLAYBACK_USES_B1_1_AGENCY_AUTHORIZATION: playbackEvidence,
     PROGRESS_USES_AGENCY_SCOPED_PROGRESS: progressEvidence,
+    DEVICE_USES_AGENCY_SCOPED_MODEL: progressDeviceEvidence,
+    AUTH_SESSION_USES_AGENCY_IDENTITY: authBoundaryEvidence,
+    BACKGROUND_SYNC_NOT_REQUIRED_BY_AGENCY_RUNTIME: backgroundSyncEvidence,
     HOMEWORK_USES_AGENCY_SCOPED_MODEL: homeworkEvidence,
     NO_AGENCY_REQUESTS_REQUIRE_LEGACY_DB: matrixResult.ok
   };
