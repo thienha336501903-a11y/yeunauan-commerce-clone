@@ -2,7 +2,7 @@
 // Automated test suite for System B Phase 17: M0D Dependency Checker & Cutover Matrix
 // Authoritative Plan: SYSTEM_B_MULTI_AGENCY_MASTER_IMPLEMENTATION_PLAN_V1_1.md
 // Invariants:
-//   - Audits all 7 required surfaces starting from real entrypoints.
+//   - Audits all 10 required M0D surfaces across both repositories.
 //   - Injected legacy import in entrypoint => FAIL.
 //   - Indirect imported legacy dependency => FAIL.
 //   - Missing entrypoint evidence => UNKNOWN/FAIL.
@@ -39,6 +39,9 @@ test("M0D-DEPENDENCY-CHECKER: Real Entrypoint & Surface Dependency Matrix", asyn
     assert.equal(res.gates.ENTITLEMENT_USES_NEW_GRANT_MODEL, true);
     assert.equal(res.gates.PLAYBACK_USES_B1_1_AGENCY_AUTHORIZATION, true);
     assert.equal(res.gates.PROGRESS_USES_AGENCY_SCOPED_PROGRESS, true);
+    assert.equal(res.gates.DEVICE_USES_AGENCY_SCOPED_MODEL, true);
+    assert.equal(res.gates.AUTH_SESSION_USES_AGENCY_IDENTITY, true);
+    assert.equal(res.gates.BACKGROUND_SYNC_NOT_REQUIRED_BY_AGENCY_RUNTIME, true);
     assert.equal(res.gates.HOMEWORK_USES_AGENCY_SCOPED_MODEL, true);
     assert.equal(res.gates.NO_AGENCY_REQUESTS_REQUIRE_LEGACY_DB, true);
   });
@@ -87,9 +90,9 @@ test("M0D-DEPENDENCY-CHECKER: Real Entrypoint & Surface Dependency Matrix", asyn
   });
 
   // ---------------------------------------------------------------------------
-  // 5. Surface Completeness: All 7 required surfaces audited
+  // 5. Surface Completeness: All 10 required M0D surfaces audited
   // ---------------------------------------------------------------------------
-  await t.test("M0D.5: All 7 required surfaces are present in definition", () => {
+  await t.test("M0D.5: All 10 required surfaces are present in definition", () => {
     const surfaceNames = REQUIRED_SURFACES.map(s => s.surface);
     const required = [
       "storefront",
@@ -98,7 +101,10 @@ test("M0D-DEPENDENCY-CHECKER: Real Entrypoint & Surface Dependency Matrix", asyn
       "learner",
       "learning/player",
       "homework",
-      "V5 playback"
+      "V5 playback",
+      "progress/device",
+      "auth/session",
+      "background/sync jobs"
     ];
     for (const req of required) {
       assert.ok(surfaceNames.includes(req), `Missing required surface: ${req}`);
