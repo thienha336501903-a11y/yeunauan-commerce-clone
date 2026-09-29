@@ -5,13 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Pinterest Food Studio — Đăng ký khóa học</title>
 <script>
-window.cloneRuntimeConfigPromise=fetch('/api/config?runtime=1',{cache:'no-store'}).then(response=>{
-  if(!response.ok)throw new Error('clone_runtime_config_unavailable');
-  return response.json();
-}).then(config=>(window.CLONE_RUNTIME_CONFIG=config));
+window.cloneRuntimeConfigPromise=fetch('/api/config?runtime=1',{cache:'no-store'}).then(async response=>{
+  const config=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(config.error||'clone_runtime_config_unavailable');
+  window.CLONE_RUNTIME_CONFIG=config;
+  if(config?.agency?.id){
+    location.replace('/agency-storefront.html');
+    return config;
+  }
+  return config;
+});
 (async()=>{
   try{
     const config=await window.cloneRuntimeConfigPromise;
+    if(config?.agency?.id)return;
     const commerceHost=new URL(config.commercePublicUrl).hostname.toLowerCase();
     const host=String(location.hostname||'').toLowerCase();
     const params=new URLSearchParams(location.search);
