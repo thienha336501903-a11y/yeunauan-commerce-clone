@@ -100,7 +100,7 @@ function renderOffers(){
 }
 
 async function session(){
-  const r=await fetch('/api/agency-session',{credentials:'same-origin',cache:'no-store'});
+  const r=await fetch('/api/config?agencySession=1',{credentials:'same-origin',cache:'no-store'});
   const d=await r.json().catch(()=>({}));
   if(r.ok&&d.success){
     $('authCard').classList.add('hidden');
@@ -130,7 +130,7 @@ async function prepareGoogle(){
     callback:async resp=>{
       if(!resp?.access_token){setNotice('Không nhận được Google token.','error');return}
       setNotice('Đang xác thực Google…');
-      const r=await fetch('/api/agency-session',{
+      const r=await fetch('/api/config?agencySession=1',{
         method:'POST',credentials:'same-origin',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({accessToken:resp.access_token})
@@ -192,7 +192,7 @@ async function refreshOrder(){
 
 $('googleLogin').addEventListener('click',()=>tokenClient?.requestAccessToken({prompt:'select_account'}));
 $('logout').addEventListener('click',async()=>{
-  await fetch('/api/agency-session',{method:'DELETE',credentials:'same-origin'});
+  await fetch('/api/config?agencySession=1',{method:'DELETE',credentials:'same-origin'});
   localStorage.removeItem('agency_last_order_id');
   currentOrderId='';
   $('payment').classList.add('hidden');
