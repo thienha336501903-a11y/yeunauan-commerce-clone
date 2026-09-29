@@ -66,11 +66,14 @@ export default async function handler(req, res) {
     if (!configResult.ok) {
       return res.status(configResult.status || 500).json({ error: configResult.error, code: configResult.code });
     }
+    const runtime = cloneConfig();
     return res.status(200).json({
       success: true,
       agency: configResult.agency,
       banks: configResult.banks,
-      offerings: configResult.offerings
+      offerings: configResult.offerings,
+      googleClientId: process.env.GOOGLE_CLIENT_ID || "",
+      lmsPublicUrl: runtime.lmsPublicUrl
     });
   }
   try {
