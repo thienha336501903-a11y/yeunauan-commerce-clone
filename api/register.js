@@ -8,6 +8,8 @@ import { getV5Readiness } from '../utils/v5-readiness.js';
 import { isSalePaused } from '../utils/sale-state.js';
 
 import { resolveRequestRoute } from '../utils/agency-routing.js';
+import { bridgeGoogleAccessTokenToSupabaseSession } from '../utils/agency-google-auth-bridge.js';
+import { checkoutOffering } from '../utils/agency-commerce.js';
 
 const MAX_BILL_BYTES = 5 * 1024 * 1024;
 const ALLOWED_BILL_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -34,15 +36,51 @@ async function cleanupUnpersistedBill(publicId) {
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  // Phase 5B: Host dispatch before running legacy handler
-  const routeDecision = await resolveRequestRoute(req);
+  // M0D: Host dispatch before running the historical bill-upload/order flow.
+  // Agency checkout is a completely separate Main-Supabase path.
+  const options = req.__options || {};
+  const routeDecision = await resolveRequestRoute(req, options);
   if (routeDecision.route === "DENY") {
     return res.status(routeDecision.status || 403).json({ error: routeDecision.error, code: routeDecision.code });
   }
   if (routeDecision.route === "AGENCY") {
-    return res.status(403).json({
-      error: "Tạo đơn hàng Legacy không được phép trên tên miền Agency. Hãy sử dụng luồng checkout của Agency.",
-      code: "agency_legacy_order_prohibited"
+    if (req.body?.accessToken) {
+      const bridge = await bridgeGoogleAccessTokenToSupabaseSession(
+        req,
+        res,
+        routeDecision.tenant,
+        options
+      );
+      if (!bridge.ok) {
+        return res.status(bridge.status || 401).json({
+          success: false,
+          code: bridge.code,
+          error: bridge.error
+        });
+      }
+    }
+
+    const offeringId = String(req.body?.offeringId || "").trim();
+    if (!offeringId) {
+      return res.status(400).json({
+        success: false,
+        code: "invalid_checkout_payload",
+        error: "offeringId is required for Agency checkout."
+      });
+    }
+
+    const result = await checkoutOffering(req, {
+      offeringId,
+      idempotencyOrderCode: String(req.body?.idempotencyOrderCode || "").trim() || undefined
+    }, options);
+
+    const status = typeof result.status === "number"
+      ? result.status
+      : (result.ok ? 200 : 400);
+
+    return res.status(status).json({
+      success: Boolean(result.ok),
+      ...result
     });
   }
   try {
