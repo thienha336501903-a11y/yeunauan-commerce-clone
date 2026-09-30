@@ -181,21 +181,11 @@ export default async function handler(req, res) {
       }
     }
 
-    // Only legacy LMS orders are mirrored into the legacy student Portal.
-    // V4/V5 use the System B course manager and their own enrollment paths.
-    if (deliveryMode === 'lms') {
-      const system1Url = process.env.SYSTEM1_URL;
-      const syncSecret = process.env.INTERNAL_SYNC_SECRET;
-      if (system1Url && syncSecret) {
-        try {
-          await fetch(system1Url.trim().replace(/\/$/, '') + '/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Sync-Secret': syncSecret }, body: JSON.stringify({ action: 'syncPendingOrder', email: cleanEmail, courseSlug, courseName: finalCourseName, thumbnail }) });
-        } catch (syncErr) { console.error('Error syncing pending order to Portal:', syncErr); }
-      }
-    }
+    // M0E: Legacy portal mirroring is retired. All non-Telegram course-manager
+    // links stay on the Main-backed LMS surface.
 
-    const managerPath = ['v4', 'v5'].includes(deliveryMode)
-      ? (deliveryMode === 'v5' ? runtime.lmsPublicUrl.replace(/\/$/, '') : '') + '/my-courses.html?registered=1&course=' + encodeURIComponent(courseSlug)
-      : runtime.legacyPortalPublicUrl + '/my-courses';
+    const managerPath = runtime.lmsPublicUrl.replace(/\/$/, '')
+      + '/my-courses.html?registered=1&course=' + encodeURIComponent(courseSlug);
     return res.status(200).json({ success: true, file: billLink, course: courseSlug, courseName: finalCourseName, orderId, deliveryMode, managerPath });
   } catch (error) {
     console.error('REGISTER_ERROR:', error);
