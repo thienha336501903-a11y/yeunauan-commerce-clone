@@ -60,36 +60,26 @@ test("M0E Inventory Consistency: Actual DB writers (public.order_items is KEEP)"
   );
 });
 
-test("M0E Inventory Consistency: Current route behavior (api/register and api/orders block agency)", () => {
+test("M0E Inventory Consistency: Current Commerce routes dispatch Agency to Main-only paths", () => {
   const inventoryPath = path.join(REPO_ROOT, "docs/SYSTEM_B_M0E_RETIREMENT_INVENTORY.md");
   const content = fs.readFileSync(inventoryPath, "utf8");
 
   const registerRow = content.split("\n").find(l => l.includes("`api/register.js`"));
   assert.ok(registerRow, "api/register.js must be listed in inventory");
-  assert.ok(
-    registerRow.toLowerCase().includes("block") || registerRow.includes("403") || registerRow.toLowerCase().includes("dispatches"),
-    "api/register.js description must reflect blocking/dispatching Agency"
-  );
+  assert.ok(registerRow.toLowerCase().includes("checkoutoffering") || registerRow.toLowerCase().includes("dispatch"), "register inventory must describe Agency dispatch");
 
   const ordersRow = content.split("\n").find(l => l.includes("`api/orders.js`"));
   assert.ok(ordersRow, "api/orders.js must be listed in inventory");
-  assert.ok(
-    ordersRow.toLowerCase().includes("block") || ordersRow.includes("403") || ordersRow.toLowerCase().includes("dispatches"),
-    "api/orders.js description must reflect blocking/dispatching Agency"
-  );
+  assert.ok(ordersRow.toLowerCase().includes("main") || ordersRow.toLowerCase().includes("agency"), "orders inventory must describe Main/Agency behavior");
 
-  // Verify in actual commerce source files
   const registerSrc = fs.readFileSync(path.join(COMMERCE_ROOT, "api/register.js"), "utf8");
-  assert.ok(
-    registerSrc.includes("agency_legacy_order_prohibited"),
-    "api/register.js must block Agency route with agency_legacy_order_prohibited"
-  );
+  assert.ok(registerSrc.includes("routeDecision.route === \"AGENCY\""), "api/register.js must explicitly dispatch Agency route");
+  assert.ok(registerSrc.includes("checkoutOffering"), "api/register.js Agency path must use checkoutOffering");
 
   const ordersSrc = fs.readFileSync(path.join(COMMERCE_ROOT, "api/orders.js"), "utf8");
-  assert.ok(
-    ordersSrc.includes("agency_legacy_order_prohibited"),
-    "api/orders.js must block Agency route with agency_legacy_order_prohibited"
-  );
+  assert.ok(ordersSrc.includes("routeDecision.route === \"AGENCY\""), "api/orders.js must explicitly dispatch Agency route");
+  assert.ok(ordersSrc.includes("getAgencyOrder"), "api/orders.js Agency read path must use getAgencyOrder");
+  assert.ok(ordersSrc.includes("agency_order_mutation_use_admin"), "api/orders.js Agency mutations must stay role-gated");
 });
 
 test("M0E Inventory Consistency: Actual file existence for all cataloged files", () => {
