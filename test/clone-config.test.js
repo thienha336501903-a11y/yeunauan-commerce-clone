@@ -9,24 +9,25 @@ test('Clone Factory defaults preserve System B Commerce behavior', () => {
   assert.equal(config.lmsPublicUrl, 'https://hoc.yeubep.shop');
   assert.equal(config.v4PublicUrl, 'https://v4.daubepnho.store');
   assert.equal(config.telegramClonerUrl, 'https://reader.yeubep.shop');
-  assert.equal(config.legacyPortalPublicUrl, 'https://yeunauan.live');
+  assert.equal('legacyPortalPublicUrl' in config, false);
 });
 
-test('Clone Factory accepts an isolated System C topology', () => {
+test('Clone Factory accepts an isolated System C topology without a Legacy portal origin', () => {
   const config = cloneConfig({
     SYSTEM_ID: 'system-c',
     COMMERCE_PUBLIC_URL: 'shop.example.com',
     LMS_PUBLIC_URL: 'learn.example.com',
     V4_PUBLIC_URL: 'player.example.com',
     TELEGRAM_CLONER_URL: 'reader.example.com',
-    LEGACY_PORTAL_PUBLIC_URL: 'legacy.example.com'
+    SYSTEM1_URL: 'legacy.example.com',
+    LEGACY_PORTAL_PUBLIC_URL: 'legacy-2.example.com'
   });
   assert.equal(config.systemId, 'system-c');
   assert.equal(config.commercePublicUrl, 'https://shop.example.com');
   assert.equal(config.lmsPublicUrl, 'https://learn.example.com');
   assert.equal(config.v4PublicUrl, 'https://player.example.com');
   assert.equal(config.telegramClonerUrl, 'https://reader.example.com');
-  assert.equal(config.legacyPortalPublicUrl, 'https://legacy.example.com');
+  assert.equal('legacyPortalPublicUrl' in config, false);
 });
 
 test('Clone Factory rejects non-HTTPS service origins', () => {
