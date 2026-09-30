@@ -215,7 +215,6 @@ export default async function handler(req, res) {
       commercePublicUrl: runtime.commercePublicUrl,
       v4PublicUrl: runtime.v4PublicUrl,
       telegramClonerUrl: runtime.telegramClonerUrl,
-      legacyPortalPublicUrl: runtime.legacyPortalPublicUrl,
       telegramReady: deliveryMode !== 'telegram' || Boolean(String(course.telegram_chat_id || '').trim())
     });
   } catch (error) {
