@@ -2,7 +2,7 @@
 // Automated test suite for System B Phase 17: M0D Dependency Checker & Cutover Matrix
 // Authoritative Plan: SYSTEM_B_MULTI_AGENCY_MASTER_IMPLEMENTATION_PLAN_V1_1.md
 // Invariants:
-//   - Audits all 7 required surfaces starting from real entrypoints.
+//   - Audits all 10 required M0D surfaces across both repositories.
 //   - Injected legacy import in entrypoint => FAIL.
 //   - Indirect imported legacy dependency => FAIL.
 //   - Missing entrypoint evidence => UNKNOWN/FAIL.
@@ -19,6 +19,7 @@ import {
   checkM0dCutoverReadiness,
   auditFileContent,
   auditEntrypointRouting,
+  traceTransitiveLocalImports,
   REQUIRED_SURFACES
 } from "../utils/m0d-dependency-checker.js";
 
@@ -39,6 +40,11 @@ test("M0D-DEPENDENCY-CHECKER: Real Entrypoint & Surface Dependency Matrix", asyn
     assert.equal(res.gates.ENTITLEMENT_USES_NEW_GRANT_MODEL, true);
     assert.equal(res.gates.PLAYBACK_USES_B1_1_AGENCY_AUTHORIZATION, true);
     assert.equal(res.gates.PROGRESS_USES_AGENCY_SCOPED_PROGRESS, true);
+    assert.equal(res.gates.DEVICE_USES_AGENCY_SCOPED_MODEL, true);
+    assert.equal(res.gates.AUTH_SESSION_USES_AGENCY_IDENTITY, true);
+    assert.equal(res.gates.BACKGROUND_SYNC_NOT_REQUIRED_BY_AGENCY_RUNTIME, true);
+    assert.equal(res.gates.AGENCY_COMMERCE_MAIN_ONLY_FLOW, true);
+    assert.equal(res.gates.DIRECT_LEGACY_ROUTES_BLOCKED, true);
     assert.equal(res.gates.HOMEWORK_USES_AGENCY_SCOPED_MODEL, true);
     assert.equal(res.gates.NO_AGENCY_REQUESTS_REQUIRE_LEGACY_DB, true);
   });
@@ -87,9 +93,9 @@ test("M0D-DEPENDENCY-CHECKER: Real Entrypoint & Surface Dependency Matrix", asyn
   });
 
   // ---------------------------------------------------------------------------
-  // 5. Surface Completeness: All 7 required surfaces audited
+  // 5. Surface Completeness: All 10 required M0D surfaces audited
   // ---------------------------------------------------------------------------
-  await t.test("M0D.5: All 7 required surfaces are present in definition", () => {
+  await t.test("M0D.5: All 10 required surfaces are present in definition", () => {
     const surfaceNames = REQUIRED_SURFACES.map(s => s.surface);
     const required = [
       "storefront",
@@ -98,10 +104,35 @@ test("M0D-DEPENDENCY-CHECKER: Real Entrypoint & Surface Dependency Matrix", asyn
       "learner",
       "learning/player",
       "homework",
-      "V5 playback"
+      "V5 playback",
+      "progress/device",
+      "auth/session",
+      "background/sync jobs"
     ];
     for (const req of required) {
       assert.ok(surfaceNames.includes(req), `Missing required surface: ${req}`);
+    }
+  });
+
+  await t.test("M0D.5a: storefront image and learning redirects are audited", () => {
+    assert.ok(REQUIRED_SURFACES.find(row => row.surface === "storefront")
+      .entrypoints.some(item => item.file === "api/hero.js"));
+    assert.ok(REQUIRED_SURFACES.find(row => row.surface === "learning/player")
+      .entrypoints.some(item => item.file === "api/learning.js"));
+  });
+
+  await t.test("M0D.5b: side-effect and unresolved Agency imports remain visible", () => {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "m0d-import-"));
+    try {
+      fs.writeFileSync(path.join(temp, "entry.js"), 'import "./legacy.js";\nimport "./missing.js";');
+      fs.writeFileSync(path.join(temp, "legacy.js"), 'export const x = db.from("student_enrollments");');
+      const traced = traceTransitiveLocalImports("entry.js", temp);
+      assert.ok(traced.has(path.join(temp, "legacy.js")));
+      assert.ok(traced.has(path.join(temp, "missing.js")));
+      assert.equal(auditFileContent("legacy.js", fs.readFileSync(path.join(temp, "legacy.js"), "utf8"))[0].pattern,
+        "unscoped_student_enrollments");
+    } finally {
+      fs.rmSync(temp, { recursive: true, force: true });
     }
   });
 

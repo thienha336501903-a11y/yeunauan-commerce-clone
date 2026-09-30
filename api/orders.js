@@ -6,6 +6,7 @@ import { approveV5Order, resyncV5Order, revokeV5Order } from '../utils/v5-order-
 import { enforceSameOriginAdminRequest } from '../utils/admin-cors.js';
 
 import { resolveRequestRoute } from '../utils/agency-routing.js';
+import { getAgencyOrder } from '../utils/agency-commerce.js';
 
 const VALID_ORDER_STATUSES = new Set(['Chờ duyệt', 'Đã duyệt', 'Từ chối']);
 const TEST_TITLE_PREFIX = '__clone_factory_test';
@@ -15,16 +16,33 @@ const TEST_ORPHAN_BILL_CONFIRMATION = 'DELETE_CLONE_FACTORY_TEST_ORPHAN_BILL';
 const isUuid = value => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
 
 export default async function handler(req, res) {
-  // Phase 5B: Host dispatch before running legacy handler
-  const routeDecision = await resolveRequestRoute(req);
+  // Agency learners may read only their own Main order. Staff approval/refund
+  // is intentionally isolated in /api/lms/agency-admin on the LMS surface.
+  const options = req.__options || {};
+  const routeDecision = await resolveRequestRoute(req, options);
   if (routeDecision.route === "DENY") {
     return res.status(routeDecision.status || 403).json({ error: routeDecision.error, code: routeDecision.code });
   }
   if (routeDecision.route === "AGENCY") {
-    return res.status(403).json({
-      error: "Quản lý đơn hàng Legacy không được phép trên tên miền Agency.",
-      code: "agency_legacy_order_prohibited"
-    });
+    if (req.method !== "GET") {
+      return res.status(405).json({
+        success: false,
+        code: "agency_order_mutation_use_admin",
+        error: "Agency order mutations use the role-gated Agency admin endpoint."
+      });
+    }
+
+    const orderId = String(req.query?.id || req.query?.orderId || "").trim();
+    const result = await getAgencyOrder(req, orderId, options);
+    if (!result.ok) {
+      return res.status(result.status || 400).json({
+        success: false,
+        code: result.code || "agency_order_read_failed",
+        error: result.error || "Unable to read Agency order."
+      });
+    }
+
+    return res.status(200).json({ success: true, order: result.order });
   }
 
   if (!enforceSameOriginAdminRequest(req, res, ['GET', 'PUT', 'DELETE', 'OPTIONS'])) return;

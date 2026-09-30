@@ -1,5 +1,6 @@
 import { supabase } from "../utils/supabase.js";
 import { isSalePaused } from "../utils/sale-state.js";
+import { resolveRequestRoute } from "../utils/agency-routing.js";
 
 const DEFAULT_PLACEHOLDER = "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1100" viewBox="0 0 900 1100"><defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff7ed"/><stop offset="1" stop-color="#fce7f3"/></linearGradient></defs><rect width="900" height="1100" fill="url(#bg)"/><circle cx="730" cy="150" r="150" fill="#f9a8d4" opacity=".28"/><circle cx="170" cy="930" r="180" fill="#fb923c" opacity=".18"/><rect x="220" y="365" width="460" height="300" rx="54" fill="#fff" opacity=".84"/><path d="M300 590l85-104 75 77 58-62 118 94" fill="none" stroke="#b65c4b" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" opacity=".78"/><circle cx="560" cy="444" r="36" fill="#b65c4b" opacity=".68"/><text x="450" y="760" text-anchor="middle" font-family="Arial,sans-serif" font-size="46" font-weight="800" fill="#241712">Ảnh khóa học</text></svg>`
@@ -23,6 +24,23 @@ function normalizeImageUrl(url) {
 }
 
 export default async function handler(req, res) {
+  const routeDecision = await resolveRequestRoute(req, req.__options || {});
+  if (routeDecision.route === "DENY") {
+    return res.status(routeDecision.status || 403).json({
+      success: false, code: routeDecision.code, error: routeDecision.error
+    });
+  }
+  if (routeDecision.route === "AGENCY") {
+    // The historical index can request this image before its Agency redirect.
+    // Never look up the Legacy courses table for that transient request.
+    res.setHeader("Cache-Control", "private, no-store");
+    return res.status(404).json({
+      success: false,
+      code: "agency_legacy_hero_prohibited",
+      error: "Legacy course images are unavailable on Agency hosts."
+    });
+  }
+
   try {
     const courseSlug = req.query.course || "donut";
 

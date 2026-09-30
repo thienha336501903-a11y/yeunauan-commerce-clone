@@ -8,6 +8,7 @@ import { getV5Readiness } from '../utils/v5-readiness.js';
 import { isSalePaused } from '../utils/sale-state.js';
 
 import { resolveRequestRoute } from '../utils/agency-routing.js';
+import { checkoutOffering } from '../utils/agency-commerce.js';
 
 const MAX_BILL_BYTES = 5 * 1024 * 1024;
 const ALLOWED_BILL_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -34,15 +35,31 @@ async function cleanupUnpersistedBill(publicId) {
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  // Phase 5B: Host dispatch before running legacy handler
-  const routeDecision = await resolveRequestRoute(req);
+  // Agency checkout is Main-only. Legacy hosts continue through the unchanged
+  // bill-upload/order path below.
+  const options = req.__options || {};
+  const routeDecision = await resolveRequestRoute(req, options);
   if (routeDecision.route === "DENY") {
     return res.status(routeDecision.status || 403).json({ error: routeDecision.error, code: routeDecision.code });
   }
   if (routeDecision.route === "AGENCY") {
-    return res.status(403).json({
-      error: "Tạo đơn hàng Legacy không được phép trên tên miền Agency. Hãy sử dụng luồng checkout của Agency.",
-      code: "agency_legacy_order_prohibited"
+    const result = await checkoutOffering(req, {
+      offeringId: String(req.body?.offeringId || "").trim(),
+      idempotencyOrderCode: String(req.body?.idempotencyOrderCode || "").trim() || undefined
+    }, options);
+
+    if (!result.ok) {
+      return res.status(result.status || 400).json({
+        success: false,
+        code: result.code || "agency_checkout_failed",
+        error: result.error || "Agency checkout failed."
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      deliveryMode: "agency",
+      order: result.order
     });
   }
   try {
