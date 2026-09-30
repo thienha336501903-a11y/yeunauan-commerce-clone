@@ -382,8 +382,8 @@ document.getElementById('regForm').addEventListener('submit',async(e)=>{
             const managerPath=data.managerPath||('/my-courses.html?registered=1&course='+encodeURIComponent(courseSlug));
             window.location.href=managerPath.startsWith('http')?managerPath:(targetLmsUrl+managerPath);
           }else{
-            console.log('[Checkout] redirecting to original student portal');
-            window.location.href=data.managerPath||window.CLONE_RUNTIME_CONFIG?.legacyPortalPublicUrl||location.origin;
+            console.log('[Checkout] redirecting to Main LMS course manager');
+            window.location.href=data.managerPath||window.CLONE_RUNTIME_CONFIG?.lmsPublicUrl||location.origin;
           }
         }
       }else{

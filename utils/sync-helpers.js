@@ -19,19 +19,17 @@ export async function syncCourseToExternalSystems(courseData) {
   if (resolvedMode === 'v5') return syncV5CourseToLms(courseData);
 
   const secret = process.env.INTERNAL_SYNC_SECRET;
-  const sys1Url = process.env.SYSTEM1_URL || process.env.PORTAL_URL;
   const sys3Url = process.env.SYSTEM3_URL || process.env.LMS_PUBLIC_URL;
 
   const results = {
     lms: sys3Url ? "SKIPPED" : "DISABLED",
-    portal: sys1Url ? "SKIPPED" : "DISABLED",
+    portal: "RETIRED_M0E",
     error: null
   };
 
   if (!secret) {
-    if (!sys3Url && !sys1Url) {
+    if (!sys3Url) {
       results.lms = "DISABLED";
-      results.portal = "DISABLED";
       results.error = null;
     } else {
       results.error = "Missing INTERNAL_SYNC_SECRET";
@@ -84,37 +82,6 @@ export async function syncCourseToExternalSystems(courseData) {
     }
   }
 
-  if (sys1Url) {
-    try {
-      const res = await fetch(`${sys1Url.trim().replace(/\/$/, '')}/api/sync`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Sync-Secret": secret },
-        body: JSON.stringify({
-          action: "syncCourse",
-          courseSlug: payload.slug,
-          title: payload.title,
-          imageUrl: payload.imageUrl,
-          active: payload.active,
-          isPublished: payload.isPublished,
-          ...(hasExpectedStartDate ? { expected_start_date: payload.expected_start_date } : {})
-        })
-      });
-      if (res.ok) {
-        const resData = await res.json().catch(() => ({}));
-        let portalStatus = "SUCCESS";
-        if (resData.projectRef) portalStatus += ` (DB: ${resData.projectRef})`;
-        if (resData.postId) portalStatus += ` (PostID: ${resData.postId})`;
-        results.portal = portalStatus;
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        results.portal = "FAILED";
-        results.error = (results.error ? results.error + " | " : "") + `Portal failed: ${errData.error || res.statusText}`;
-      }
-    } catch (err) {
-      results.portal = "FAILED";
-      results.error = (results.error ? results.error + " | " : "") + `Portal error: ${err.message}`;
-    }
-  }
 
   return results;
 }
@@ -126,19 +93,17 @@ export async function syncEnrollmentToExternalSystems(orderData, actionType) {
   if (resolvedMode === 'v5') return syncV5EnrollmentToLms(orderData, actionType);
 
   const secret = process.env.INTERNAL_SYNC_SECRET;
-  const sys1Url = process.env.SYSTEM1_URL || process.env.PORTAL_URL;
   const sys3Url = process.env.SYSTEM3_URL || process.env.LMS_PUBLIC_URL;
 
   const results = {
     lms: sys3Url ? "SKIPPED" : "DISABLED",
-    portal: sys1Url ? "SKIPPED" : "DISABLED",
+    portal: "RETIRED_M0E",
     error: null
   };
 
   if (!secret) {
-    if (!sys3Url && !sys1Url) {
+    if (!sys3Url) {
       results.lms = "DISABLED";
-      results.portal = "DISABLED";
       results.error = null;
     } else {
       results.error = "Missing INTERNAL_SYNC_SECRET";
@@ -173,31 +138,8 @@ export async function syncEnrollmentToExternalSystems(orderData, actionType) {
     }
   }
 
-  if (sys1Url) {
-    try {
-      const res = await fetch(`${sys1Url.trim().replace(/\/$/, '')}/api/sync`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Sync-Secret": secret },
-        body: JSON.stringify({ action, email, courseSlug })
-      });
-      if (res.ok) {
-        const resData = await res.json().catch(() => ({}));
-        let portalStatus = "SUCCESS";
-        if (resData.projectRef) portalStatus += ` (DB: ${resData.projectRef})`;
-        if (resData.postId) portalStatus += ` (PostID: ${resData.postId})`;
-        results.portal = portalStatus;
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        results.portal = "FAILED";
-        results.error = (results.error ? results.error + " | " : "") + `Portal failed: ${errData.error || res.statusText}`;
-      }
-    } catch (err) {
-      results.portal = "FAILED";
-      results.error = (results.error ? results.error + " | " : "") + `Portal error: ${err.message}`;
-    }
-  }
 
-  if (actionType === "create" && results.lms === "SUCCESS" && results.portal.startsWith("SUCCESS")) {
+  if (actionType === "create" && results.lms === "SUCCESS") {
     try {
       await sendApprovalEmail(email, orderData.course_title || courseSlug);
     } catch (mailErr) {

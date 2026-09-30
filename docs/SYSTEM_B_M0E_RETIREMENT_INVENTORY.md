@@ -1,7 +1,7 @@
 # SYSTEM B — M0E RETIREMENT INVENTORY & CONCRETE ROLLBACK PLAN
 
-**Status**: DRY-RUN ONLY / READ-ONLY AUDIT  
-**M0E Execution Status**: `NOT_STARTED`  
+**Status**: E1–E4 REVERSIBLE EXECUTION / PRE-E5  
+**M0E Execution Status**: `E1_E4_IN_PROGRESS`  
 **Target Architecture**: System B Multi-Agency Phase 0  
 **Target Database**: Main Supabase (`yyiavtiwtekkocqpephr`)  
 **Legacy Project (Untouched)**: Legacy Supabase (`aqozjkfwzmyfunqvcyjv`)  
@@ -11,7 +11,7 @@
 ## 1. Executive Summary & Boundaries
 
 In accordance with owner-locked directives:
-1. **NO Legacy Retirement is executed at this stage.** Legacy routes, tables, and credentials remain fully functional.
+1. **NO irreversible Legacy retirement is executed in E1–E4.** The Legacy project remains active as rollback standby; source/runtime dependencies are being retired before E5.
 2. **Current Business Data is TEST ONLY.**
 3. **V5/R2/Worker architecture remains 100% PRESERVED.** No R2 objects mutated, no Cloudflare Worker changes.
 4. **This document establishes the authoritative dry-run classification** of all legacy assets to prepare for a clean, deterministic, zero-downtime retirement following successful M0D cutover.
@@ -75,15 +75,15 @@ Every candidate asset across the codebase and database is classified into one of
 
 | Route / File | Repository | Current Purpose | Classification | Retain / Removal Rationale |
 |---|---|---|---|---|
-| `api/register.js` | Commerce | Dual-host entrypoint: blocks Agency with 403 `agency_legacy_order_prohibited`, executes legacy registration on legacy hosts | `KEEP` | Blocks/dispatches Agency rather than providing Agency order path (Agency checkout uses client RPC `checkout_agency_offering`). Preserved for legacy hosts until post-M0D retirement. |
+| `api/register.js` | Commerce | Dual-host entrypoint: Agency dispatches to `checkoutOffering`; non-Agency registration remains Main-backed | `KEEP` | E2 removes external Legacy portal mirroring and returns learners to Main LMS; Agency checkout remains Main-only. |
 | `api/config.js` | Commerce | Dual-host: dispatches to `getAgencyCommerceConfig` on Agency host, legacy catalog on legacy host | `KEEP` | Dispatches based on incoming host. Agency commerce catalog uses this entrypoint. |
-| `api/orders.js` | Commerce | Dual-host entrypoint: blocks Agency with 403 `agency_legacy_order_prohibited`, provides legacy order admin operations on legacy hosts | `KEEP` | Blocks/dispatches Agency rather than providing Agency order path (Agency order approval uses server/client RPC `approve_agency_order`). Preserved for legacy admin until post-M0D retirement. |
+| `api/orders.js` | Commerce | Dual-host entrypoint: Agency learner may read own Main order; mutations use Agency admin; non-Agency admin uses Main | `KEEP` | No Legacy Supabase client is used; compatibility behavior is Main-backed. |
 | `api/courses.js` | Commerce | Dual-host: rejects legacy course mutations on Agency host with 403 `agency_legacy_courses_prohibited` | `KEEP` | Dispatches based on incoming host. Preserved for legacy admin until legacy retirement. |
 | `api/lms/portal.js` | LMS | Dual-host LMS portal router | `KEEP` | Core entrypoint: routes Agency hosts via `resolveRequestRoute(req)` -> `AGENCY`. Legacy branch retired post-M0D. |
 | `api/lms/admin.js` | LMS | Agency admin portal | `KEEP` | Core System B agency management endpoint. |
-| `api/learning.js` | LMS | Legacy learning redirector | `UNKNOWN_DEPENDENCY` | Pending post-M0D live traffic validation; legacy redirector not traversed in agency dependency graph. |
-| `api/legacy-post-redirect.js` | LMS | Legacy blog post redirect | `UNKNOWN_DEPENDENCY` | Pending post-M0D SEO redirect audit; not traversed in agency dependency graph. |
-| `api/sync.js` | LMS | Legacy Google Drive / sheet sync | `UNKNOWN_DEPENDENCY` | Pending post-M0D verification; obsolete cloner mechanism not used by agency curriculum. |
+| `api/learning.js` | LMS | Main-backed learning dispatcher for Agency/legacy host modes | `KEEP` | Uses Main runtime/course metadata; no external Legacy Supabase dependency identified. |
+| `api/legacy-post-redirect.js` | LMS | Retirement tombstone for old `/post/:id` deep links | `SAFE_TO_REMOVE_AFTER_M0D` | E2 returns HTTP 410 on legacy host and never redirects to the external Legacy portal; Agency hosts remain blocked. |
+| `api/sync.js` | LMS | Main-backed compatibility sync endpoint | `KEEP` | Current client is Main `SUPABASE_URL`; Agency hosts are blocked. It may remain as Main-only compatibility while external Legacy egress is zero. |
 | `api/approve-all.js` | Commerce | Dev-only bulk order approval | `SAFE_TO_REMOVE_AFTER_M0D` | AST-verified: 0 agency callers; security risk; superseded by `approve_agency_order`. |
 | `api/telegram-webhook.js` | Commerce | Legacy Telegram webhook integration | `SAFE_TO_REMOVE_AFTER_M0D` | AST-verified: 0 agency callers; telegram cloner deprecated post-M0D. |
 
@@ -113,9 +113,13 @@ Every candidate asset across the codebase and database is classified into one of
 
 | Variable Name | Environment | Classification | Retain / Removal Rationale |
 |---|---|---|---|
-| `HMAC_SECRET` | LMS | `SAFE_TO_REMOVE_AFTER_M0D` | Required solely for legacy HMAC tokens. |
+| `HMAC_SECRET` | LMS | `UNKNOWN_DEPENDENCY` | Legacy HMAC compatibility remains Main-backed in E1–E4; remove only after separate caller proof. |
 | `LEGACY_SUPABASE_URL` | Both | `SAFE_TO_REMOVE_AFTER_M0D` | References deprecated project `aqozjkfwzmyfunqvcyjv`. |
-| `LEGACY_SUPABASE_SERVICE_ROLE_KEY` | Both | `SAFE_TO_REMOVE_AFTER_M0D` | References deprecated project `aqozjkfwzmyfunqvcyjv`. |
+| `LEGACY_SUPABASE_SERVICE_ROLE_KEY` | Both | `SAFE_TO_REMOVE_AFTER_M0D` | References deprecated project `aqozjkfwzmyfunqvcyjv`; current source does not read it. |
+| `SYSTEM1_URL` | Commerce | `SAFE_TO_REMOVE_AFTER_M0D` | E2 source no longer reads the old portal origin. |
+| `PORTAL_URL` | Commerce | `SAFE_TO_REMOVE_AFTER_M0D` | E2 source no longer reads the old portal origin alias. |
+| `LEGACY_PORTAL_PUBLIC_URL` | Commerce | `SAFE_TO_REMOVE_AFTER_M0D` | E2 source no longer exposes or redirects to the old portal origin. |
+| `LEGACY_POST_PUBLIC_URL` | LMS | `SAFE_TO_REMOVE_AFTER_M0D` | E2 source no longer redirects old post deep links to the external Legacy portal. |
 | `SUPABASE_URL` | Both | `KEEP` | Main Supabase project (`yyiavtiwtekkocqpephr`). |
 | `SUPABASE_SERVICE_ROLE_KEY` | Both | `KEEP` | Main Supabase service role credentials. |
 | `V5_PLAYBACK_PRIVATE_JWK` | LMS | `KEEP` | ECDSA P-256 private key for signed video leases. |
@@ -235,4 +239,4 @@ Before any legacy DDL `DROP` migration is executed:
 |---|---|---|
 | `M0E_RETIREMENT_PLAN` | **PASS** | 100% concrete cataloging of DB objects, routes, utilities, and env vars (zero wildcards; `public.order_items` classified as KEEP actively written by B5; route blocking/dispatch behavior aligned; dependency evidence checked). |
 | `M0E_ROLLBACK_PLAN` | **PASS** | Scoped, non-destructive rollback protocol targeting ONLY exact retired legacy DB objects. Full-db `pg_restore --clean` prohibited to preserve concurrent Agency orders. Individual env var restore verified. |
-| `M0E_EXECUTION` | **NOT_STARTED** | Zero deletions, zero legacy route teardown; legacy infrastructure remains 100% active. |
+| `M0E_EXECUTION` | **E1–E4 IN PROGRESS** | Reversible Main-only cutover only. Legacy project/credentials remain active and untouched until separate E5 authorization. |

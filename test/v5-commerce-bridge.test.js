@@ -147,8 +147,9 @@ test('V5 storefront/config and registration allow pre-order sales while Publishe
   assert.match(config, /if \(deliveryMode === 'v5'\) \{[\s\S]*course\.is_published === true[\s\S]*getV5Readiness\(course\.id\)[\s\S]*!readiness\.ready/);
   assert.match(register, /if \(deliveryMode === 'v5'\) \{[\s\S]*courseRec\.active !== true[\s\S]*courseRec\.is_published === true[\s\S]*getV5Readiness\(courseRec\.id\)[\s\S]*!readiness\.ready/);
   assert.match(register, /SKIPPED_V5/);
-  assert.match(register, /\['v4', 'v5'\]\.includes\(deliveryMode\)/);
+  assert.match(register, /managerPath = runtime\.lmsPublicUrl/);
   assert.match(register, /\/my-courses\.html\?registered=1&course=/);
+  assert.doesNotMatch(register, /legacyPortalPublicUrl|SYSTEM1_URL/);
 });
 
 test('bulk approval preserves V5 portal isolation through dedicated sync-first helper', () => {
