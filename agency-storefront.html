@@ -40,6 +40,7 @@ h1{margin:0;font-size:28px}.muted{color:#756b64;font-size:13px}
 <section id="memberCard" class="card hidden">
   <div><strong id="memberName"></strong></div>
   <div id="memberEmail" class="muted"></div>
+  <div class="row" style="margin-top:12px"><a id="lmsLink" class="btn secondary" href="#" rel="noopener">Vào cổng học viên</a></div>
 </section>
 
 <section>
@@ -64,9 +65,30 @@ h1{margin:0;font-size:28px}.muted{color:#756b64;font-size:13px}
 </div>
 
 <script>
-let config=null,tokenClient=null,currentOrderId='';
+let config=null,tokenClient=null,currentOrderId='',currentMembershipId='';
 const $=id=>document.getElementById(id);
 const money=n=>new Intl.NumberFormat('vi-VN').format(Number(n||0))+' đ';
+
+function storagePrefix(memberId=currentMembershipId){
+  const agencyId=String(config?.agency?.id||'').trim();
+  const member=String(memberId||'').trim();
+  return agencyId&&member?`agency:${agencyId}:${member}:`:'';
+}
+function lastOrderKey(){const p=storagePrefix();return p?p+'last_order':''}
+function checkoutIntentKey(offeringId){const p=storagePrefix();return p?p+'checkout:'+String(offeringId||'').trim():''}
+function clearCurrentAccountStorage(){
+  const prefix=storagePrefix();
+  if(!prefix)return;
+  try{for(let i=localStorage.length-1;i>=0;i--){const key=localStorage.key(i);if(key&&key.startsWith(prefix))localStorage.removeItem(key)}}catch{}
+}
+function logicalCheckoutKey(offeringId){
+  const key=checkoutIntentKey(offeringId);
+  if(!key)throw new Error('Vui lòng đăng nhập trước khi thanh toán.');
+  let value='';
+  try{value=localStorage.getItem(key)||''}catch{}
+  if(!value){value='AG-'+crypto.randomUUID();try{localStorage.setItem(key,value)}catch{}}
+  return value;
+}
 
 function setNotice(message,type=''){
   $('notice').textContent=message;
@@ -106,11 +128,18 @@ async function session(){
     $('authCard').classList.add('hidden');
     $('memberCard').classList.remove('hidden');
     $('logout').classList.remove('hidden');
+    currentMembershipId=String(d.member.id||'');
     $('memberName').textContent=d.member.displayName||d.member.role||'Học viên';
     $('memberEmail').textContent=d.member.email||'';
+    if(config?.lmsPublicUrl){
+      $('lmsLink').href=new URL('/my-courses.html',config.lmsPublicUrl).toString();
+    }
+    currentOrderId=lastOrderKey()?localStorage.getItem(lastOrderKey())||'':'';
+    if(currentOrderId)$('payment').classList.remove('hidden');
     setNotice('Đã đăng nhập Agency.','ok');
     return true;
   }
+  currentMembershipId='';
   $('authCard').classList.remove('hidden');
   $('memberCard').classList.add('hidden');
   $('logout').classList.add('hidden');
@@ -148,10 +177,11 @@ async function prepareGoogle(){
 async function checkout(offeringId,button){
   button.disabled=true;
   try{
+    const idempotencyOrderCode=logicalCheckoutKey(offeringId);
     const r=await fetch('/api/register',{
       method:'POST',credentials:'same-origin',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({offeringId})
+      body:JSON.stringify({offeringId,idempotencyOrderCode})
     });
     const d=await r.json().catch(()=>({}));
     if(!r.ok||!d.success){
@@ -165,7 +195,7 @@ async function checkout(offeringId,button){
 
 function showOrder(order){
   currentOrderId=String(order?.orderId||'');
-  if(currentOrderId) localStorage.setItem('agency_last_order_id',currentOrderId);
+  if(currentOrderId&&lastOrderKey()) localStorage.setItem(lastOrderKey(),currentOrderId);
   $('payment').classList.remove('hidden');
   $('orderStatus').textContent='Trạng thái: '+String(order?.status||'pending');
   $('amount').textContent=money(order?.amountVnd);
@@ -181,7 +211,7 @@ function showOrder(order){
 }
 
 async function refreshOrder(){
-  currentOrderId=currentOrderId||localStorage.getItem('agency_last_order_id')||'';
+  currentOrderId=currentOrderId||(lastOrderKey()?localStorage.getItem(lastOrderKey())||'':'');
   if(!currentOrderId)return;
   const r=await fetch('/api/orders?id='+encodeURIComponent(currentOrderId),{credentials:'same-origin',cache:'no-store'});
   const d=await r.json().catch(()=>({}));
@@ -193,7 +223,8 @@ async function refreshOrder(){
 $('googleLogin').addEventListener('click',()=>tokenClient?.requestAccessToken({prompt:'select_account'}));
 $('logout').addEventListener('click',async()=>{
   await fetch('/api/config?agencySession=1',{method:'DELETE',credentials:'same-origin'});
-  localStorage.removeItem('agency_last_order_id');
+  clearCurrentAccountStorage();
+  currentMembershipId='';
   currentOrderId='';
   $('payment').classList.add('hidden');
   await session();
@@ -205,8 +236,6 @@ $('refreshOrder').addEventListener('click',refreshOrder);
     await loadConfig();
     await session();
     await prepareGoogle();
-    currentOrderId=localStorage.getItem('agency_last_order_id')||'';
-    if(currentOrderId) $('payment').classList.remove('hidden');
   }catch(e){setNotice(e.message||String(e),'error')}
 })();
 </script>
