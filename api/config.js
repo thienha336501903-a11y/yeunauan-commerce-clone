@@ -156,7 +156,11 @@ export default async function handler(req, res) {
       routeDecision.tenant.agencyId,
       "lms",
       runtime.lmsPublicUrl,
-      { supabaseClient: options.supabaseClient || supabase, allowUntypedFallback: true }
+      {
+        supabaseClient: options.supabaseClient || supabase,
+        allowUntypedFallback: true,
+        sourceDomainSurface: routeDecision.tenant.domainSurface
+      }
     );
     return res.status(200).json({
       success: true,

@@ -57,8 +57,20 @@ export async function getAgencySurfaceOriginOrFallback(agencyId, surface, fallba
 
   // Backward compatibility only for pre-Factory tenants such as current Agency A,
   // whose historical domains have surface = NULL. New Factory tenants are typed.
-  if (options.allowUntypedFallback === true && result.code === "agency_surface_not_found") {
+  const sourceDomainSurface = options.sourceDomainSurface;
+  const provenHistoricalUntyped = sourceDomainSurface === null;
+  if (
+    options.allowUntypedFallback === true &&
+    provenHistoricalUntyped &&
+    result.code === "agency_surface_not_found"
+  ) {
     const fallback = clean(fallbackOrigin);
+    if (!fallback) {
+      const error = new Error("agency_surface_fallback_missing");
+      error.status = 500;
+      error.code = "agency_surface_fallback_missing";
+      throw error;
+    }
     return fallback;
   }
 

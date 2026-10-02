@@ -55,7 +55,19 @@ test("Agency surface lookup fails closed when ambiguous", async () => {
 
 test("Historical Agency can use explicit global fallback only when enabled", async () => {
   const origin=await getAgencySurfaceOriginOrFallback("agency-a","lms","https://hoc.yeubep.shop",{
-    supabaseClient:client([]),allowUntypedFallback:true
+    supabaseClient:client([]),allowUntypedFallback:true,sourceDomainSurface:null
   });
   assert.equal(origin,"https://hoc.yeubep.shop");
+});
+
+
+test("Typed Agency never falls back to global LMS when typed mapping is missing", async () => {
+  await assert.rejects(
+    getAgencySurfaceOriginOrFallback("agency-b","lms","https://hoc.yeubep.shop",{
+      supabaseClient:client([]),
+      allowUntypedFallback:true,
+      sourceDomainSurface:"commerce"
+    }),
+    error => error?.code === "agency_surface_not_found"
+  );
 });

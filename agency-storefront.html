@@ -66,33 +66,97 @@ h1{margin:0;font-size:28px}.muted{color:#756b64;font-size:13px}
 
 <script>
 let config=null,tokenClient=null,currentOrderId='',currentMembershipId='';
+let actorEpoch=0,sessionRequestSeq=0,accountSessionBroadcast=null;
+const ACCOUNT_SESSION_CHANNEL='system-b-agency-commerce-session-v1';
 const $=id=>document.getElementById(id);
 const money=n=>new Intl.NumberFormat('vi-VN').format(Number(n||0))+' đ';
 
-function storagePrefix(memberId=currentMembershipId){
-  const agencyId=String(config?.agency?.id||'').trim();
-  const member=String(memberId||'').trim();
+function actorSnapshot(){
+  return Object.freeze({
+    agencyId:String(config?.agency?.id||'').trim(),
+    memberId:String(currentMembershipId||'').trim(),
+    epoch:actorEpoch
+  });
+}
+function actorIsCurrent(actor){
+  return !!actor&&
+    actor.epoch===actorEpoch&&
+    actor.agencyId===String(config?.agency?.id||'').trim()&&
+    actor.memberId===String(currentMembershipId||'').trim()&&
+    !!actor.agencyId&&!!actor.memberId;
+}
+function storagePrefix(actor=actorSnapshot()){
+  const agencyId=String(actor?.agencyId||'').trim();
+  const member=String(actor?.memberId||'').trim();
   return agencyId&&member?`agency:${agencyId}:${member}:`:'';
 }
-function lastOrderKey(){const p=storagePrefix();return p?p+'last_order':''}
-function checkoutIntentKey(offeringId){const p=storagePrefix();return p?p+'checkout:'+String(offeringId||'').trim():''}
-function clearCurrentAccountStorage(){
-  const prefix=storagePrefix();
+function lastOrderKey(actor=actorSnapshot()){const p=storagePrefix(actor);return p?p+'last_order':''}
+function checkoutIntentKey(offeringId,actor=actorSnapshot()){const p=storagePrefix(actor);return p?p+'checkout:'+String(offeringId||'').trim():''}
+function clearCurrentAccountStorage(actor=actorSnapshot()){
+  const prefix=storagePrefix(actor);
   if(!prefix)return;
   try{for(let i=localStorage.length-1;i>=0;i--){const key=localStorage.key(i);if(key&&key.startsWith(prefix))localStorage.removeItem(key)}}catch{}
 }
-function logicalCheckoutKey(offeringId){
-  const key=checkoutIntentKey(offeringId);
+function logicalCheckoutKey(offeringId,actor=actorSnapshot()){
+  if(!actorIsCurrent(actor))throw new Error('Phiên Agency đã thay đổi. Vui lòng thử lại.');
+  const key=checkoutIntentKey(offeringId,actor);
   if(!key)throw new Error('Vui lòng đăng nhập trước khi thanh toán.');
   let value='';
   try{value=localStorage.getItem(key)||''}catch{}
   if(!value){value='AG-'+crypto.randomUUID();try{localStorage.setItem(key,value)}catch{}}
   return value;
 }
-function clearCheckoutIntent(offeringId){
-  const key=checkoutIntentKey(offeringId);
+function clearCheckoutIntent(offeringId,actor=actorSnapshot()){
+  const key=checkoutIntentKey(offeringId,actor);
   if(!key)return;
   try{localStorage.removeItem(key)}catch{}
+}
+function clearPaymentState(){
+  currentOrderId='';
+  $('payment').classList.add('hidden');
+  for(const id of ['orderStatus','amount','bank','account','holder','transfer','orderId'])$(id).textContent='';
+  $('qr').removeAttribute('src');
+  $('qr').classList.add('hidden');
+}
+function showLoggedOutState(){
+  $('authCard').classList.remove('hidden');
+  $('memberCard').classList.add('hidden');
+  $('logout').classList.add('hidden');
+}
+function accountSessionChannel(){
+  if(!('BroadcastChannel'in window))return null;
+  if(!accountSessionBroadcast){
+    accountSessionBroadcast=new BroadcastChannel(ACCOUNT_SESSION_CHANNEL);
+    accountSessionBroadcast.addEventListener('message',event=>{
+      if(event.data?.type!=='clear')return;
+      actorEpoch+=1;
+      currentMembershipId='';
+      clearPaymentState();
+      showLoggedOutState();
+      setNotice('Phiên Agency đã thay đổi ở tab khác. Vui lòng đăng nhập lại.');
+    });
+  }
+  return accountSessionBroadcast;
+}
+function invalidateActorState({broadcast=true,clearStorage=false}={}){
+  const previous=actorSnapshot();
+  if(clearStorage)clearCurrentAccountStorage(previous);
+  actorEpoch+=1;
+  currentMembershipId='';
+  clearPaymentState();
+  showLoggedOutState();
+  if(broadcast){try{accountSessionChannel()?.postMessage({type:'clear'})}catch{}}
+}
+function activateActor(memberId){
+  const next=String(memberId||'').trim();
+  if(!next)return false;
+  if(currentMembershipId!==next){
+    actorEpoch+=1;
+    currentMembershipId=next;
+    clearPaymentState();
+    try{accountSessionChannel()?.postMessage({type:'clear'})}catch{}
+  }
+  return true;
 }
 
 function setNotice(message,type=''){
@@ -127,27 +191,46 @@ function renderOffers(){
 }
 
 async function session(){
+  const requestSeq=++sessionRequestSeq;
+  const startEpoch=actorEpoch;
   const r=await fetch('/api/config?agencySession=1',{credentials:'same-origin',cache:'no-store'});
   const d=await r.json().catch(()=>({}));
+  if(requestSeq!==sessionRequestSeq||startEpoch!==actorEpoch)return false;
+
   if(r.ok&&d.success){
+    const nextMember=String(d.member?.id||'').trim();
+    if(!nextMember){
+      invalidateActorState({broadcast:true});
+      setNotice('Phiên Agency không hợp lệ.','error');
+      return false;
+    }
+    activateActor(nextMember);
     $('authCard').classList.add('hidden');
     $('memberCard').classList.remove('hidden');
     $('logout').classList.remove('hidden');
-    currentMembershipId=String(d.member.id||'');
     $('memberName').textContent=d.member.displayName||d.member.role||'Học viên';
     $('memberEmail').textContent=d.member.email||'';
     if(config?.lmsPublicUrl){
       $('lmsLink').href=new URL('/my-courses.html',config.lmsPublicUrl).toString();
     }
-    currentOrderId=lastOrderKey()?localStorage.getItem(lastOrderKey())||'':'';
-    if(currentOrderId)$('payment').classList.remove('hidden');
+    clearPaymentState();
+    const actor=actorSnapshot();
+    const key=lastOrderKey(actor);
+    currentOrderId=key?localStorage.getItem(key)||'':'';
+    if(currentOrderId){
+      $('payment').classList.remove('hidden');
+      $('orderStatus').textContent='Đơn gần nhất đã lưu cho tài khoản này.';
+      $('orderId').textContent='Order ID: '+currentOrderId;
+    }
     setNotice('Đã đăng nhập Agency.','ok');
     return true;
   }
-  currentMembershipId='';
-  $('authCard').classList.remove('hidden');
-  $('memberCard').classList.add('hidden');
-  $('logout').classList.add('hidden');
+
+  if(currentMembershipId)invalidateActorState({broadcast:true});
+  else{
+    clearPaymentState();
+    showLoggedOutState();
+  }
   setNotice('Vui lòng đăng nhập để tiếp tục.');
   return false;
 }
@@ -180,28 +263,38 @@ async function prepareGoogle(){
 }
 
 async function checkout(offeringId,button){
+  const actor=actorSnapshot();
   button.disabled=true;
   try{
-    const idempotencyOrderCode=logicalCheckoutKey(offeringId);
+    const idempotencyOrderCode=logicalCheckoutKey(offeringId,actor);
     const r=await fetch('/api/register',{
       method:'POST',credentials:'same-origin',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({offeringId,idempotencyOrderCode})
     });
     const d=await r.json().catch(()=>({}));
+    if(!actorIsCurrent(actor))return;
     if(!r.ok||!d.success){
-      if(r.status===401){await session();throw new Error('Vui lòng đăng nhập trước khi thanh toán.')}
+      if(r.status===401){
+        invalidateActorState({broadcast:true});
+        throw new Error('Vui lòng đăng nhập trước khi thanh toán.');
+      }
       throw new Error(d.error||'Không tạo được đơn Agency.');
     }
-    showOrder(d.order);
-    clearCheckoutIntent(offeringId);
-  }catch(e){setNotice(e.message||String(e),'error')}
-  finally{button.disabled=false}
+    showOrder(d.order,actor);
+    if(actorIsCurrent(actor))clearCheckoutIntent(offeringId,actor);
+  }catch(e){
+    if(actorIsCurrent(actor)||!currentMembershipId)setNotice(e.message||String(e),'error');
+  }finally{
+    if(button?.isConnected)button.disabled=false;
+  }
 }
 
-function showOrder(order){
+function showOrder(order,actor=actorSnapshot()){
+  if(!actorIsCurrent(actor))return false;
   currentOrderId=String(order?.orderId||'');
-  if(currentOrderId&&lastOrderKey()) localStorage.setItem(lastOrderKey(),currentOrderId);
+  const key=lastOrderKey(actor);
+  if(currentOrderId&&key)localStorage.setItem(key,currentOrderId);
   $('payment').classList.remove('hidden');
   $('orderStatus').textContent='Trạng thái: '+String(order?.status||'pending');
   $('amount').textContent=money(order?.amountVnd);
@@ -211,34 +304,44 @@ function showOrder(order){
   $('transfer').textContent=order?.transferContent||'';
   $('orderId').textContent=currentOrderId?'Order ID: '+currentOrderId:'';
   if(order?.vietQrUrl){$('qr').src=order.vietQrUrl;$('qr').classList.remove('hidden')}
-  else $('qr').classList.add('hidden');
+  else{$('qr').removeAttribute('src');$('qr').classList.add('hidden')}
   setNotice('Đơn Agency đã được tạo trên Main.','ok');
   $('payment').scrollIntoView({behavior:'smooth',block:'start'});
+  return true;
 }
 
 async function refreshOrder(){
-  currentOrderId=currentOrderId||(lastOrderKey()?localStorage.getItem(lastOrderKey())||'':'');
-  if(!currentOrderId)return;
-  const r=await fetch('/api/orders?id='+encodeURIComponent(currentOrderId),{credentials:'same-origin',cache:'no-store'});
+  const actor=actorSnapshot();
+  if(!actorIsCurrent(actor))return;
+  const key=lastOrderKey(actor);
+  const orderId=currentOrderId||(key?localStorage.getItem(key)||'':'');
+  if(!orderId)return;
+  const r=await fetch('/api/orders?id='+encodeURIComponent(orderId),{credentials:'same-origin',cache:'no-store'});
   const d=await r.json().catch(()=>({}));
-  if(!r.ok||!d.success){setNotice(d.error||'Không đọc được đơn.','error');return}
+  if(!actorIsCurrent(actor)||orderId!==currentOrderId&&currentOrderId)return;
+  if(!r.ok||!d.success){
+    if(r.status===401)invalidateActorState({broadcast:true});
+    else setNotice(d.error||'Không đọc được đơn.','error');
+    return;
+  }
   $('orderStatus').textContent='Trạng thái: '+String(d.order?.status||'');
   setNotice('Đã cập nhật trạng thái đơn.','ok');
 }
 
 $('googleLogin').addEventListener('click',()=>tokenClient?.requestAccessToken({prompt:'select_account'}));
 $('logout').addEventListener('click',async()=>{
-  await fetch('/api/config?agencySession=1',{method:'DELETE',credentials:'same-origin'});
-  clearCurrentAccountStorage();
-  currentMembershipId='';
-  currentOrderId='';
-  $('payment').classList.add('hidden');
+  const actor=actorSnapshot();
+  clearCurrentAccountStorage(actor);
+  invalidateActorState({broadcast:true});
+  setNotice('Đang đăng xuất…');
+  try{await fetch('/api/config?agencySession=1',{method:'DELETE',credentials:'same-origin'})}catch{}
   await session();
 });
 $('refreshOrder').addEventListener('click',refreshOrder);
 
 (async()=>{
   try{
+    accountSessionChannel();
     await loadConfig();
     await session();
     await prepareGoogle();

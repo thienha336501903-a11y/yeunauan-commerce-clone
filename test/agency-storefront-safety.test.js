@@ -5,7 +5,7 @@ import fs from "node:fs";
 const html=fs.readFileSync(new URL("../agency-storefront.html",import.meta.url),"utf8");
 
 test("Agency checkout persists a stable logical idempotency key",()=>{
-  assert.match(html,/logicalCheckoutKey\(offeringId\)/);
+  assert.match(html,/logicalCheckoutKey\(offeringId,actor\)/);
   assert.match(html,/idempotencyOrderCode/);
   assert.match(html,/crypto\.randomUUID\(\)/);
 });
@@ -21,6 +21,17 @@ test("Agency storefront navigates to tenant-specific LMS config",()=>{
 });
 
 test("Agency logout clears current account scoped browser state",()=>{
-  assert.match(html,/clearCurrentAccountStorage\(\)/);
+  assert.match(html,/clearCurrentAccountStorage\(actor\)/);
   assert.match(html,/currentMembershipId=''/);
+});
+
+
+test("Agency storefront binds async order mutations to captured actor epoch",()=>{
+  assert.match(html,/function actorSnapshot\(\)/);
+  assert.match(html,/function actorIsCurrent\(actor\)/);
+  assert.match(html,/if\(!actorIsCurrent\(actor\)\)return;/);
+  assert.match(html,/showOrder\(d\.order,actor\)/);
+  assert.match(html,/clearCheckoutIntent\(offeringId,actor\)/);
+  assert.match(html,/clearPaymentState\(\)/);
+  assert.match(html,/system-b-agency-commerce-session-v1/);
 });
