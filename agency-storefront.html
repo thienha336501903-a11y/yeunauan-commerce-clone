@@ -89,6 +89,11 @@ function logicalCheckoutKey(offeringId){
   if(!value){value='AG-'+crypto.randomUUID();try{localStorage.setItem(key,value)}catch{}}
   return value;
 }
+function clearCheckoutIntent(offeringId){
+  const key=checkoutIntentKey(offeringId);
+  if(!key)return;
+  try{localStorage.removeItem(key)}catch{}
+}
 
 function setNotice(message,type=''){
   $('notice').textContent=message;
@@ -189,6 +194,7 @@ async function checkout(offeringId,button){
       throw new Error(d.error||'Không tạo được đơn Agency.');
     }
     showOrder(d.order);
+    clearCheckoutIntent(offeringId);
   }catch(e){setNotice(e.message||String(e),'error')}
   finally{button.disabled=false}
 }

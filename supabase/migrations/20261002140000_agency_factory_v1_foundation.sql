@@ -283,7 +283,11 @@ begin
     v_next_phase := 'ACTIVE';
   elsif p_action = 'suspend' then
     v_next_status := 'suspended';
-    v_next_phase := case when v_run.phase = 'BLOCKED' then 'BLOCKED' else 'READY' end;
+    -- Suspension must never promote an unvalidated run to READY.
+    v_next_phase := case
+      when v_run.phase = 'ACTIVE' then 'READY'
+      else v_run.phase
+    end;
   else
     raise exception 'factory_invalid_runtime_action';
   end if;
