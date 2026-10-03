@@ -321,7 +321,7 @@ test("FG1-04-B8: bootstrap GET body captured under A is discarded after B sessio
   await settle();
 
   assert.equal(fresh.state("currentMembershipId"), "");
-  assert.equal(fresh.get("memberCard").classList.contains("hidden"), true);
+  assert.equal(fresh.state("currentActorIntent"), "");
   assert.equal(browser.stored.has("agency:fixture:member-A:last_order"), false);
 });
 
