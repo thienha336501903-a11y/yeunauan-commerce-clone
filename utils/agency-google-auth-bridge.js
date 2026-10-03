@@ -21,6 +21,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { supabase as defaultSupabase } from "./supabase.js";
+import { findAuthUserByEmail } from "./agency-auth-principals.js";
 
 function clean(value) {
   return String(value || "").trim();
@@ -183,18 +184,12 @@ export async function bridgeGoogleAccessTokenToSupabaseSession(req, res, tenant,
   });
   if (!googleIdentity.ok) return googleIdentity;
 
-  const { data: usersData, error: usersError } = await client.auth.admin.listUsers({
-    page: 1,
-    perPage: 1000
-  });
-
-  if (usersError) {
-    return { ok: false, status: 500, code: "auth_user_lookup_failed", error: "Unable to resolve Supabase Auth principal." };
+  const lookup = await findAuthUserByEmail(client, googleIdentity.email);
+  if (!lookup.ok) {
+    return { ok: false, status: 500, code: lookup.code || "auth_user_lookup_failed", error: "Unable to resolve Supabase Auth principal." };
   }
 
-  const authUser = (usersData?.users || []).find(
-    (user) => lowerEmail(user?.email) === googleIdentity.email
-  );
+  const authUser = lookup.user;
 
   if (!authUser?.id) {
     return {
