@@ -10,6 +10,23 @@ function originForHost(hostname) {
   return `https://${host}`;
 }
 
+function isMissingSurfaceColumnError(error) {
+  const code = clean(error?.code).toUpperCase();
+  if (code !== "42703" && code !== "PGRST204") return false;
+
+  const message = [
+    error?.message,
+    error?.details,
+    error?.hint
+  ]
+    .map(clean)
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return message.includes("surface");
+}
+
 export async function getAgencyPrimarySurfaceHost(agencyId, surface, options = {}) {
   const client = options.supabaseClient;
   if (!client) throw new Error("agency_surface_supabase_required");
@@ -31,6 +48,17 @@ export async function getAgencyPrimarySurfaceHost(agencyId, surface, options = {
     .limit(2);
 
   if (error) {
+    // PREINSTALL compatibility only: before the Factory migration, Main does
+    // not have agency_domains.surface yet. Classify only the exact missing-
+    // column condition; all other database errors remain hard failures.
+    if (isMissingSurfaceColumnError(error)) {
+      return {
+        ok: false,
+        status: 500,
+        code: "agency_surface_schema_untyped",
+        error
+      };
+    }
     return { ok: false, status: 500, code: "agency_surface_lookup_failed", error };
   }
 
@@ -55,14 +83,21 @@ export async function getAgencySurfaceOriginOrFallback(agencyId, surface, fallba
   const result = await getAgencyPrimarySurfaceHost(agencyId, surface, options);
   if (result.ok) return result.origin;
 
-  // Backward compatibility only for pre-Factory tenants such as current Agency A,
-  // whose historical domains have surface = NULL. New Factory tenants are typed.
+  // Backward compatibility only for a resolver-proven historical/untyped
+  // tenant. This covers both:
+  // - post-migration historical rows where surface IS NULL, and
+  // - pre-migration Main where agency_domains.surface does not exist yet.
+  // Typed Factory tenants never enter this path.
   const sourceDomainSurface = options.sourceDomainSurface;
   const provenHistoricalUntyped = sourceDomainSurface === null;
+  const compatibleUntypedState =
+    result.code === "agency_surface_not_found" ||
+    result.code === "agency_surface_schema_untyped";
+
   if (
     options.allowUntypedFallback === true &&
     provenHistoricalUntyped &&
-    result.code === "agency_surface_not_found"
+    compatibleUntypedState
   ) {
     const fallback = clean(fallbackOrigin);
     if (!fallback) {
