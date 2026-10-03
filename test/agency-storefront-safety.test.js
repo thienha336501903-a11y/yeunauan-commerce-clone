@@ -41,6 +41,11 @@ test("FG1-04 actor state is bound to accepted session intent and protected reque
   assert.match(html,/intent:String\(currentActorIntent/);
   assert.match(html,/actor\.intent===currentActorIntent/);
   assert.match(html,/sharedSessionIntent\(\)/);
+  assert.match(html,/sharedCommittedSessionIntent\(\)/);
+  assert.match(html,/SESSION_COMMITTED_KEY/);
+  assert.match(html,/committed===actor\.intent/);
+  assert.match(html,/stableBootstrapSessionIntent\(\)/);
+  assert.match(html,/commitSessionIntent\(startIntent\)/);
   assert.match(html,/withProtectedSessionLock\(actor/);
   assert.match(html,/navigator\.locks\.request\(ACCOUNT_SESSION_CHANNEL\+':writes'/);
   assert.match(html,/membershipId:String\(d\.membershipId/);

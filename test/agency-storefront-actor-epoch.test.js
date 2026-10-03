@@ -37,9 +37,10 @@ function storage() {
 test("Captured actor becomes stale after account change and retains only its own namespace", () => {
   const helperSource = [
     "let config=null,currentMembershipId='',currentActorIntent='',currentSessionIntent=''; let actorEpoch=0,accountSessionBroadcast=null;",
-    "const ACCOUNT_SESSION_CHANNEL='system-b-agency-commerce-session-v1'; const SESSION_INTENT_KEY=ACCOUNT_SESSION_CHANNEL+':intent';",
+    "const ACCOUNT_SESSION_CHANNEL='system-b-agency-commerce-session-v1'; const SESSION_INTENT_KEY=ACCOUNT_SESSION_CHANNEL+':intent'; const SESSION_COMMITTED_KEY=ACCOUNT_SESSION_CHANNEL+':committed';",
     "const $=id=>({textContent:'',classList:{add(){},remove(){}},removeAttribute(){},src:''});",
     extractFunction("sharedSessionIntent"),
+    extractFunction("sharedCommittedSessionIntent"),
     extractFunction("actorSnapshot"),
     extractFunction("actorIsCurrent"),
     extractFunction("storagePrefix"),
@@ -58,11 +59,13 @@ test("Captured actor becomes stale after account change and retains only its own
         currentActorIntent = intent;
         currentSessionIntent = intent;
         localStorage.setItem(SESSION_INTENT_KEY,intent);
+        localStorage.setItem(SESSION_COMMITTED_KEY,intent);
       },
       snapshot: () => actorSnapshot(),
       current: a => actorIsCurrent(a),
       activate: (v,intent) => {
         localStorage.setItem(SESSION_INTENT_KEY,intent);
+        localStorage.setItem(SESSION_COMMITTED_KEY,intent);
         return activateActor(v,intent);
       },
       lastKey: a => lastOrderKey(a),
