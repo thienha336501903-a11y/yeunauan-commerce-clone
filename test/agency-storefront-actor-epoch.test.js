@@ -86,7 +86,7 @@ test("Captured actor becomes stale after account change and retains only its own
 
   const h = context.__actorTest;
   h.setConfig({ agency: { id: "agency-1" } });
-  h.setMember("member-A");
+  h.setMember("member-A","intent-A");
   const actorA = h.snapshot();
 
   assert.equal(h.current(actorA), true);
