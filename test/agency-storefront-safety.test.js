@@ -35,3 +35,15 @@ test("Agency storefront binds async order mutations to captured actor epoch",()=
   assert.match(html,/clearPaymentState\(\)/);
   assert.match(html,/system-b-agency-commerce-session-v1/);
 });
+
+
+test("FG1-04 actor state is bound to accepted session intent and protected requests share the session lock",()=>{
+  assert.match(html,/intent:String\(currentActorIntent/);
+  assert.match(html,/actor\.intent===currentActorIntent/);
+  assert.match(html,/sharedSessionIntent\(\)/);
+  assert.match(html,/withProtectedSessionLock\(actor/);
+  assert.match(html,/navigator\.locks\.request\(ACCOUNT_SESSION_CHANNEL\+'\\:writes'/);
+  assert.match(html,/membershipId:String\(d\.membershipId/);
+  assert.match(html,/nextMember!==expectedMember/);
+  assert.match(html,/sessionSerializationAvailable\(\)/);
+});

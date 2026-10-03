@@ -69,6 +69,7 @@ let config=null,tokenClient=null,currentOrderId='',currentMembershipId='';
 let actorEpoch=0,sessionRequestSeq=0,accountSessionBroadcast=null;
 let googlePrepared=false,loginAttemptSeq=0,activeLoginAttempt=null;
 let sessionWriteQueue=Promise.resolve(),sessionWritesPending=0,sessionReconciliationRequired=false;
+let currentActorIntent='';
 const ACCOUNT_SESSION_CHANNEL='system-b-agency-commerce-session-v1';
 const SESSION_INTENT_KEY=ACCOUNT_SESSION_CHANNEL+':intent';
 let currentSessionIntent='';
@@ -79,14 +80,19 @@ function actorSnapshot(){
   return Object.freeze({
     agencyId:String(config?.agency?.id||'').trim(),
     memberId:String(currentMembershipId||'').trim(),
+    intent:String(currentActorIntent||'').trim(),
     epoch:actorEpoch
   });
 }
 function actorIsCurrent(actor){
+  const shared=sharedSessionIntent();
   return !!actor&&
     actor.epoch===actorEpoch&&
     actor.agencyId===String(config?.agency?.id||'').trim()&&
     actor.memberId===String(currentMembershipId||'').trim()&&
+    !!actor.intent&&
+    actor.intent===currentActorIntent&&
+    (!shared||shared===actor.intent)&&
     !!actor.agencyId&&!!actor.memberId;
 }
 function storagePrefix(actor=actorSnapshot()){
@@ -144,6 +150,32 @@ function sessionIntentIsCurrent(intent){
   const shared=sharedSessionIntent();
   return !!intent&&intent===currentSessionIntent&&(!shared||shared===intent);
 }
+function sessionSerializationAvailable(){
+  return typeof window.navigator?.locks?.request==='function';
+}
+function adoptSharedSessionIntent(){
+  const shared=sharedSessionIntent();
+  if(shared){
+    currentSessionIntent=shared;
+    return shared;
+  }
+  return beginSessionIntent();
+}
+function staleActorError(){
+  const error=new Error('Phiên Agency đã thay đổi. Vui lòng thử lại.');
+  error.code='stale_agency_actor';
+  return error;
+}
+async function withProtectedSessionLock(actor,work){
+  if(!sessionSerializationAvailable())throw new Error('Trình duyệt không hỗ trợ khóa phiên an toàn. Vui lòng dùng trình duyệt mới hơn.');
+  if(!actorIsCurrent(actor))throw staleActorError();
+  return window.navigator.locks.request(ACCOUNT_SESSION_CHANNEL+':writes',async()=>{
+    if(!actorIsCurrent(actor))throw staleActorError();
+    const result=await work();
+    if(!actorIsCurrent(actor))throw staleActorError();
+    return result;
+  });
+}
 function cancelGoogleLogin(){
   loginAttemptSeq+=1;
   activeLoginAttempt=null;
@@ -153,15 +185,16 @@ function loginAttemptIsCurrent(attempt){
   return !!attempt&&activeLoginAttempt===attempt&&attempt.version===loginAttemptSeq&&sessionIntentIsCurrent(attempt.intent);
 }
 function enqueueSessionWrite(work){
+  if(!sessionSerializationAvailable()){
+    return Promise.reject(new Error('Trình duyệt không hỗ trợ khóa phiên an toàn. Vui lòng dùng trình duyệt mới hơn.'));
+  }
   sessionWritesPending+=1;
   updateGoogleLoginButton();
   const previous=sessionWriteQueue;
-  const run=locked=>previous.then(()=>work(locked),()=>work(locked));
-  // Reserve the shared lock immediately, preserving the order of user intents
-  // across tabs even when an earlier local POST is still in flight.
-  const queued=window.navigator?.locks?.request
-    ?window.navigator.locks.request(ACCOUNT_SESSION_CHANNEL+':writes',()=>run(true))
-    :run(false);
+  const run=()=>previous.then(()=>work(true),()=>work(true));
+  // Reserve the cross-tab lock immediately. No credential-changing POST is
+  // allowed on browsers that cannot provide this serialization boundary.
+  const queued=window.navigator.locks.request(ACCOUNT_SESSION_CHANNEL+':writes',run);
   const result=queued.finally(()=>{
     sessionWritesPending-=1;
     updateGoogleLoginButton();
@@ -184,8 +217,12 @@ function accountSessionChannel(){
       // An older tab's notification can arrive after this tab's newer intent.
       // Ignore it only when the shared nonce confirms our pending intent; a
       // compensating cookie deletion always invalidates, including in fallback.
-      if(!event.data.reconcile&&event.data.intent&&activeLoginAttempt&&
-        sharedSessionIntent()===activeLoginAttempt.intent)return;
+      const eventIntent=String(event.data.intent||'');
+      const shared=sharedSessionIntent();
+      if(!event.data.reconcile&&eventIntent){
+        if(activeLoginAttempt&&shared===activeLoginAttempt.intent&&eventIntent!==activeLoginAttempt.intent)return;
+        if(currentActorIntent&&shared===currentActorIntent&&eventIntent!==currentActorIntent)return;
+      }
       invalidateActorState({broadcast:false});
       setNotice('Phiên Agency đã thay đổi ở tab khác. Vui lòng đăng nhập lại.');
     });
@@ -198,18 +235,22 @@ function invalidateActorState({broadcast=true,clearStorage=false}={}){
   if(clearStorage)clearCurrentAccountStorage(previous);
   actorEpoch+=1;
   currentMembershipId='';
+  currentActorIntent='';
   clearPaymentState();
   showLoggedOutState();
   if(broadcast){try{accountSessionChannel()?.postMessage({type:'clear',intent:currentSessionIntent})}catch{}}
 }
-function activateActor(memberId){
+function activateActor(memberId,intent){
   const next=String(memberId||'').trim();
-  if(!next)return false;
-  if(currentMembershipId!==next){
+  const acceptedIntent=String(intent||'').trim();
+  if(!next||!acceptedIntent||acceptedIntent!==sharedSessionIntent())return false;
+  if(currentMembershipId!==next||currentActorIntent!==acceptedIntent){
     actorEpoch+=1;
     currentMembershipId=next;
+    currentActorIntent=acceptedIntent;
+    currentSessionIntent=acceptedIntent;
     clearPaymentState();
-    try{accountSessionChannel()?.postMessage({type:'clear',intent:currentSessionIntent||sharedSessionIntent()})}catch{}
+    try{accountSessionChannel()?.postMessage({type:'clear',intent:acceptedIntent})}catch{}
   }
   return true;
 }
@@ -245,23 +286,44 @@ function renderOffers(){
   document.querySelectorAll('[data-buy]').forEach(btn=>btn.addEventListener('click',()=>checkout(btn.dataset.buy,btn)));
 }
 
-async function session(expectedAttempt=null){
+async function session(expectedAttempt=null,expectedPrincipal=null){
+  if(!sessionSerializationAvailable()){
+    invalidateActorState({broadcast:false});
+    setNotice('Trình duyệt không hỗ trợ khóa phiên an toàn. Không thể mở phiên Agency.','error');
+    return false;
+  }
   if(sessionReconciliationRequired||sessionWritesPending>0&&!loginAttemptIsCurrent(expectedAttempt))return false;
   const requestSeq=++sessionRequestSeq;
   const startEpoch=actorEpoch;
-  const startIntent=sharedSessionIntent();
+  const startIntent=expectedAttempt?.intent||currentSessionIntent||sharedSessionIntent()||adoptSharedSessionIntent();
   const r=await fetch('/api/config?agencySession=1',{credentials:'same-origin',cache:'no-store'});
   const d=await r.json().catch(()=>({}));
   if(requestSeq!==sessionRequestSeq||startEpoch!==actorEpoch||startIntent!==sharedSessionIntent()||expectedAttempt&&!loginAttemptIsCurrent(expectedAttempt))return false;
 
   if(r.ok&&d.success){
     const nextMember=String(d.member?.id||'').trim();
+    const nextUser=String(d.member?.userId||'').trim();
     if(!nextMember){
       invalidateActorState({broadcast:true});
       setNotice('Phiên Agency không hợp lệ.','error');
       return false;
     }
-    activateActor(nextMember);
+    if(expectedPrincipal){
+      const expectedMember=String(expectedPrincipal.membershipId||'').trim();
+      const expectedUser=String(expectedPrincipal.userId||'').trim();
+      if(!expectedMember||nextMember!==expectedMember||expectedUser&&nextUser!==expectedUser){
+        invalidateActorState({broadcast:true});
+        sessionReconciliationRequired=true;
+        await clearSessionCookie();
+        setNotice('BLOCKED: Phiên đăng nhập không khớp tài khoản Google vừa xác thực.','error');
+        return false;
+      }
+    }
+    if(!activateActor(nextMember,startIntent)){
+      invalidateActorState({broadcast:true});
+      setNotice('BLOCKED: Phiên Agency đã thay đổi.','error');
+      return false;
+    }
     $('authCard').classList.add('hidden');
     $('memberCard').classList.remove('hidden');
     $('logout').classList.remove('hidden');
@@ -314,7 +376,12 @@ async function completeGoogleLogin(resp,attempt){
         const d=await r.json().catch(()=>({}));
         if(!loginAttemptIsCurrent(attempt))return;
         if(!r.ok||!d.success)throw new Error(d.error||'Đăng nhập thất bại.');
-        await session(attempt);
+        const expectedPrincipal={
+          membershipId:String(d.membershipId||'').trim(),
+          userId:String(d.userId||'').trim()
+        };
+        if(!expectedPrincipal.membershipId||!expectedPrincipal.userId)throw new Error('Phản hồi đăng nhập thiếu principal binding.');
+        await session(attempt,expectedPrincipal);
       }finally{
         // A discarded POST can already have applied HttpOnly Set-Cookie.
         // Reconcile before releasing the write queue/lock, rather than aborting
@@ -336,6 +403,11 @@ async function completeGoogleLogin(resp,attempt){
 }
 function beginGoogleLogin(){
   if(!googlePrepared||activeLoginAttempt||sessionWritesPending>0)return;
+  if(!sessionSerializationAvailable()){
+    invalidateActorState({broadcast:false});
+    setNotice('Trình duyệt không hỗ trợ khóa phiên an toàn. Google login bị chặn.','error');
+    return;
+  }
   const intent=beginSessionIntent();
   invalidateActorState({broadcast:true});
   const attempt={version:++loginAttemptSeq,intent,callbackStarted:false};
@@ -361,6 +433,11 @@ function beginGoogleLogin(){
 }
 async function prepareGoogle(){
   if(!config?.googleClientId){$('googleLogin').textContent='Google OAuth chưa cấu hình';return}
+  if(!sessionSerializationAvailable()){
+    $('googleLogin').textContent='Trình duyệt chưa hỗ trợ phiên an toàn';
+    $('googleLogin').disabled=true;
+    return;
+  }
   for(let i=0;i<50&&!googleReady();i++) await new Promise(r=>setTimeout(r,100));
   if(!googleReady()){ $('googleLogin').textContent='Không tải được Google'; return; }
   googlePrepared=true;
@@ -372,25 +449,28 @@ async function checkout(offeringId,button){
   const actor=actorSnapshot();
   button.disabled=true;
   try{
-    const idempotencyOrderCode=logicalCheckoutKey(offeringId,actor);
-    const r=await fetch('/api/register',{
-      method:'POST',credentials:'same-origin',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({offeringId,idempotencyOrderCode})
-    });
-    const d=await r.json().catch(()=>({}));
-    if(!actorIsCurrent(actor))return;
-    if(!r.ok||!d.success){
-      if(r.status===401){
-        invalidateActorState({broadcast:true});
-        throw new Error('Vui lòng đăng nhập trước khi thanh toán.');
+    await withProtectedSessionLock(actor,async()=>{
+      if(!actorIsCurrent(actor))throw staleActorError();
+      const idempotencyOrderCode=logicalCheckoutKey(offeringId,actor);
+      const r=await fetch('/api/register',{
+        method:'POST',credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({offeringId,idempotencyOrderCode})
+      });
+      const d=await r.json().catch(()=>({}));
+      if(!actorIsCurrent(actor))throw staleActorError();
+      if(!r.ok||!d.success){
+        if(r.status===401){
+          invalidateActorState({broadcast:true});
+          throw new Error('Vui lòng đăng nhập trước khi thanh toán.');
+        }
+        throw new Error(d.error||'Không tạo được đơn Agency.');
       }
-      throw new Error(d.error||'Không tạo được đơn Agency.');
-    }
-    showOrder(d.order,actor);
-    if(actorIsCurrent(actor))clearCheckoutIntent(offeringId,actor);
+      if(!showOrder(d.order,actor))throw staleActorError();
+      if(actorIsCurrent(actor))clearCheckoutIntent(offeringId,actor);
+    });
   }catch(e){
-    if(actorIsCurrent(actor)||!currentMembershipId)setNotice(e.message||String(e),'error');
+    if(e?.code!=='stale_agency_actor'&&(actorIsCurrent(actor)||!currentMembershipId))setNotice(e.message||String(e),'error');
   }finally{
     if(button?.isConnected)button.disabled=false;
   }
@@ -419,19 +499,28 @@ function showOrder(order,actor=actorSnapshot()){
 async function refreshOrder(){
   const actor=actorSnapshot();
   if(!actorIsCurrent(actor))return;
-  const key=lastOrderKey(actor);
-  const orderId=currentOrderId||(key?localStorage.getItem(key)||'':'');
-  if(!orderId)return;
-  const r=await fetch('/api/orders?id='+encodeURIComponent(orderId),{credentials:'same-origin',cache:'no-store'});
-  const d=await r.json().catch(()=>({}));
-  if(!actorIsCurrent(actor)||orderId!==currentOrderId&&currentOrderId)return;
-  if(!r.ok||!d.success){
-    if(r.status===401)invalidateActorState({broadcast:true});
-    else setNotice(d.error||'Không đọc được đơn.','error');
-    return;
+  try{
+    await withProtectedSessionLock(actor,async()=>{
+      if(!actorIsCurrent(actor))throw staleActorError();
+      const key=lastOrderKey(actor);
+      const orderId=currentOrderId||(key?localStorage.getItem(key)||'':'');
+      if(!orderId)return;
+      const r=await fetch('/api/orders?id='+encodeURIComponent(orderId),{credentials:'same-origin',cache:'no-store'});
+      const d=await r.json().catch(()=>({}));
+      if(!actorIsCurrent(actor))throw staleActorError();
+      if(orderId!==currentOrderId&&currentOrderId)return;
+      if(!r.ok||!d.success){
+        if(r.status===401)invalidateActorState({broadcast:true});
+        else setNotice(d.error||'Không đọc được đơn.','error');
+        return;
+      }
+      if(!actorIsCurrent(actor))throw staleActorError();
+      $('orderStatus').textContent='Trạng thái: '+String(d.order?.status||'');
+      setNotice('Đã cập nhật trạng thái đơn.','ok');
+    });
+  }catch(e){
+    if(e?.code!=='stale_agency_actor'&&(actorIsCurrent(actor)||!currentMembershipId))setNotice(e.message||String(e),'error');
   }
-  $('orderStatus').textContent='Trạng thái: '+String(d.order?.status||'');
-  setNotice('Đã cập nhật trạng thái đơn.','ok');
 }
 
 $('googleLogin').addEventListener('click',beginGoogleLogin);
@@ -444,11 +533,16 @@ $('logout').addEventListener('click',async()=>{
   const logoutEpoch=actorEpoch;
   setNotice('Đang đăng xuất…');
   try{
-    await enqueueSessionWrite(async crossTabLocked=>{
+    if(sessionSerializationAvailable()){
+      await enqueueSessionWrite(async()=>{
+        await clearSessionCookie();
+        if(logoutEpoch===actorEpoch)setNotice('Đã đăng xuất Agency.');
+      });
+    }else{
       await clearSessionCookie();
-      if(!crossTabLocked){try{accountSessionChannel()?.postMessage({type:'clear',reconcile:true})}catch{}}
+      try{accountSessionChannel()?.postMessage({type:'clear',reconcile:true,intent:currentSessionIntent})}catch{}
       if(logoutEpoch===actorEpoch)setNotice('Đã đăng xuất Agency.');
-    });
+    }
   }catch(error){setNotice(error.message||'Chưa hoàn tất đăng xuất. Vui lòng thử lại.','error')}
 });
 $('refreshOrder').addEventListener('click',refreshOrder);
@@ -456,6 +550,7 @@ $('refreshOrder').addEventListener('click',refreshOrder);
 (async()=>{
   try{
     accountSessionChannel();
+    adoptSharedSessionIntent();
     await loadConfig();
     await session();
     await prepareGoogle();

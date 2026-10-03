@@ -36,9 +36,10 @@ function storage() {
 
 test("Captured actor becomes stale after account change and retains only its own namespace", () => {
   const helperSource = [
-    "let config=null,currentMembershipId=''; let actorEpoch=0,accountSessionBroadcast=null;",
-    "const ACCOUNT_SESSION_CHANNEL='system-b-agency-commerce-session-v1';",
+    "let config=null,currentMembershipId='',currentActorIntent='',currentSessionIntent=''; let actorEpoch=0,accountSessionBroadcast=null;",
+    "const ACCOUNT_SESSION_CHANNEL='system-b-agency-commerce-session-v1'; const SESSION_INTENT_KEY=ACCOUNT_SESSION_CHANNEL+':intent';",
     "const $=id=>({textContent:'',classList:{add(){},remove(){}},removeAttribute(){},src:''});",
+    extractFunction("sharedSessionIntent"),
     extractFunction("actorSnapshot"),
     extractFunction("actorIsCurrent"),
     extractFunction("storagePrefix"),
@@ -52,10 +53,18 @@ test("Captured actor becomes stale after account change and retains only its own
     `
     globalThis.__actorTest = {
       setConfig: v => { config = v; },
-      setMember: v => { currentMembershipId = v; },
+      setMember: (v,intent) => {
+        currentMembershipId = v;
+        currentActorIntent = intent;
+        currentSessionIntent = intent;
+        localStorage.setItem(SESSION_INTENT_KEY,intent);
+      },
       snapshot: () => actorSnapshot(),
       current: a => actorIsCurrent(a),
-      activate: v => activateActor(v),
+      activate: (v,intent) => {
+        localStorage.setItem(SESSION_INTENT_KEY,intent);
+        return activateActor(v,intent);
+      },
       lastKey: a => lastOrderKey(a),
       intentKey: (o,a) => checkoutIntentKey(o,a)
     };
@@ -84,7 +93,7 @@ test("Captured actor becomes stale after account change and retains only its own
   assert.equal(h.lastKey(actorA), "agency:agency-1:member-A:last_order");
   assert.equal(h.intentKey("offer-1", actorA), "agency:agency-1:member-A:checkout:offer-1");
 
-  h.activate("member-B");
+  h.activate("member-B","intent-B");
 
   assert.equal(h.current(actorA), false);
   assert.equal(h.lastKey(actorA), "agency:agency-1:member-A:last_order");

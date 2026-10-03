@@ -8,7 +8,7 @@ const script = fs.readFileSync(new URL('../agency-storefront.html', import.meta.
 const settle = async () => { for (let i = 0; i < 50; i++) await Promise.resolve(); };
 const response = (data, status = 200) => ({ ok: status < 400, status, json: async () => data });
 
-function sharedBrowser({ locks = false, deferredBroadcasts = false } = {}) {
+function sharedBrowser({ locks = true, deferredBroadcasts = false } = {}) {
   const tabs = [], channels = [], posts = [], writes = [], notifications = [], stored = new Map();
   let cookie = '', lockQueue = Promise.resolve(), deleteFailure = false;
   class BC {
@@ -37,14 +37,27 @@ function sharedBrowser({ locks = false, deferredBroadcasts = false } = {}) {
         if (options.method === 'POST') {
           writes.push('POST');
           const token = JSON.parse(options.body).accessToken;
-          return new Promise(resolve => posts.push({ token, finish() { cookie = token; resolve(response({ success: true })); } }));
+          return new Promise(resolve => posts.push({
+            token,
+            finish() {
+              cookie = token;
+              resolve(response({
+                success: true,
+                membershipId: token,
+                userId: 'user-' + token
+              }));
+            }
+          }));
         }
         if (options.method === 'DELETE') {
           writes.push('DELETE');
           if (deleteFailure) throw new Error('synthetic_delete_network_failure');
           cookie = ''; return response({ success: true });
         }
-        const observed = cookie ? response({ success: true, member: { id: cookie, displayName: cookie } }) : response({ success: false }, 401);
+        const observed = cookie ? response({
+          success: true,
+          member: { id: cookie, userId: 'user-' + cookie, displayName: cookie }
+        }) : response({ success: false }, 401);
         if (sessionGate) { const gate = sessionGate; sessionGate = null; await gate; }
         return observed;
       }
@@ -94,16 +107,24 @@ test('Canceled OAuth callback cannot issue POST after a newer attempt succeeds',
   assert.equal(h.state('currentMembershipId'), 'member-B');
 });
 
-for (const locks of [false, true]) {
-  test(`Cross-tab logout invalidates a pending sign-in and its final cookie (Web Locks: ${locks})`, async () => {
-    const browser = sharedBrowser({ locks }), a = await browser.tab(), b = await browser.tab();
-    const login = a.start().options.callback({ access_token: 'member-A' }); await settle();
-    const logout = b.click('logout'); await settle();
-    browser.posts[0].finish(); await Promise.all([login, logout]);
-    assert.equal(browser.cookie, '');
-    assert.equal(a.state('currentMembershipId'), ''); assert.equal(b.state('currentMembershipId'), '');
-  });
-}
+test('Cross-tab logout invalidates a pending sign-in and its final cookie with Web Locks', async () => {
+  const browser = sharedBrowser({ locks: true }), a = await browser.tab(), b = await browser.tab();
+  const login = a.start().options.callback({ access_token: 'member-A' }); await settle();
+  const logout = b.click('logout'); await settle();
+  browser.posts[0].finish(); await Promise.all([login, logout]);
+  assert.equal(browser.cookie, '');
+  assert.equal(a.state('currentMembershipId'), ''); assert.equal(b.state('currentMembershipId'), '');
+});
+
+test('Without Web Locks Google login and authenticated UI fail closed', async () => {
+  const browser = sharedBrowser({ locks: false }), h = await browser.tab();
+  h.click('googleLogin');
+  await settle();
+  assert.equal(browser.posts.length, 0);
+  assert.equal(h.state('currentMembershipId'), '');
+  assert.equal(h.get('memberCard').classList.contains('hidden'), true);
+  assert.match(h.get('googleLogin').textContent, /phiên an toàn/i);
+});
 
 test('Same-origin Web Locks serialize reverse cross-tab sign-ins and retain the newer account', async () => {
   const browser = sharedBrowser({ locks: true }), a = await browser.tab(), b = await browser.tab();
@@ -170,16 +191,6 @@ test('Delayed cross-tab CLEAR still denies an obsolete POST before the logout co
   const logout = b.click('logout'); await settle();
   browser.posts[0].finish(); await Promise.all([login, logout]); browser.flushBroadcasts();
   assert.equal(browser.cookie, ''); assert.equal(a.state('currentMembershipId'), '');
-});
-
-test('Without cross-tab locks an overlapping obsolete response reconciles to logged out in both tabs', async () => {
-  const browser = sharedBrowser(), a = await browser.tab(), b = await browser.tab();
-  const oldLogin = a.start().options.callback({ access_token: 'member-A' }); await settle();
-  const newLogin = b.start().options.callback({ access_token: 'member-B' }); await settle();
-  browser.posts[1].finish(); await newLogin;
-  browser.posts[0].finish(); await oldLogin;
-  assert.equal(browser.cookie, '');
-  assert.equal(a.state('currentMembershipId'), ''); assert.equal(b.state('currentMembershipId'), '');
 });
 
 test('A delayed session GET cannot repaint the prior account while its cross-tab CLEAR is still queued', async () => {
