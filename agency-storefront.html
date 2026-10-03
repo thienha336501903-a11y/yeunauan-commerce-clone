@@ -67,7 +67,11 @@ h1{margin:0;font-size:28px}.muted{color:#756b64;font-size:13px}
 <script>
 let config=null,tokenClient=null,currentOrderId='',currentMembershipId='';
 let actorEpoch=0,sessionRequestSeq=0,accountSessionBroadcast=null;
+let googlePrepared=false,loginAttemptSeq=0,activeLoginAttempt=null;
+let sessionWriteQueue=Promise.resolve(),sessionWritesPending=0,sessionReconciliationRequired=false;
 const ACCOUNT_SESSION_CHANNEL='system-b-agency-commerce-session-v1';
+const SESSION_INTENT_KEY=ACCOUNT_SESSION_CHANNEL+':intent';
+let currentSessionIntent='';
 const $=id=>document.getElementById(id);
 const money=n=>new Intl.NumberFormat('vi-VN').format(Number(n||0))+' đ';
 
@@ -123,29 +127,80 @@ function showLoggedOutState(){
   $('memberCard').classList.add('hidden');
   $('logout').classList.add('hidden');
 }
+function updateGoogleLoginButton(){
+  $('googleLogin').disabled=!googlePrepared||!!activeLoginAttempt||sessionWritesPending>0;
+}
+function sharedSessionIntent(){
+  try{return localStorage.getItem(SESSION_INTENT_KEY)||''}catch{return ''}
+}
+function beginSessionIntent(){
+  currentSessionIntent=crypto.randomUUID();
+  // Only a transition nonce is shared; credentials and account context remain
+  // in this tab/server. This also rejects stale writes before delayed BC events.
+  try{localStorage.setItem(SESSION_INTENT_KEY,currentSessionIntent)}catch{}
+  return currentSessionIntent;
+}
+function sessionIntentIsCurrent(intent){
+  const shared=sharedSessionIntent();
+  return !!intent&&intent===currentSessionIntent&&(!shared||shared===intent);
+}
+function cancelGoogleLogin(){
+  loginAttemptSeq+=1;
+  activeLoginAttempt=null;
+  updateGoogleLoginButton();
+}
+function loginAttemptIsCurrent(attempt){
+  return !!attempt&&activeLoginAttempt===attempt&&attempt.version===loginAttemptSeq&&sessionIntentIsCurrent(attempt.intent);
+}
+function enqueueSessionWrite(work){
+  sessionWritesPending+=1;
+  updateGoogleLoginButton();
+  const previous=sessionWriteQueue;
+  const run=locked=>previous.then(()=>work(locked),()=>work(locked));
+  // Reserve the shared lock immediately, preserving the order of user intents
+  // across tabs even when an earlier local POST is still in flight.
+  const queued=window.navigator?.locks?.request
+    ?window.navigator.locks.request(ACCOUNT_SESSION_CHANNEL+':writes',()=>run(true))
+    :run(false);
+  const result=queued.finally(()=>{
+    sessionWritesPending-=1;
+    updateGoogleLoginButton();
+  });
+  sessionWriteQueue=result.catch(()=>{});
+  return result;
+}
+async function clearSessionCookie(){
+  sessionReconciliationRequired=true;
+  const r=await fetch('/api/config?agencySession=1',{method:'DELETE',credentials:'same-origin',cache:'no-store'});
+  if(!r.ok)throw new Error('Chưa hoàn tất đăng xuất. Vui lòng thử lại.');
+  sessionReconciliationRequired=false;
+}
 function accountSessionChannel(){
   if(!('BroadcastChannel'in window))return null;
   if(!accountSessionBroadcast){
     accountSessionBroadcast=new BroadcastChannel(ACCOUNT_SESSION_CHANNEL);
     accountSessionBroadcast.addEventListener('message',event=>{
       if(event.data?.type!=='clear')return;
-      actorEpoch+=1;
-      currentMembershipId='';
-      clearPaymentState();
-      showLoggedOutState();
+      // An older tab's notification can arrive after this tab's newer intent.
+      // Ignore it only when the shared nonce confirms our pending intent; a
+      // compensating cookie deletion always invalidates, including in fallback.
+      if(!event.data.reconcile&&event.data.intent&&activeLoginAttempt&&
+        sharedSessionIntent()===activeLoginAttempt.intent)return;
+      invalidateActorState({broadcast:false});
       setNotice('Phiên Agency đã thay đổi ở tab khác. Vui lòng đăng nhập lại.');
     });
   }
   return accountSessionBroadcast;
 }
 function invalidateActorState({broadcast=true,clearStorage=false}={}){
+  cancelGoogleLogin();
   const previous=actorSnapshot();
   if(clearStorage)clearCurrentAccountStorage(previous);
   actorEpoch+=1;
   currentMembershipId='';
   clearPaymentState();
   showLoggedOutState();
-  if(broadcast){try{accountSessionChannel()?.postMessage({type:'clear'})}catch{}}
+  if(broadcast){try{accountSessionChannel()?.postMessage({type:'clear',intent:currentSessionIntent})}catch{}}
 }
 function activateActor(memberId){
   const next=String(memberId||'').trim();
@@ -154,7 +209,7 @@ function activateActor(memberId){
     actorEpoch+=1;
     currentMembershipId=next;
     clearPaymentState();
-    try{accountSessionChannel()?.postMessage({type:'clear'})}catch{}
+    try{accountSessionChannel()?.postMessage({type:'clear',intent:currentSessionIntent||sharedSessionIntent()})}catch{}
   }
   return true;
 }
@@ -190,12 +245,14 @@ function renderOffers(){
   document.querySelectorAll('[data-buy]').forEach(btn=>btn.addEventListener('click',()=>checkout(btn.dataset.buy,btn)));
 }
 
-async function session(){
+async function session(expectedAttempt=null){
+  if(sessionReconciliationRequired||sessionWritesPending>0&&!loginAttemptIsCurrent(expectedAttempt))return false;
   const requestSeq=++sessionRequestSeq;
   const startEpoch=actorEpoch;
+  const startIntent=sharedSessionIntent();
   const r=await fetch('/api/config?agencySession=1',{credentials:'same-origin',cache:'no-store'});
   const d=await r.json().catch(()=>({}));
-  if(requestSeq!==sessionRequestSeq||startEpoch!==actorEpoch)return false;
+  if(requestSeq!==sessionRequestSeq||startEpoch!==actorEpoch||startIntent!==sharedSessionIntent()||expectedAttempt&&!loginAttemptIsCurrent(expectedAttempt))return false;
 
   if(r.ok&&d.success){
     const nextMember=String(d.member?.id||'').trim();
@@ -236,29 +293,78 @@ async function session(){
 }
 
 function googleReady(){return !!window.google?.accounts?.oauth2}
+async function completeGoogleLogin(resp,attempt){
+  if(!loginAttemptIsCurrent(attempt)||attempt.callbackStarted)return;
+  attempt.callbackStarted=true;
+  try{
+    if(!resp?.access_token)throw new Error('Không nhận được Google token.');
+    setNotice('Đang xác thực Google…');
+    await enqueueSessionWrite(async crossTabLocked=>{
+      if(!loginAttemptIsCurrent(attempt))return;
+      if(sessionReconciliationRequired)await clearSessionCookie();
+      if(!loginAttemptIsCurrent(attempt))return;
+      let posted=false;
+      try{
+        posted=true;
+        const r=await fetch('/api/config?agencySession=1',{
+          method:'POST',credentials:'same-origin',cache:'no-store',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({accessToken:resp.access_token})
+        });
+        const d=await r.json().catch(()=>({}));
+        if(!loginAttemptIsCurrent(attempt))return;
+        if(!r.ok||!d.success)throw new Error(d.error||'Đăng nhập thất bại.');
+        await session(attempt);
+      }finally{
+        // A discarded POST can already have applied HttpOnly Set-Cookie.
+        // Reconcile before releasing the write queue/lock, rather than aborting
+        // the request or merely ignoring its JSON response.
+        if(posted&&!loginAttemptIsCurrent(attempt)){
+          await clearSessionCookie();
+          // Without cross-tab locks, another tab may have been overwritten by
+          // this late cookie. Invalidate its UI after the compensating DELETE.
+          if(!crossTabLocked){try{accountSessionChannel()?.postMessage({type:'clear',reconcile:true})}catch{}}
+        }
+      }
+    });
+  }catch(error){
+    if(loginAttemptIsCurrent(attempt)||sessionReconciliationRequired)setNotice(error.message||'Đăng nhập thất bại.','error');
+  }finally{
+    if(activeLoginAttempt===attempt)activeLoginAttempt=null;
+    updateGoogleLoginButton();
+  }
+}
+function beginGoogleLogin(){
+  if(!googlePrepared||activeLoginAttempt||sessionWritesPending>0)return;
+  const intent=beginSessionIntent();
+  invalidateActorState({broadcast:true});
+  const attempt={version:++loginAttemptSeq,intent,callbackStarted:false};
+  activeLoginAttempt=attempt;
+  updateGoogleLoginButton();
+  try{
+    tokenClient=google.accounts.oauth2.initTokenClient({
+      client_id:config.googleClientId,
+      scope:'openid email profile',
+      prompt:'select_account',
+      callback:resp=>completeGoogleLogin(resp,attempt),
+      error_callback:()=>{
+        if(!loginAttemptIsCurrent(attempt))return;
+        cancelGoogleLogin();
+        setNotice('Google chưa hoàn tất đăng nhập.','error');
+      }
+    });
+    tokenClient.requestAccessToken({prompt:'select_account'});
+  }catch(error){
+    cancelGoogleLogin();
+    setNotice(error.message||'Google chưa hoàn tất đăng nhập.','error');
+  }
+}
 async function prepareGoogle(){
   if(!config?.googleClientId){$('googleLogin').textContent='Google OAuth chưa cấu hình';return}
   for(let i=0;i<50&&!googleReady();i++) await new Promise(r=>setTimeout(r,100));
   if(!googleReady()){ $('googleLogin').textContent='Không tải được Google'; return; }
-  tokenClient=google.accounts.oauth2.initTokenClient({
-    client_id:config.googleClientId,
-    scope:'openid email profile',
-    prompt:'select_account',
-    callback:async resp=>{
-      if(!resp?.access_token){setNotice('Không nhận được Google token.','error');return}
-      setNotice('Đang xác thực Google…');
-      const r=await fetch('/api/config?agencySession=1',{
-        method:'POST',credentials:'same-origin',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({accessToken:resp.access_token})
-      });
-      const d=await r.json().catch(()=>({}));
-      if(!r.ok||!d.success){setNotice(d.error||'Đăng nhập thất bại.','error');return}
-      await session();
-    },
-    error_callback:()=>setNotice('Google chưa hoàn tất đăng nhập.','error')
-  });
-  $('googleLogin').disabled=false;
+  googlePrepared=true;
+  updateGoogleLoginButton();
   $('googleLogin').textContent='Đăng nhập Google';
 }
 
@@ -328,14 +434,22 @@ async function refreshOrder(){
   setNotice('Đã cập nhật trạng thái đơn.','ok');
 }
 
-$('googleLogin').addEventListener('click',()=>tokenClient?.requestAccessToken({prompt:'select_account'}));
+$('googleLogin').addEventListener('click',beginGoogleLogin);
 $('logout').addEventListener('click',async()=>{
+  beginSessionIntent();
   const actor=actorSnapshot();
   clearCurrentAccountStorage(actor);
   invalidateActorState({broadcast:true});
+  sessionReconciliationRequired=true;
+  const logoutEpoch=actorEpoch;
   setNotice('Đang đăng xuất…');
-  try{await fetch('/api/config?agencySession=1',{method:'DELETE',credentials:'same-origin'})}catch{}
-  await session();
+  try{
+    await enqueueSessionWrite(async crossTabLocked=>{
+      await clearSessionCookie();
+      if(!crossTabLocked){try{accountSessionChannel()?.postMessage({type:'clear',reconcile:true})}catch{}}
+      if(logoutEpoch===actorEpoch)setNotice('Đã đăng xuất Agency.');
+    });
+  }catch(error){setNotice(error.message||'Chưa hoàn tất đăng xuất. Vui lòng thử lại.','error')}
 });
 $('refreshOrder').addEventListener('click',refreshOrder);
 
