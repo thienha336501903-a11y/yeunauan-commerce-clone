@@ -8,6 +8,7 @@ import { resolveRequestRoute } from '../utils/agency-routing.js';
 import { getAgencyCommerceConfig } from '../utils/agency-commerce.js';
 import { requireAgencyMembership } from '../utils/agency-auth.js';
 import { bridgeGoogleAccessTokenToSupabaseSession } from '../utils/agency-google-auth-bridge.js';
+import { getAgencySurfaceOriginOrFallback } from '../utils/agency-surface.js';
 
 const validSlug = value => /^[a-z0-9_-]+$/.test(String(value || '').trim());
 
@@ -151,13 +152,23 @@ export default async function handler(req, res) {
       return res.status(configResult.status || 500).json({ error: configResult.error, code: configResult.code });
     }
     const runtime = cloneConfig();
+    const tenantLmsOrigin = await getAgencySurfaceOriginOrFallback(
+      routeDecision.tenant.agencyId,
+      "lms",
+      runtime.lmsPublicUrl,
+      {
+        supabaseClient: options.supabaseClient || supabase,
+        allowUntypedFallback: true,
+        sourceDomainSurface: routeDecision.tenant.domainSurface
+      }
+    );
     return res.status(200).json({
       success: true,
       agency: configResult.agency,
       banks: configResult.banks,
       offerings: configResult.offerings,
       googleClientId: process.env.GOOGLE_CLIENT_ID || "",
-      lmsPublicUrl: runtime.lmsPublicUrl
+      lmsPublicUrl: tenantLmsOrigin
     });
   }
   try {

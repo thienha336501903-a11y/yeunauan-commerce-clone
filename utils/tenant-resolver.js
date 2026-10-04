@@ -176,10 +176,12 @@ export async function resolveTenant(req, options = {}) {
   }
 
   const now = Date.now();
+  const tenantCacheKey = `${surface}:${normalizedHost}`;
 
-  // Check in-memory cache
-  if (tenantCache.has(normalizedHost)) {
-    const entry = tenantCache.get(normalizedHost);
+  // Cache is surface-aware. A host typed for LMS must never be reused from
+  // an in-process Commerce lookup (or vice versa).
+  if (tenantCache.has(tenantCacheKey)) {
+    const entry = tenantCache.get(tenantCacheKey);
     if (entry.expiresAt > now) {
       if (entry.tenantContext) {
         return { ok: true, tenant: entry.tenantContext };
@@ -192,7 +194,7 @@ export async function resolveTenant(req, options = {}) {
         error: "Unknown or inactive agency domain"
       };
     }
-    tenantCache.delete(normalizedHost);
+    tenantCache.delete(tenantCacheKey);
   }
 
   try {
@@ -214,7 +216,7 @@ export async function resolveTenant(req, options = {}) {
     if (!data || !data.found || !data.agency_id) {
       // Fail closed: Unknown or inactive host.
       // Cache negative lookup briefly to prevent DoS hammering
-      tenantCache.set(normalizedHost, {
+      tenantCache.set(tenantCacheKey, {
         tenantContext: null,
         expiresAt: now + NEGATIVE_TTL_MS
       });
@@ -223,6 +225,20 @@ export async function resolveTenant(req, options = {}) {
         status: 404,
         code: "tenant_not_found",
         error: "Unknown or inactive agency domain"
+      };
+    }
+
+    const typedSurface = String(data.surface || "").trim().toLowerCase();
+    if (typedSurface && typedSurface !== surface) {
+      tenantCache.set(tenantCacheKey, {
+        tenantContext: null,
+        expiresAt: now + NEGATIVE_TTL_MS
+      });
+      return {
+        ok: false,
+        status: 404,
+        code: "tenant_surface_mismatch",
+        error: "Agency domain is not valid for this application surface"
       };
     }
 
@@ -236,6 +252,7 @@ export async function resolveTenant(req, options = {}) {
       domainStatus: data.domain_status || "active",
       sslStatus: data.ssl_status,
       isPrimary: Boolean(data.is_primary),
+      domainSurface: typedSurface || null,
       surface
     });
 
@@ -243,7 +260,7 @@ export async function resolveTenant(req, options = {}) {
     trustedContextSet.add(tenantContext);
 
     // Cache valid tenant
-    tenantCache.set(normalizedHost, {
+    tenantCache.set(tenantCacheKey, {
       tenantContext,
       expiresAt: now + ttlMs
     });

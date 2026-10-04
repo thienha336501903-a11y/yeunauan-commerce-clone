@@ -30,6 +30,9 @@ jobs:
           node --check api/approve-all.js
           node --check api/config.js
           node --check api/upload.js
+          node --check utils/agency-surface.js
+          node --check utils/agency-auth-principals.js
+          node --check utils/agency-google-auth-bridge.js
           node --check utils/admin-cors.js
           node --check utils/delivery-policy.js
           node --check utils/sync-helpers.js
