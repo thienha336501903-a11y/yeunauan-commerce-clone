@@ -584,11 +584,18 @@ export function checkM0dCutoverReadiness(rootDir = process.cwd()) {
       "listAgencyLessonProgress",
       "upsertAgencyLessonProgress"
     ]) &&
-    fileHas(lmsDir, "api/lms/portal.js", [
+    // Progress routing lives in LMS portal.js, or in utils/agency-portal-dispatch.js when portal.js hands
+    // every Agency request to that dispatcher; either way the same three markers are required.
+    (fileHas(lmsDir, "api/lms/portal.js", [
       'endpoint === "agency-progress"',
       "listAgencyLessonProgress",
       "upsertAgencyLessonProgress"
-    ]) &&
+    ]) || (fileHas(lmsDir, "api/lms/portal.js", ["dispatchAgencyPortal"]) &&
+      fileHas(lmsDir, "utils/agency-portal-dispatch.js", [
+        'endpoint === "agency-progress"',
+        "listAgencyLessonProgress",
+        "upsertAgencyLessonProgress"
+      ]))) &&
     fileHas(lmsDir, "v5/app.js", [
       "agencyMode",
       "syncAgencyProgress",
