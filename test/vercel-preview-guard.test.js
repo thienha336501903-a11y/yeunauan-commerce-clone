@@ -25,7 +25,7 @@ test("vercel.json deploys main only: this public repo's other branches get no Pr
 });
 
 test("the Preview guard leaves the existing Vercel configuration in place", () => {
-  assert.deepEqual(Object.keys(config), ["$schema", "regions", "git", "redirects", "headers"]);
+  assert.deepEqual(Object.keys(config), ["$schema", "regions", "buildCommand", "outputDirectory", "git", "redirects", "headers"]);
   assert.deepEqual(config.regions, ["sin1"]);
   assert.ok(config.headers.some((h) => h.source === "/(.*)"));
 });
