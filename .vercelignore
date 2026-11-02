@@ -1,0 +1,7 @@
+# CLI uploads (vercel deploy): never send local secrets or scratch files. Serving is limited by outputDirectory, not this file.
+.env*
+supabase/.temp/
+*.diff
+*.bundle
+*.patch
+public/
