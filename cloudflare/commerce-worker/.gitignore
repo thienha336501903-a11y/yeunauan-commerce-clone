@@ -3,3 +3,4 @@ public/
 dist/
 .dev.vars
 .wrangler/
+wrangler.staging.toml
