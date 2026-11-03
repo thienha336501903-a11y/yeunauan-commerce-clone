@@ -374,10 +374,13 @@ test("B4.FINAL-6: Build/import graph gate: browser/static entrypoints CANNOT imp
 
   // 1. Discover all browser/static entrypoints
   const browserEntrypoints = [];
+  // Cloudflare Worker source runs server-side only; its static assets dir is public/ (asserted in cloudflare-commerce-worker.test.js).
+  const serverOnlyDirs = new Set([path.resolve(rootDir, "cloudflare/commerce-worker/src").toLowerCase()]);
   function scanBrowserFiles(dir) {
     for (const f of fs.readdirSync(dir)) {
       if (["node_modules", ".git", "api", "server", "scripts", "test", "tests", "docs", ".next", ".vercel", "utils"].includes(f)) continue;
       const full = path.join(dir, f);
+      if (serverOnlyDirs.has(full.toLowerCase())) continue;
       if (fs.statSync(full).isDirectory()) {
         scanBrowserFiles(full);
       } else if (f.endsWith(".html") || (f.endsWith(".js") && !f.endsWith(".config.js"))) {
