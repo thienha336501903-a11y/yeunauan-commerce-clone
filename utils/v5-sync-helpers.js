@@ -1,4 +1,5 @@
 import { cloneConfig } from './clone-config.js';
+import { lmsFetch } from './lms-fetch.js';
 
 const normalizeBase = value => String(value || '').trim().replace(/\/$/, '');
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key);
@@ -37,7 +38,7 @@ async function callV5(payload) {
       'X-Sync-Secret': secret
     };
     if (previewBypass) headers['x-vercel-protection-bypass'] = previewBypass;
-    const response = await fetch(`${lmsUrl}/api/v5-sync`, {
+    const response = await lmsFetch(`${lmsUrl}/api/v5-sync`, {
       method: 'POST',
       headers,
       body: JSON.stringify(payload)

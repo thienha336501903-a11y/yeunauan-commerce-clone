@@ -1,3 +1,5 @@
+import { lmsFetch } from './lms-fetch.js';
+
 const normalizeBase = value => String(value || '').trim().replace(/\/$/, '');
 
 function baseResult(lmsUrl) {
@@ -21,7 +23,7 @@ async function callLms(payload) {
   }
 
   try {
-    const response = await fetch(`${lmsUrl}/api/sync`, {
+    const response = await lmsFetch(`${lmsUrl}/api/sync`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -17,6 +17,7 @@ import telegramConnect from "../../../api/telegram-connect.js";
 import telegramSetup from "../../../api/telegram-setup.js";
 import telegramWebhook from "../../../api/telegram-webhook.js";
 import upload from "../../../api/upload.js";
+import { setLmsBinding } from "../../../utils/lms-fetch.js";
 
 export const API_HANDLERS = {
   "approve-all": approveAll,
@@ -73,5 +74,6 @@ export async function route(request, env) {
 }
 
 export async function handleRequest(request, env) {
+  setLmsBinding(env.LMS);
   return withSecurityHeaders(await route(request, env));
 }
