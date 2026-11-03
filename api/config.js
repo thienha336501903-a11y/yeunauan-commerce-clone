@@ -3,7 +3,7 @@ import { normalizeDeliveryMode } from '../utils/delivery-policy.js';
 import { cloneConfig } from '../utils/clone-config.js';
 import { getV5Readiness } from '../utils/v5-readiness.js';
 import { enforceSameOriginAdminRequest } from '../utils/admin-cors.js';
-import { isCourseForSale, isSalePaused } from '../utils/sale-state.js';
+import { isCourseForSale, isPublicCheckoutDisabled, isSalePaused } from '../utils/sale-state.js';
 import { resolveRequestRoute } from '../utils/agency-routing.js';
 import { getAgencyCommerceConfig } from '../utils/agency-commerce.js';
 import { requireAgencyMembership } from '../utils/agency-auth.js';
@@ -193,7 +193,7 @@ export default async function handler(req, res) {
     }
 
     const rawData = course.raw_data || {};
-    if (isSalePaused(course)) {
+    if (isSalePaused(course) || isPublicCheckoutDisabled()) {
       return res.status(404).json({ error: `Khóa học đang tạm dừng nhận đăng ký với slug: ${courseSlug}`, code: 'sale_paused' });
     }
     const courseImage = course.image_url || rawData.imageUrl || rawData.posterUrl || rawData.posterImageUrl || rawData.thumbnail || rawData.heroUrl || rawData.heroImageUrl || rawData.coverUrl || '';

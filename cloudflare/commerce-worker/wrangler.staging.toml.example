@@ -31,3 +31,5 @@ LMS_PUBLIC_URL = "https://cflms.<STG_ZONE>"
 V5_LMS_PUBLIC_URL = "https://cflms.<STG_ZONE>"
 V4_PUBLIC_URL = "https://cflms.<STG_ZONE>"
 TELEGRAM_CLONER_URL = "https://reader.<STG_ZONE>"
+# Messenger sales model (Owner 03/11): public bill-upload checkout closed; Admin approval and /api/orders unchanged.
+PUBLIC_CHECKOUT_DISABLED = "1"
