@@ -1,5 +1,6 @@
 import { supabase } from './supabase.js';
 import { cloneConfig } from './clone-config.js';
+import { lmsFetch } from './lms-fetch.js';
 
 const clean = value => String(value || '').trim();
 const normalizeBase = value => clean(value).replace(/\/$/, '');
@@ -23,11 +24,12 @@ function internalConfig() {
   return { secret, lmsUrl, clonerUrl };
 }
 
-async function internalPost(url, secret, body) {
+// fetcher: lmsFetch for lms (same-zone Worker route needs the service binding, else 522); plain fetch for the Reader on Vercel.
+async function internalPost(url, secret, body, fetcher = fetch) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
   try {
-    const response = await fetch(url, {
+    const response = await fetcher(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Sync-Secret': secret },
       body: JSON.stringify(body),
@@ -212,7 +214,7 @@ async function lmsAction(action, courseSlug, options = {}) {
     courseSlug: slug,
     ...(options.published === undefined ? {} : { published: options.published === true }),
     ...(clean(options.testEmail) ? { testEmail: clean(options.testEmail) } : {})
-  });
+  }, lmsFetch);
 }
 
 export async function handleV4Workflow(req, res) {

@@ -58,3 +58,11 @@ test("every commerce -> lms call uses lmsFetch", () => {
     assert.match(src, /lmsFetch\(/, f);
   }
 });
+
+test("V4 workflow: the lms /api/sync call passes lmsFetch; Reader calls stay plain fetch", () => {
+  const src = readFileSync(new URL("../utils/v4-workflow.js", import.meta.url), "utf8");
+  assert.match(src, /internalPost\(`\$\{lmsUrl\}\/api\/sync`[\s\S]*?\}, lmsFetch\);/);
+  for (const m of src.matchAll(/internal(?:Post|Get)\(`\$\{(\w+)\}[^`]*`[\s\S]*?\);/g)) {
+    assert.equal(m[0].includes("lmsFetch"), m[1] === "lmsUrl", m[0].slice(0, 60));
+  }
+});
