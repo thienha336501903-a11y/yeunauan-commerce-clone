@@ -1,4 +1,5 @@
 import { cloneConfig } from './clone-config.js';
+import { lmsFetch } from './lms-fetch.js';
 
 const normalizeBase = value => String(value || '').trim().replace(/\/$/, '');
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key);
@@ -11,7 +12,7 @@ function baseResult(lmsUrl) {
   };
 }
 
-function productionV5Base() {
+export function productionV5Base() {
   const explicit = String(process.env.V5_LMS_PUBLIC_URL || '').trim();
   if (explicit) return explicit;
   return cloneConfig().v4PublicUrl;
@@ -37,7 +38,7 @@ async function callV5(payload) {
       'X-Sync-Secret': secret
     };
     if (previewBypass) headers['x-vercel-protection-bypass'] = previewBypass;
-    const response = await fetch(`${lmsUrl}/api/v5-sync`, {
+    const response = await lmsFetch(`${lmsUrl}/api/v5-sync`, {
       method: 'POST',
       headers,
       body: JSON.stringify(payload)

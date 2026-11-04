@@ -1,5 +1,6 @@
 import { supabase } from "./supabase.js";
 import { syncV5CourseToLms, syncV5EnrollmentToLms } from "./v5-sync-helpers.js";
+import { lmsFetch } from "./lms-fetch.js";
 
 async function courseDeliveryMode(slug) {
   const courseSlug = String(slug || '').trim();
@@ -65,7 +66,7 @@ export async function syncCourseToExternalSystems(courseData) {
 
   if (sys3Url) {
     try {
-      const res = await fetch(`${sys3Url.trim().replace(/\/$/, '')}/api/sync`, {
+      const res = await lmsFetch(`${sys3Url.trim().replace(/\/$/, '')}/api/sync`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Sync-Secret": secret },
         body: JSON.stringify(payload)
@@ -121,7 +122,7 @@ export async function syncEnrollmentToExternalSystems(orderData, actionType) {
 
   if (sys3Url) {
     try {
-      const res = await fetch(`${sys3Url.trim().replace(/\/$/, '')}/api/sync`, {
+      const res = await lmsFetch(`${sys3Url.trim().replace(/\/$/, '')}/api/sync`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Sync-Secret": secret },
         body: JSON.stringify({ action, email, courseSlug })

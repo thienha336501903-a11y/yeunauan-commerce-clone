@@ -1,0 +1,20 @@
+# SYSTEM B commerce Worker (H1). No routes and no workers.dev: deploying this file serves nothing until a later,
+# separately approved step adds the hostnames. Secrets are set with `wrangler secret put`, never stored here.
+name = "systemb-commerce"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+[assets]
+directory = "public"
+binding = "ASSETS"
+html_handling = "none"
+not_found_handling = "none"
+run_worker_first = true
+
+[observability]
+enabled = true
+
+[vars]
+NODE_ENV = "production"

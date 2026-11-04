@@ -20,7 +20,7 @@ test('only an explicit boolean true pauses sales', () => {
 });
 
 test('all public sale entry points enforce the independent pause flag', () => {
-  assert.match(read('api/config.js'), /if \(isSalePaused\(course\)\)/);
+  assert.match(read('api/config.js'), /if \(isSalePaused\(course\)( \|\| isPublicCheckoutDisabled\(\))?\)/);
   assert.match(read('api/hero.js'), /isSalePaused\(course\)/);
   assert.match(read('api/register.js'), /if \(isSalePaused\(courseRec\)\)/);
   assert.match(read('api/register.js'), /code: 'sale_paused'/);

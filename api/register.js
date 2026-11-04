@@ -5,7 +5,7 @@ import { createOrderInvite } from '../utils/telegram.js';
 import { deliveryPolicy, normalizeDeliveryMode } from '../utils/delivery-policy.js';
 import { cloneConfig } from '../utils/clone-config.js';
 import { getV5Readiness } from '../utils/v5-readiness.js';
-import { isSalePaused } from '../utils/sale-state.js';
+import { isPublicCheckoutDisabled, isSalePaused } from '../utils/sale-state.js';
 
 import { resolveRequestRoute } from '../utils/agency-routing.js';
 import { checkoutOffering } from '../utils/agency-commerce.js';
@@ -61,6 +61,10 @@ export default async function handler(req, res) {
       deliveryMode: "agency",
       order: result.order
     });
+  }
+  // Checked before the bill is read, so a closed checkout costs no parsing CPU.
+  if (isPublicCheckoutDisabled()) {
+    return res.status(409).json({ error: 'Khóa học đang tạm dừng nhận đăng ký.', code: 'sale_paused' });
   }
   try {
     const runtime = cloneConfig();

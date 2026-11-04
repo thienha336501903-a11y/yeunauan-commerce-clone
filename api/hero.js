@@ -1,5 +1,5 @@
 import { supabase } from "../utils/supabase.js";
-import { isSalePaused } from "../utils/sale-state.js";
+import { isPublicCheckoutDisabled, isSalePaused } from "../utils/sale-state.js";
 import { resolveRequestRoute } from "../utils/agency-routing.js";
 
 const DEFAULT_PLACEHOLDER = "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(
@@ -51,7 +51,7 @@ export default async function handler(req, res) {
       .eq("active", true)
       .single();
 
-    if (error || !course || isSalePaused(course)) {
+    if (error || !course || isSalePaused(course) || isPublicCheckoutDisabled()) {
       res.setHeader("Cache-Control", "public, max-age=60, s-maxage=60");
       return res.redirect(302, DEFAULT_PLACEHOLDER);
     }

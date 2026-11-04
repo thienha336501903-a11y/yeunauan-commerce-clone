@@ -1,0 +1,42 @@
+# Staging configuration template for the commerce Worker (H3). The LMS repo's scripts/staging/prepare-staging.mjs
+# renders wrangler.staging.toml. Custom Domain, not a route: same-zone Worker-to-Worker fetch only reaches
+# Custom Domains (this Worker calls the LMS /api/v5-sync).
+name = "systemb-stg-commerce"
+account_id = "<STG_ACCOUNT_ID>"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+routes = [
+  { pattern = "cfshop.<STG_ZONE>", custom_domain = true },
+  # H5 route mode rehearsal: a route on an existing proxied record, as planned for the Production apex and www.
+  { pattern = "rshop.<STG_ZONE>/*", zone_name = "<STG_ZONE>" }
+]
+
+[assets]
+directory = "public"
+binding = "ASSETS"
+html_handling = "none"
+not_found_handling = "none"
+run_worker_first = true
+
+[observability]
+enabled = true
+
+[vars]
+NODE_ENV = "production"
+LEGACY_HOST_ALLOWLIST = "cfshop.<STG_ZONE>,rshop.<STG_ZONE>"
+COMMERCE_PUBLIC_URL = "https://cfshop.<STG_ZONE>"
+LMS_PUBLIC_URL = "https://cflms.<STG_ZONE>"
+# Approval syncs V5 courses here (source default is the Production V4 host).
+V5_LMS_PUBLIC_URL = "https://rlms.<STG_ZONE>"
+V4_PUBLIC_URL = "https://cflms.<STG_ZONE>"
+TELEGRAM_CLONER_URL = "https://reader.<STG_ZONE>"
+# Messenger sales model (Owner 03/11): public bill-upload checkout closed; Admin approval and /api/orders unchanged.
+PUBLIC_CHECKOUT_DISABLED = "1"
+
+# lms runs on a route in the same zone: reachable only through a service binding (utils/lms-fetch.js).
+[[services]]
+binding = "LMS"
+service = "systemb-stg-lms"
