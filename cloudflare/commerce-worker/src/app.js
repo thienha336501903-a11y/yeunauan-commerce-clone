@@ -51,6 +51,8 @@ function courseRedirect(url) {
 function withSecurityHeaders(response) {
   const out = new Response(response.body, response);
   for (const { key, value } of SECURITY_HEADERS) out.headers.set(key, value);
+  // Vercel's default when a handler sets none (live /api/health, 04/11); keeps proxies and browsers from caching.
+  if (!out.headers.has("Cache-Control")) out.headers.set("Cache-Control", "public, max-age=0, must-revalidate");
   return out;
 }
 

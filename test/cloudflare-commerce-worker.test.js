@@ -61,6 +61,10 @@ test("api handler runs through the adapter (health OPTIONS, no DB)", async () =>
   const res = await call("/api/health/", { method: "OPTIONS" });
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("access-control-allow-methods"), "GET, OPTIONS");
+  // Vercel's default Cache-Control when the handler sets none; a handler's own value is kept.
+  assert.equal(res.headers.get("cache-control"), "public, max-age=0, must-revalidate");
+  const own = await call("/admin.html", {}, { ASSETS: { fetch: async () => new Response("x", { headers: { "Cache-Control": "private, no-store" } }) } });
+  assert.equal(own.headers.get("cache-control"), "private, no-store");
 });
 
 test("host routing still fails closed when the tenant DB is unreachable", async () => {
@@ -103,6 +107,19 @@ test("handler sees the real host and query; spoofable forwarding headers are dro
   } finally {
     API_HANDLERS.hero = original;
   }
+});
+
+test("Production config (H5 P1): no routes or workers.dev, checkout closed, LMS service binding", () => {
+  const toml = readFileSync(new URL("../cloudflare/commerce-worker/wrangler.production.toml", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  assert.match(toml, /^name = "systemb-commerce"$/m);
+  assert.match(toml, /^account_id = "8272e6fc48727afe9e95af1d696ce088"$/m);
+  assert.match(toml, /^workers_dev = false$/m);
+  assert.match(toml, /^preview_urls = false$/m);
+  assert.doesNotMatch(toml, /^\s*routes?\s*=|custom_domain/m);
+  assert.match(toml, /^PUBLIC_CHECKOUT_DISABLED = "1"$/m);
+  assert.match(toml, /^VERCEL_ENV = "production"$/m);
+  assert.match(toml, /^V5_LMS_PUBLIC_URL = "https:\/\/hoc\.yeubep\.shop"$/m);
+  assert.match(toml, /\[\[services\]\]\nbinding = "LMS"\nservice = "systemb-lms"/);
 });
 
 test("worker source is never a static asset: assets dir is public/ and the build copies only root pages", async () => {

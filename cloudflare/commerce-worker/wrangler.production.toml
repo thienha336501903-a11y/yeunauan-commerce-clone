@@ -1,0 +1,45 @@
+# Production configuration for the commerce Worker (H5, cửa P1). Owner deploys it; Claude never does.
+# Deploy systemb-lms first: the LMS service binding below must point at an existing Worker.
+#   node <lms repo>/scripts/h5/assert-production-config.mjs --zone yeubep.shop cloudflare/commerce-worker/wrangler.production.toml
+#   npx wrangler deploy --config wrangler.production.toml        (from cloudflare/commerce-worker, after build-assets)
+# No routes and no Custom Domains: deploying serves nothing. Hosts are attached later by the lms repo's
+# scripts/h5/prepare-cutover.mjs (route mode); a `wrangler deploy` without routes keeps routes attached through the API.
+# Secrets are set with `wrangler secret put`, by name, never stored here.
+name = "systemb-commerce"
+account_id = "8272e6fc48727afe9e95af1d696ce088"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+[assets]
+directory = "public"
+binding = "ASSETS"
+html_handling = "none"
+not_found_handling = "none"
+run_worker_first = true
+
+[observability]
+enabled = true
+
+[vars]
+NODE_ENV = "production"
+# Parity with Vercel Production (preview-only branches in v5-sync-helpers.js and telegram-setup.js stay off).
+VERCEL_ENV = "production"
+# apex + www = H5 hosts; h5-shop = temporary test host of gate P2 (harmless once its route is removed).
+LEGACY_HOST_ALLOWLIST = "yeubep.shop,www.yeubep.shop,h5-shop.yeubep.shop"
+COMMERCE_PUBLIC_URL = "https://yeubep.shop"
+LMS_PUBLIC_URL = "https://hoc.yeubep.shop"
+# Approval syncs V5 courses here (source default is the V4 host).
+V5_LMS_PUBLIC_URL = "https://hoc.yeubep.shop"
+V4_PUBLIC_URL = "https://v4.daubepnho.store"
+TELEGRAM_CLONER_URL = "https://reader.yeubep.shop"
+# Messenger sales model (Owner 03/11): public bill-upload checkout closed; Admin approval and /api/orders unchanged.
+PUBLIC_CHECKOUT_DISABLED = "1"
+
+# hoc runs on a route in the same zone: a URL fetch from this Worker would go to the origin (522 on staging, §134).
+# Every commerce -> lms call goes through this binding (utils/lms-fetch.js). Never deploy Production without it.
+[[services]]
+binding = "LMS"
+service = "systemb-lms"
