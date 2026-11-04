@@ -1,6 +1,7 @@
 import { supabase } from './supabase.js';
 import { cloneConfig } from './clone-config.js';
 import { lmsFetch } from './lms-fetch.js';
+import { secretCheck } from './secret-check.js';
 
 const clean = value => String(value || '').trim();
 const normalizeBase = value => clean(value).replace(/\/$/, '');
@@ -226,6 +227,9 @@ export async function handleV4Workflow(req, res) {
     }
     if (action === 'status') {
       return res.status(200).json({ success: true, ...(await status(req.body?.courseSlug)) });
+    }
+    if (action === 'secretCheck') {
+      return res.status(200).json({ success: true, ...(await secretCheck()) });
     }
     if (action === 'readerState') {
       return res.status(200).json({ success: true, ...(await readerManagerState()) });

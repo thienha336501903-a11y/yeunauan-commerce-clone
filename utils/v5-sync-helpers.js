@@ -12,7 +12,7 @@ function baseResult(lmsUrl) {
   };
 }
 
-function productionV5Base() {
+export function productionV5Base() {
   const explicit = String(process.env.V5_LMS_PUBLIC_URL || '').trim();
   if (explicit) return explicit;
   return cloneConfig().v4PublicUrl;
