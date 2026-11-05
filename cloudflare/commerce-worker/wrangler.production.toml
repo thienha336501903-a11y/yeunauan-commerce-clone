@@ -37,9 +37,25 @@ V4_PUBLIC_URL = "https://v4.daubepnho.store"
 TELEGRAM_CLONER_URL = "https://reader.yeubep.shop"
 # Messenger sales model (Owner 03/11): public bill-upload checkout closed; Admin approval and /api/orders unchanged.
 PUBLIC_CHECKOUT_DISABLED = "1"
+MESSENGER_BOT_ENABLED = "0"
+MESSENGER_COURSE_SLUGS = "clone-factory-test-phase2-range-20260907"
+MESSENGER_APPROVE_SLA = ""
+META_APP_ID = ""
+META_PAGE_ID = ""
 
 # hoc runs on a route in the same zone: a URL fetch from this Worker would go to the origin (522 on staging, §134).
 # Every commerce -> lms call goes through this binding (utils/lms-fetch.js). Never deploy Production without it.
 [[services]]
 binding = "LMS"
 service = "systemb-lms"
+
+# Messenger bot (H4). Off until a separate Owner gate sets MESSENGER_BOT_ENABLED = "1".
+# Secrets (wrangler secret put, by name): META_APP_SECRET, META_VERIFY_TOKEN, META_PAGE_ACCESS_TOKEN.
+# MESSENGER_COURSE_SLUGS = comma list of courses the bot may sell; selling a real course is its own gate.
+[[durable_objects.bindings]]
+name = "MESSENGER_CONVERSATIONS"
+class_name = "MessengerConversation"
+
+[[migrations]]
+tag = "h4-messenger-v1"
+new_sqlite_classes = ["MessengerConversation"]

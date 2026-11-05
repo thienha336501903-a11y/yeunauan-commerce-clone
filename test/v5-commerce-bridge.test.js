@@ -143,7 +143,7 @@ test('V5 enrollment sync preserves Commerce order correlation and explicit creat
 
 test('V5 storefront/config and registration allow pre-order sales while Published content is verified against canonical readiness', () => {
   const config = read('api/config.js');
-  const register = read('api/register.js');
+  const register = read('api/register.js') + read('utils/bill-order.js');
   assert.match(config, /if \(deliveryMode === 'v5'\) \{[\s\S]*course\.is_published === true[\s\S]*getV5Readiness\(course\.id\)[\s\S]*!readiness\.ready/);
   assert.match(register, /if \(deliveryMode === 'v5'\) \{[\s\S]*courseRec\.active !== true[\s\S]*courseRec\.is_published === true[\s\S]*getV5Readiness\(courseRec\.id\)[\s\S]*!readiness\.ready/);
   assert.match(register, /SKIPPED_V5/);

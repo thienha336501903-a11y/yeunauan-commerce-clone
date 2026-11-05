@@ -599,11 +599,12 @@
           </thead>
           <tbody class="divide-y divide-slate-100">
             ${orders.map(order => {
-              const time = order.time || "";
-              const course = order.course || "";
-              const courseName = order.courseName || course;
-              const gmail = order.gmail || "";
-              const note = order.note || "";
+              // Order fields come from buyers (website, Messenger): escape before they reach innerHTML.
+              const time = escapeHtml(order.time || "");
+              const course = escapeHtml(order.course || "");
+              const courseName = escapeHtml(order.courseName || order.course || "");
+              const gmail = escapeHtml(order.gmail || "");
+              const note = escapeHtml(order.note || "");
               const status = order.status || "Chờ duyệt";
               const bill = order.billLink || "";
               const isCloneFactoryTest = /^clone-factory-test(?:-|$)/.test(String(course)) && String(order.billName || '').startsWith('__clone_factory_test');
@@ -667,17 +668,18 @@
                     <div class="flex items-center gap-1.5 group">
                       <span class="font-bold text-slate-800 select-all">${gmail}</span>
                       <button 
-                        onclick="copyText('${gmail}')" 
+                        data-copy="${gmail}" onclick="copyText(this.dataset.copy)" 
                         class="text-slate-300 hover:text-pink-600 transition" 
                         title="Copy email"
                       >
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
                       </button>
                     </div>
+                    ${order.channel === 'facebook' ? `<span class="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-100 text-blue-700">Facebook</span>` : ''}
                     ${(order.customer_name || order.customer_phone) ? `
                       <div class="text-xs text-slate-500 mt-1">
-                        ${order.customer_name ? `<span>Name: ${order.customer_name}</span>` : ''}
-                        ${order.customer_phone ? `<span class="ml-2 font-mono">Phone: ${order.customer_phone}</span>` : ''}
+                        ${order.customer_name ? `<span>Name: ${escapeHtml(order.customer_name)}</span>` : ''}
+                        ${order.customer_phone ? `<span class="ml-2 font-mono">Phone: ${escapeHtml(order.customer_phone)}</span>` : ''}
                       </div>
                     ` : ''}
                     ${status === "Đã duyệt" ? `
@@ -691,7 +693,7 @@
                           ℹ️ Đơn đã duyệt. Muốn đổi Gmail cần dùng chức năng cấp lại riêng bên LMS Admin.
                         </div>
                       </div>
-                      ${order.sync_error ? `<div class="text-[9px] text-rose-500 mt-1 max-w-[200px] break-words" title="${order.sync_error}">Lỗi: ${order.sync_error}</div>` : ''}
+                      ${order.sync_error ? `<div class="text-[9px] text-rose-500 mt-1 max-w-[200px] break-words" title="${escapeHtml(order.sync_error)}">Lỗi: ${escapeHtml(order.sync_error)}</div>` : ''}
                     ` : ''}
                   </td>
                   
@@ -813,7 +815,7 @@
         <div class="space-y-6">
           ${sortedGroups.map(group => {
             const courseSlug = group.slug;
-            const courseName = group.courseName;
+            const courseName = escapeHtml(group.courseName);
             const orders = group.orders;
 
             return `
@@ -846,9 +848,9 @@
                 <!-- Students Box List -->
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                   ${orders.map(order => {
-                    const time = order.time || "";
-                    const gmail = order.gmail || "";
-                    const note = order.note || "";
+                    const time = escapeHtml(order.time || "");
+                    const gmail = escapeHtml(order.gmail || "");
+                    const note = escapeHtml(order.note || "");
                     const bill = order.billLink || "";
 
                     // Calculate priority badge
@@ -874,7 +876,7 @@
                             <div class="flex items-center gap-1.5 select-all">
                               <span class="font-extrabold text-slate-800 text-sm break-all">${gmail}</span>
                               <button 
-                                onclick="copyText('${gmail}')" 
+                                data-copy="${gmail}" onclick="copyText(this.dataset.copy)" 
                                 class="text-slate-300 hover:text-pink-600 transition shrink-0" 
                                 title="Copy email"
                               >
@@ -886,9 +888,10 @@
 
                           <!-- Details -->
                           <div class="text-xs text-slate-500 space-y-1 mb-3">
+                            ${order.channel === 'facebook' ? `<span class="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-100 text-blue-700">Facebook</span>` : ''}
                             <p><span class="font-semibold">Thời gian:</span> ${time}</p>
-                            ${order.customer_name ? `<p><span class="font-semibold">Học viên:</span> ${order.customer_name}</p>` : ''}
-                            ${order.customer_phone ? `<p><span class="font-semibold">SĐT:</span> <span class="font-mono">${order.customer_phone}</span></p>` : ''}
+                            ${order.customer_name ? `<p><span class="font-semibold">Học viên:</span> ${escapeHtml(order.customer_name)}</p>` : ''}
+                            ${order.customer_phone ? `<p><span class="font-semibold">SĐT:</span> <span class="font-mono">${escapeHtml(order.customer_phone)}</span></p>` : ''}
                           </div>
 
                           <!-- Bill Preview -->
@@ -1128,8 +1131,8 @@
       const billHtml = order.billLink 
         ? `
           <div class="bg-slate-50 p-2.5 rounded-2xl border border-slate-100 flex items-center gap-3">
-            <a href="${order.billLink}" target="_blank" class="w-16 h-16 rounded-xl overflow-hidden bg-white hover:ring-2 hover:ring-pink-500 transition shadow shrink-0 border">
-              <img src="${order.billLink}" class="w-full h-full object-cover">
+            <a href="${escapeHtml(order.billLink)}" target="_blank" rel="noopener noreferrer" class="w-16 h-16 rounded-xl overflow-hidden bg-white hover:ring-2 hover:ring-pink-500 transition shadow shrink-0 border">
+              <img src="${escapeHtml(order.billLink)}" class="w-full h-full object-cover">
             </a>
             <div>
               <p class="font-extrabold text-slate-700">Hóa đơn chuyển khoản</p>

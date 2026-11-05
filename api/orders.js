@@ -3,6 +3,7 @@ import { supabase } from '../utils/supabase.js';
 import { extractCloudinaryBillPublicId } from '../utils/cloudinary-public-id.js';
 import { syncV4EnrollmentToLms } from '../utils/v4-sync-helpers.js';
 import { approveV5Order, resyncV5Order, revokeV5Order } from '../utils/v5-order-approval.js';
+import { notifyApprovedOrder } from '../utils/messenger/notify.js';
 import { enforceSameOriginAdminRequest } from '../utils/admin-cors.js';
 
 import { resolveRequestRoute } from '../utils/agency-routing.js';
@@ -136,7 +137,9 @@ export default async function handler(req, res) {
         if (status === 'Đã duyệt') {
           const result = await approveV5Order(orderForSync, updateData);
           if (!result.ok) return res.status(result.statusCode || 409).json({ success: false, error: result.error, code: result.code, syncResults: result.syncResults || null });
-          return res.status(200).json({ success: true, data: { ...result.data, syncResults: result.syncResults } });
+          const messenger = await notifyApprovedOrder({ ...orderForSync, ...(result.data || {}) });
+          const syncResults = messenger ? { ...result.syncResults, messenger } : result.syncResults;
+          return res.status(200).json({ success: true, data: { ...result.data, syncResults } });
         }
         if (existingOrder.status === 'Đã duyệt') {
           const result = await revokeV5Order(existingOrder, status, updateData);

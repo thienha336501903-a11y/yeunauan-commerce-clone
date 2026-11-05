@@ -18,6 +18,7 @@ import telegramSetup from "../../../api/telegram-setup.js";
 import telegramWebhook from "../../../api/telegram-webhook.js";
 import upload from "../../../api/upload.js";
 import { setLmsBinding } from "../../../utils/lms-fetch.js";
+import { messengerWebhook } from "./messenger.js";
 
 export const API_HANDLERS = {
   "approve-all": approveAll,
@@ -60,8 +61,10 @@ function notFound() {
   return new Response("Not Found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
 }
 
-export async function route(request, env) {
+export async function route(request, env, ctx) {
   const url = new URL(request.url);
+  // Messenger bot webhook (H4): Worker-only, signed by Meta; see messenger.js.
+  if (url.pathname === "/api/messenger-webhook") return messengerWebhook(request, env, ctx);
   const api = /^\/api\/([a-z0-9-]+)\/?$/.exec(url.pathname);
   if (api) {
     const handler = Object.hasOwn(API_HANDLERS, api[1]) ? API_HANDLERS[api[1]] : null;
@@ -75,7 +78,7 @@ export async function route(request, env) {
   return env.ASSETS.fetch(request);
 }
 
-export async function handleRequest(request, env) {
+export async function handleRequest(request, env, ctx) {
   setLmsBinding(env.LMS);
-  return withSecurityHeaders(await route(request, env));
+  return withSecurityHeaders(await route(request, env, ctx));
 }

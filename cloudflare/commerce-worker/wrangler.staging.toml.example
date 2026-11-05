@@ -40,3 +40,14 @@ PUBLIC_CHECKOUT_DISABLED = "1"
 [[services]]
 binding = "LMS"
 service = "systemb-stg-lms"
+
+# Messenger bot (H4). Off until a separate Owner gate sets MESSENGER_BOT_ENABLED = "1".
+# Secrets (wrangler secret put, by name): META_APP_SECRET, META_VERIFY_TOKEN, META_PAGE_ACCESS_TOKEN.
+# MESSENGER_COURSE_SLUGS = comma list of courses the bot may sell; selling a real course is its own gate.
+[[durable_objects.bindings]]
+name = "MESSENGER_CONVERSATIONS"
+class_name = "MessengerConversation"
+
+[[migrations]]
+tag = "h4-messenger-v1"
+new_sqlite_classes = ["MessengerConversation"]
