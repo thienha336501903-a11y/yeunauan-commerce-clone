@@ -1092,6 +1092,11 @@
 
         if (response.ok) {
           showToast(`Đã chuyển đơn hàng sang [${newStatus}]`);
+          // Facebook order: Meta only lets the Page message a buyer within 24 h of the buyer's last message.
+          const data = await response.json().catch(() => ({}));
+          if (data?.data?.syncResults?.messenger === "FAILED") {
+            alert("Đã duyệt, nhưng bot không nhắn được khách qua Messenger (thường do khách im lặng quá 24 giờ). Hãy nhắn tay cho khách trong Hộp thư Page. Khi khách nhắn lại, bot cũng sẽ báo đơn đã duyệt.");
+          }
           loadOrders();
         } else {
           const data = await response.json();

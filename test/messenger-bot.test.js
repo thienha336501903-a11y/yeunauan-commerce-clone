@@ -263,3 +263,29 @@ test("Admin orders page escapes buyer-controlled fields", () => {
   }
   assert.match(html, /const gmail = escapeHtml\(order\.gmail \|\| ""\);/);
 });
+
+test("after an order, a text gets this sender's own order status (24-hour window reopened)", async () => {
+  const f = fakeFetch();
+  const lookups = [];
+  const { convo } = conversation({ fetchImpl: f.impl });
+  convo.deps.loadOrder = async (id) => { lookups.push(id); return { status: "Đã duyệt", course_title: "Khoá TEST", customer_email: "hoc.vien@gmail.com" }; };
+  await readyToPay(convo);
+  await convo.handle(PSID, msg("m5", { attachments: [{ type: "image", payload: { url: IMG } }] }));
+  // Typing someone else's Gmail does not change whose order is looked up.
+  await convo.handle(PSID, msg("m6", { text: "khac@gmail.com duyệt chưa?" }));
+  assert.deepEqual(lookups, ["order-1"]);
+  assert.match(f.sent.at(-1).body.message.text, /đã được duyệt.*hoc\.vien@gmail\.com/s);
+  convo.deps.loadOrder = async () => ({ status: "Chờ duyệt" });
+  await convo.handle(PSID, msg("m7", { text: "?" }));
+  assert.match(f.sent.at(-1).body.message.text, /đang chờ Admin xác nhận/);
+});
+
+test("greeting is the Owner text and says it is automated", () => {
+  const out = step(emptyState(), { kind: "postback", payload: "GET_STARTED" }, ctx());
+  assert.match(out.replies[0].text, /^Chào bạn! 👋 Mình là trợ lý tự động của Yêu Bếp\./);
+});
+
+test("Admin is told to message the buyer by hand when the approval notice fails", () => {
+  const html = readFileSync(new URL("../orders.html", import.meta.url), "utf8");
+  assert.match(html, /syncResults\?\.messenger === "FAILED"[\s\S]{0,80}alert\(/);
+});

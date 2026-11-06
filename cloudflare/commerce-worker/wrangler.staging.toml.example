@@ -35,6 +35,11 @@ V4_PUBLIC_URL = "https://cflms.<STG_ZONE>"
 TELEGRAM_CLONER_URL = "https://reader.<STG_ZONE>"
 # Messenger sales model (Owner 03/11): public bill-upload checkout closed; Admin approval and /api/orders unchanged.
 PUBLIC_CHECKOUT_DISABLED = "1"
+MESSENGER_BOT_ENABLED = "0"
+MESSENGER_COURSE_SLUGS = "stg-khoa-a"
+MESSENGER_APPROVE_SLA = "24 giờ"
+META_APP_ID = ""
+META_PAGE_ID = ""
 
 # lms runs on a route in the same zone: reachable only through a service binding (utils/lms-fetch.js).
 [[services]]

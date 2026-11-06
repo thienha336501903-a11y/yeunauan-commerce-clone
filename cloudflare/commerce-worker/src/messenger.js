@@ -4,7 +4,8 @@
 // serialises that sender's events, drops duplicate deliveries and keeps the conversation state.
 import { createBillOrder } from "../../../utils/bill-order.js";
 import { supabase } from "../../../utils/supabase.js";
-import { emptyState, orderCreatedReply, orderFailedReply, step } from "../../../utils/messenger/bot.js";
+import { emptyState, orderCreatedReply, orderFailedReply, orderStatusReplies, step } from "../../../utils/messenger/bot.js";
+import { cloneConfig } from "../../../utils/clone-config.js";
 import { downloadBill, sendMessage, verifySignature } from "../../../utils/messenger/meta.js";
 
 const MAX_WEBHOOK_BYTES = 256 * 1024;
@@ -62,6 +63,12 @@ export function toEvent(ev, appId) {
 
 export const eventId = (ev) => String(ev?.message?.mid || ev?.postback?.mid || `${ev?.timestamp || ""}:${ev?.postback?.payload || ""}`);
 
+export async function loadOrder(orderId, db = supabase) {
+  const { data, error } = await db.from("orders").select("status,course_slug,course_title,customer_email").eq("id", orderId).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
 export async function loadCourses(env, db = supabase) {
   const slugs = String(env.MESSENGER_COURSE_SLUGS || "").split(",").map((s) => s.trim().toLowerCase()).filter((s) => /^[a-z0-9_-]+$/.test(s));
   if (!slugs.length) return [];
@@ -82,7 +89,7 @@ export class MessengerConversation {
   constructor(state, env, deps = {}) {
     this.storage = state.storage;
     this.env = env;
-    this.deps = { fetchImpl: fetch, loadCourses, createBillOrder, now: Date.now, ...deps };
+    this.deps = { fetchImpl: fetch, loadCourses, loadOrder, createBillOrder, now: Date.now, ...deps };
   }
 
   async fetch(request) {
@@ -133,6 +140,11 @@ export class MessengerConversation {
     } else {
       saved.state = out.state;
       await this.storage.put("s", saved);
+      // Read-only lookup after the state is saved, so no other event can be overwritten meanwhile.
+      if (out.action?.type === "orderStatus") {
+        const order = await deps.loadOrder(out.action.orderId).catch(() => null);
+        replies.push(...orderStatusReplies(order, { ...ctx, lmsUrl: env.V5_LMS_PUBLIC_URL || cloneConfig(env).lmsPublicUrl }));
+      }
     }
     for (const message of replies) {
       await sendMessage(psid, message, { token: env.META_PAGE_ACCESS_TOKEN, fetchImpl: deps.fetchImpl });

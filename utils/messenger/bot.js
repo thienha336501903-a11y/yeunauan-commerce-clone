@@ -4,6 +4,8 @@
 // It never reports order or enrollment status for a typed Gmail, so typing someone else's Gmail reveals nothing.
 
 export const PAUSE_MS = 12 * 60 * 60 * 1000;
+// Owner text (06/11). Says it is an automated assistant, as Meta policy requires.
+const GREETING = "Chào bạn! 👋 Mình là trợ lý tự động của Yêu Bếp. Mình sẽ giúp bạn chọn khóa học, xem học phí và hướng dẫn đăng ký. Sau khi bạn gửi ảnh chuyển khoản, Admin sẽ kiểm tra và xác nhận để cấp quyền học.\n\n";
 const EMAIL = /[^\s@<>()[\]",;:]+@[^\s@<>()[\]",;:]+\.[a-z]{2,}/i;
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !/[^\x00-\x7F]/.test(email); // = website
 const HUMAN = /(gặp|nói chuyện|chat).{0,12}(người|admin|nhân viên)|tư vấn viên/i;
@@ -64,7 +66,7 @@ export function step(prev, event, ctx) {
     return { state: { ...emptyState() }, replies: menu(ctx, "") };
   }
   if (payload === "GET_STARTED") {
-    return { state, replies: menu(ctx, "Chào bạn! Mình là trợ lý tự động của trang. ") };
+    return { state, replies: menu(ctx, GREETING) };
   }
   if (payload.startsWith("COURSE:")) {
     if (state.orderId) return { state, replies: nextPrompt(state, ctx) };
@@ -81,6 +83,9 @@ export function step(prev, event, ctx) {
   }
 
   if (event.kind === "text") {
+    // After an order, any message reopens Meta's 24-hour window: answer with this sender's own order status
+    // (looked up by the order id in this conversation, never by a typed Gmail).
+    if (state.orderId) return { state, replies: [], action: { type: "orderStatus", orderId: state.orderId } };
     const match = EMAIL.exec(event.text || "");
     if (match && state.course && !state.orderId) {
       const gmail = match[0].toLowerCase();
@@ -105,3 +110,13 @@ export const orderCreatedReply = (ctx) => text(`Mình đã nhận bill. Đơn đ
 export const orderFailedReply = () => text("Mình chưa ghi nhận được bill (ảnh phải là JPG/PNG/WEBP dưới 5MB). Bạn gửi lại ảnh khác, hoặc nhắn \"gặp người\" để Admin hỗ trợ.");
 export const approvedMessage = ({ courseTitle, gmail, lmsUrl }) =>
   `Đơn khoá "${courseTitle}" đã được duyệt. Bạn vào ${lmsUrl.replace(/\/$/, "")}/my-courses.html, đăng nhập Google bằng ${gmail} để học nhé.`;
+
+export function orderStatusReplies(order, ctx) {
+  if (order?.status === "Đã duyệt") {
+    return [text(approvedMessage({ courseTitle: order.course_title || order.course_slug, gmail: order.customer_email, lmsUrl: ctx.lmsUrl }), [["Khoá khác", "RESTART"]])];
+  }
+  if (order?.status === "Chờ duyệt") {
+    return [text(`Đơn của bạn đang chờ Admin xác nhận${ctx.approveSla ? ` (trong vòng ${ctx.approveSla} kể từ khi gửi bill)` : ""}. Muốn đăng ký khoá khác, bấm "Khoá khác".`, [["Khoá khác", "RESTART"], ["Gặp người thật", "HUMAN"]])];
+  }
+  return [text("Đơn của bạn chưa được duyệt. Bạn bấm \"Gặp người thật\" để Admin hỗ trợ nhé.", [["Gặp người thật", "HUMAN"], ["Khoá khác", "RESTART"]])];
+}
