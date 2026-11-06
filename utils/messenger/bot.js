@@ -11,7 +11,7 @@ const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !/[^
 const HUMAN = /(gặp|nói chuyện|chat).{0,12}(người|admin|nhân viên)|tư vấn viên/i;
 const RESTART = /^(khóa|khoá) khác$|^bắt đầu lại$|^menu$/i;
 
-export const emptyState = () => ({ course: null, gmail: null, gmailOk: false, orderId: null, pausedUntil: 0 });
+export const emptyState = () => ({ course: null, gmail: null, gmailOk: false, orderId: null, pausedUntil: 0, greeted: false });
 
 const text = (t, quick = []) => (quick.length
   ? { text: t, quick_replies: quick.map(([title, payload]) => ({ content_type: "text", title: title.slice(0, 20), payload })) }
@@ -46,7 +46,16 @@ function nextPrompt(state, ctx) {
 const confirmGmail = (gmail) => text(`Gmail học của bạn là: ${gmail}\nĐúng không?`, [["Đúng", "GMAIL_OK"], ["Sai, nhập lại", "GMAIL_NO"]]);
 
 // event: { kind: "text", text, payload? } | { kind: "postback", payload } | { kind: "image", url } | { kind: "echo", fromThisApp }
+// The first reply in a conversation always carries the greeting, which says the bot is automated.
 export function step(prev, event, ctx) {
+  const out = stepInner(prev, event, ctx);
+  if (prev?.greeted || !out.replies.length) return out;
+  const first = out.replies[0];
+  const replies = first.text?.startsWith(GREETING) ? out.replies : [text(GREETING.trim()), ...out.replies];
+  return { ...out, state: { ...out.state, greeted: true }, replies };
+}
+
+function stepInner(prev, event, ctx) {
   const state = { ...emptyState(), ...prev };
   const now = ctx.now;
 
@@ -63,7 +72,7 @@ export function step(prev, event, ctx) {
     return { state, replies: [text("Mình đã chuyển cho Admin. Admin sẽ trả lời bạn ngay khi có thể.")] };
   }
   if (payload === "RESTART" || (event.kind === "text" && RESTART.test((event.text || "").trim()))) {
-    return { state: { ...emptyState() }, replies: menu(ctx, "") };
+    return { state: { ...emptyState(), greeted: state.greeted }, replies: menu(ctx, "") };
   }
   if (payload === "GET_STARTED") {
     return { state, replies: menu(ctx, GREETING) };

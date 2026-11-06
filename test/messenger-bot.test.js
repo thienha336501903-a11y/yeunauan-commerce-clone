@@ -144,7 +144,7 @@ test("conversation: course -> Gmail confirm -> bill creates exactly one order", 
 test("conversation: unknown course, non-Gmail warning, Gmail re-entry", () => {
   let out = step(emptyState(), { kind: "text", text: "", payload: "COURSE:khoa-that" }, ctx());
   assert.equal(out.state.course, null);
-  out = step({ ...emptyState(), course: "khoa-test" }, { kind: "text", text: "me@yahoo.com" }, ctx());
+  out = step({ ...emptyState(), course: "khoa-test", greeted: true }, { kind: "text", text: "me@yahoo.com" }, ctx());
   assert.match(out.replies[0].text, /không phải tài khoản Google/);
   out = step(out.state, { kind: "text", text: "Sai", payload: "GMAIL_NO" }, ctx());
   assert.equal(out.state.gmail, null);
@@ -288,4 +288,17 @@ test("greeting is the Owner text and says it is automated", () => {
 test("Admin is told to message the buyer by hand when the approval notice fails", () => {
   const html = readFileSync(new URL("../orders.html", import.meta.url), "utf8");
   assert.match(html, /syncResults\?\.messenger === "FAILED"[\s\S]{0,80}alert\(/);
+});
+
+test("first reply of a conversation carries the automated-assistant greeting once", () => {
+  let out = step(emptyState(), { kind: "text", text: "hi" }, ctx());
+  assert.match(out.replies[0].text, /trợ lý tự động của Yêu Bếp/);
+  assert.equal(out.state.greeted, true);
+  out = step(out.state, { kind: "text", text: "hi" }, ctx());
+  assert.ok(!out.replies.some((r) => /trợ lý tự động/.test(r.text || "")));
+  out = step(out.state, { kind: "text", text: "Khoá khác", payload: "RESTART" }, ctx());
+  out = step(out.state, { kind: "text", text: "hi" }, ctx());
+  assert.ok(!out.replies.some((r) => /trợ lý tự động/.test(r.text || "")), "restart does not greet again");
+  out = step(emptyState(), { kind: "postback", payload: "GET_STARTED" }, ctx());
+  assert.equal(out.replies.filter((r) => /trợ lý tự động/.test(r.text || "")).length, 1, "no double greeting");
 });
