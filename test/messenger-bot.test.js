@@ -244,7 +244,7 @@ test("approval notice: only Facebook orders, only when the bot is on, failures r
   const order = { course_title: "Khoá TEST", customer_email: "a@gmail.com", raw_data: { channel: "facebook", psid: PSID } };
   assert.equal(await notifyApprovedOrder({ raw_data: {} }, { env: { MESSENGER_BOT_ENABLED: "1" } }), null);
   assert.equal(await notifyApprovedOrder(order, { env: { MESSENGER_BOT_ENABLED: "0" } }), "SKIPPED_BOT_OFF");
-  const env = { MESSENGER_BOT_ENABLED: "1", META_PAGE_ACCESS_TOKEN: "page-token", V5_LMS_PUBLIC_URL: "https://hoc.yeubep.shop" };
+  const env = { MESSENGER_BOT_ENABLED: "1", META_PAGE_ACCESS_TOKEN: "page-token", LMS_PUBLIC_URL: "https://hoc.yeubep.shop", V5_LMS_PUBLIC_URL: "https://sync-only.example" };
   assert.equal(await notifyApprovedOrder(order, { env, fetchImpl: f.impl }), "SENT");
   assert.match(f.sent[0].body.message.text, /https:\/\/hoc\.yeubep\.shop\/my-courses\.html.*a@gmail\.com/);
   const failing = async () => new Response('{"error":{"code":10,"error_subcode":2018278}}', { status: 400 });
@@ -301,4 +301,14 @@ test("first reply of a conversation carries the automated-assistant greeting onc
   assert.ok(!out.replies.some((r) => /trợ lý tự động/.test(r.text || "")), "restart does not greet again");
   out = step(emptyState(), { kind: "postback", payload: "GET_STARTED" }, ctx());
   assert.equal(out.replies.filter((r) => /trợ lý tự động/.test(r.text || "")).length, 1, "no double greeting");
+});
+
+test("DO: more than 20 events a minute from one sender are dropped silently", async () => {
+  const f = fakeFetch();
+  const { convo } = conversation({ fetchImpl: f.impl });
+  for (let i = 0; i < 25; i++) await convo.handle(PSID, msg(`r${i}`, { text: "hi" }));
+  const replied = new Set(f.sent.map((s) => s.body.recipient.id)).size;
+  assert.equal(replied, 1);
+  // 20 handled events; each answered with the greeting/menu (first one has 2 messages).
+  assert.equal(f.sent.length, 21);
 });

@@ -143,7 +143,7 @@ export class MessengerConversation {
       // Read-only lookup after the state is saved, so no other event can be overwritten meanwhile.
       if (out.action?.type === "orderStatus") {
         const order = await deps.loadOrder(out.action.orderId).catch(() => null);
-        replies.push(...orderStatusReplies(order, { ...ctx, lmsUrl: env.V5_LMS_PUBLIC_URL || cloneConfig(env).lmsPublicUrl }));
+        replies.push(...orderStatusReplies(order, { ...ctx, lmsUrl: cloneConfig(env).lmsPublicUrl }));
       }
     }
     for (const message of replies) {

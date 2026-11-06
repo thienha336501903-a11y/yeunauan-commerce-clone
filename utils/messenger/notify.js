@@ -12,7 +12,7 @@ export async function notifyApprovedOrder(order, { env = process.env, fetchImpl 
     text: approvedMessage({
       courseTitle: order.course_title || order.course_slug,
       gmail: order.customer_email,
-      lmsUrl: env.V5_LMS_PUBLIC_URL || cloneConfig(env).lmsPublicUrl
+      lmsUrl: cloneConfig(env).lmsPublicUrl // learner-facing host (V5_LMS_PUBLIC_URL is the sync target)
     })
   };
   const sent = await sendMessage(String(raw.psid), message, { token: env.META_PAGE_ACCESS_TOKEN, fetchImpl, timeoutMs: 5000 });
