@@ -38,6 +38,8 @@ PUBLIC_CHECKOUT_DISABLED = "1"
 MESSENGER_BOT_ENABLED = "0"
 MESSENGER_COURSE_SLUGS = "stg-khoa-a"
 MESSENGER_APPROVE_SLA = "24 giờ"
+# Support tickets (M-A): bot writes tickets and Admin sees them in orders.html. Off until a separate Owner gate; needs migration 20261107100000.
+MESSENGER_TICKETS_ENABLED = "0"
 META_APP_ID = ""
 META_PAGE_ID = ""
 

@@ -4,7 +4,9 @@
 // serialises that sender's events, drops duplicate deliveries and keeps the conversation state.
 import { createBillOrder } from "../../../utils/bill-order.js";
 import { supabase } from "../../../utils/supabase.js";
-import { emptyState, orderCreatedReply, orderFailedReply, orderStatusReplies, step } from "../../../utils/messenger/bot.js";
+import { emptyState, orderCreatedReply, orderFailedReply, orderStatusReplies, step, ticketReply } from "../../../utils/messenger/bot.js";
+import faqData from "../../../utils/messenger/faq.json" with { type: "json" };
+import { activeTicket, openTicket, redactSummary, touchTicket } from "../../../utils/messenger/tickets.js";
 import { cloneConfig } from "../../../utils/clone-config.js";
 import { downloadBill, sendMessage, verifySignature } from "../../../utils/messenger/meta.js";
 
@@ -12,6 +14,8 @@ const MAX_WEBHOOK_BYTES = 256 * 1024;
 const SEEN_MIDS = 200;
 const RATE_PER_MINUTE = 20;
 const enabled = (env) => String(env.MESSENGER_BOT_ENABLED || "").trim() === "1";
+const ticketsEnabled = (env) => String(env.MESSENGER_TICKETS_ENABLED || "").trim() === "1";
+export const loadFaq = () => faqData.filter((f) => f.status === "approved");
 
 export async function messengerWebhook(request, env, ctx) {
   const url = new URL(request.url);
@@ -89,7 +93,7 @@ export class MessengerConversation {
   constructor(state, env, deps = {}) {
     this.storage = state.storage;
     this.env = env;
-    this.deps = { fetchImpl: fetch, loadCourses, loadOrder, createBillOrder, now: Date.now, ...deps };
+    this.deps = { fetchImpl: fetch, loadCourses, loadOrder, createBillOrder, now: Date.now, loadFaq, activeTicket, openTicket, touchTicket, ...deps };
   }
 
   async fetch(request) {
@@ -105,6 +109,12 @@ export class MessengerConversation {
     // Outbound I/O before the state read: between storage.get and storage.put nothing may await the network,
     // or another event of this sender could interleave and be overwritten.
     const courses = event.kind === "echo" ? [] : await deps.loadCourses(env);
+    // Tickets on: is there an open ticket for this sender? Read before storage.get like the other network calls.
+    // A DB error counts as "no ticket": the sales flow keeps working, and a new ticket would report its own failure
+    // honestly. Staying silent instead could leave a customer unanswered while no Admin is handling them.
+    const tickets = ticketsEnabled(env);
+    let ticket = null;
+    if (tickets && event.kind !== "echo") ticket = await deps.activeTicket({ pageId: env.META_PAGE_ID, psid }).catch(() => null);
     const now = deps.now();
     const saved = (await this.storage.get("s")) || { state: emptyState(), mids: [], hits: [] };
     const mid = eventId(ev);
@@ -114,6 +124,7 @@ export class MessengerConversation {
     if (event.kind !== "echo" && saved.hits.length >= RATE_PER_MINUTE) { await this.storage.put("s", saved); return; }
     if (event.kind !== "echo") saved.hits.push(now);
     const ctx = { now, courses, approveSla: String(env.MESSENGER_APPROVE_SLA || "").trim() };
+    if (tickets) Object.assign(ctx, { ticketsEnabled: true, faq: deps.loadFaq(), activeTicket: ticket, appIdKnown: Boolean(String(env.META_APP_ID || "").trim()) });
     // A DO only blocks other events during storage calls, not during outbound fetch: while one bill is being
     // uploaded, a second image must not start a second order. The lock expires so a crash cannot stick it.
     if (event.kind === "image" && saved.creatingAt && now - saved.creatingAt < 120000) {
@@ -144,6 +155,14 @@ export class MessengerConversation {
       if (out.action?.type === "orderStatus") {
         const order = await deps.loadOrder(out.action.orderId).catch(() => null);
         replies.push(...orderStatusReplies(order, { ...ctx, lmsUrl: cloneConfig(env).lmsPublicUrl }));
+      }
+      // Ticket writes also run after the state is saved. Admin replies (echo) are recorded without answering the customer.
+      if (out.action?.type === "touchTicket" && ticket) await deps.touchTicket(ticket.id);
+      if (out.action?.type === "openTicket") {
+        const { reason, status } = out.action;
+        const summary = event.kind === "text" ? redactSummary(event.text) : "";
+        const result = await Promise.resolve(deps.openTicket({ pageId: env.META_PAGE_ID, psid, reason, summary, status })).catch(() => ({ ok: false }));
+        if (reason !== "admin_reply") replies.push(ticketReply(Boolean(result?.ok)));
       }
     }
     for (const message of replies) {
