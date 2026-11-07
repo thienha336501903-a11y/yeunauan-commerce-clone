@@ -329,6 +329,7 @@ test("Admin page: ticket block renders with createElement/textContent only", () 
 test("migration grants the service role exactly what tickets.js uses, nothing to anon/authenticated", () => {
   const sql = readFileSync(new URL("../supabase/migrations/20261107100000_messenger_support_tickets.sql", import.meta.url), "utf8");
   assert.match(sql, /grant select, insert, update on table public\.messenger_support_tickets to service_role;/);
-  assert.match(sql, /revoke all on table public\.messenger_support_tickets from anon, authenticated;/);
+  assert.match(sql, /revoke all on table public\.messenger_support_tickets from public, anon, authenticated;/);
+  assert.match(sql, /force row level security;/);
   assert.doesNotMatch(sql, /grant[^;]*to[^;]*\b(anon|authenticated)\b/i);
 });
