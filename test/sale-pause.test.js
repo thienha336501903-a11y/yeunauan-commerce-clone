@@ -22,8 +22,8 @@ test('only an explicit boolean true pauses sales', () => {
 test('all public sale entry points enforce the independent pause flag', () => {
   assert.match(read('api/config.js'), /if \(isSalePaused\(course\)( \|\| isPublicCheckoutDisabled\(\))?\)/);
   assert.match(read('api/hero.js'), /isSalePaused\(course\)/);
-  assert.match(read('api/register.js'), /if \(isSalePaused\(courseRec\)\)/);
-  assert.match(read('api/register.js'), /code: 'sale_paused'/);
+  assert.match((read('api/register.js') + read('utils/bill-order.js')), /if \(isSalePaused\(courseRec\)\)/);
+  assert.match((read('api/register.js') + read('utils/bill-order.js')), /code: 'sale_paused'/);
 });
 
 test('admin course updates validate and merge the pause flag into raw_data', () => {

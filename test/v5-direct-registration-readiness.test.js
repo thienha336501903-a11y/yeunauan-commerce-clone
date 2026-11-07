@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-const register = fs.readFileSync(new URL('../api/register.js', import.meta.url), 'utf8');
+const register = fs.readFileSync(new URL('../api/register.js', import.meta.url), 'utf8') + fs.readFileSync(new URL('../utils/bill-order.js', import.meta.url), 'utf8');
 const config = fs.readFileSync(new URL('../api/config.js', import.meta.url), 'utf8');
 
 test('direct V5 registration allows pre-order when active while checking canonical readiness if published', () => {
