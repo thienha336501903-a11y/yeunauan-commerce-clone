@@ -22,3 +22,5 @@ create index if not exists messenger_support_tickets_status_created_idx
 
 alter table public.messenger_support_tickets enable row level security;
 revoke all on table public.messenger_support_tickets from anon, authenticated;
+-- New Supabase projects (staging) no longer auto-grant table privileges; the Worker uses the service role key.
+grant select, insert, update on table public.messenger_support_tickets to service_role;
