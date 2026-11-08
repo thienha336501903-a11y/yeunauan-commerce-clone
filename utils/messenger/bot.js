@@ -9,7 +9,12 @@ const GREETING = "Chào bạn! 👋 Mình là trợ lý tự động của Yêu 
 const EMAIL = /[^\s@<>()[\]",;:]+@[^\s@<>()[\]",;:]+\.[a-z]{2,}/i;
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !/[^\x00-\x7F]/.test(email); // = website
 const HUMAN = /(gặp|nói chuyện|chat).{0,12}(người|admin|nhân viên)|tư vấn viên/i;
-const RESTART = /^(khóa|khoá) khác$|^bắt đầu lại$|^menu$/i;
+const RESTART = /^(khóa|khoá) khác$|^bắt đầu lại$/i;
+// "menu" only shows the menu: it keeps the conversation (course, Gmail, orderId), unlike RESTART.
+// MENU and GREET are matched against clean(text): no accents, punctuation or emoji.
+const MENU = /^menu( a)?$/;
+// Greetings: "Hi!", "Chào shop", "xin chào ạ", "shop ơi", "dạ chào bạn ơi".
+const GREET = /^(da )?((hi+|hello|helo|hey|alo+|xin chao|chao)( (ban|shop|ad|admin|em|anh|chi))?|shop|ad|admin)( oi)?( a)?$/;
 
 // Ticket replies (Owner text D, 07/11). Used by the DO after it knows whether the ticket was written.
 export const TICKET_OK_TEXT = "Mình đã chuyển câu hỏi của bạn tới Admin. Admin sẽ trả lời bạn trực tiếp trong cuộc trò chuyện này.";
@@ -33,6 +38,7 @@ function menu(ctx, intro) {
 const MENU4 = [["Xem khoá đang bán", "MENU_COURSES"], ["Tôi đã mua khoá", "MENU_BOUGHT"], ["Câu hỏi thường gặp", "MENU_FAQ"], ["Gặp Admin", "HUMAN"]];
 const mainMenu = (intro) => [text(`${intro}Bạn cần mình giúp gì?`, MENU4)];
 const norm = (t) => String(t || "").normalize("NFD").replace(/\p{M}/gu, "").replace(/đ/gi, "d").toLowerCase();
+const clean = (t) => norm(t).replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
 const ticket = (state, reason) => ({ state: { ...state, misses: 0 }, replies: [], action: { type: "openTicket", reason } });
 const faqAnswer = (f) => text(f.answer, [["Gặp Admin", "HUMAN"]]);
 // Only FAQ the Owner approved are ever sent (faq.json entries start as "draft").
@@ -47,6 +53,7 @@ function ticketStep(state, event, ctx, payload) {
   if (payload === "RESTART" || (isText && RESTART.test((event.text || "").trim()))) {
     return { state: { ...emptyState(), greeted: state.greeted }, replies: mainMenu("") };
   }
+  if (isText && MENU.test(clean(event.text))) return { state: base, replies: mainMenu("") };
   if (payload === "GET_STARTED") return { state: base, replies: mainMenu(GREETING) };
   if (payload === "MENU_COURSES") return { state: base, replies: menu(ctx, "") };
   if (payload === "MENU_BOUGHT") {
@@ -69,6 +76,8 @@ function ticketStep(state, event, ctx, payload) {
 // Tickets on, free text while no course is chosen: FAQ keyword or course name, else ask once more, then ticket.
 function freeText(state, event, ctx) {
   const q = norm(event.text);
+  // A greeting is not a miss: show the menu and keep the counter at 0.
+  if (GREET.test(clean(event.text))) return { state: { ...state, misses: 0 }, replies: mainMenu("") };
   const hit = approvedFaq(ctx).find((f) => (f.keywords || []).some((k) => k && q.includes(k)));
   if (hit) return hit.answer ? { state: { ...state, misses: 0 }, replies: [faqAnswer(hit)] } : ticket(state, "unclear");
   const course = ctx.courses.find((c) => (norm(c.title).length >= 4 && q.includes(norm(c.title))) || q.includes(String(c.slug).toLowerCase()));
@@ -139,6 +148,7 @@ function stepInner(prev, event, ctx) {
   if (payload === "RESTART" || (event.kind === "text" && RESTART.test((event.text || "").trim()))) {
     return { state: { ...emptyState(), greeted: state.greeted }, replies: menu(ctx, "") };
   }
+  if (event.kind === "text" && MENU.test(clean(event.text))) return { state, replies: menu(ctx, "") };
   if (payload === "GET_STARTED") {
     return { state, replies: menu(ctx, GREETING) };
   }

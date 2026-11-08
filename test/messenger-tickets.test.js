@@ -107,6 +107,45 @@ test("flag on: GET_STARTED and unclear text show the 4-button menu; second miss 
   assert.match(out.replies.at(-1).text, /Vào trang học/);
 });
 
+test("flag on: greetings show the menu and never count as a miss; real misses still open a ticket", () => {
+  for (const t of ["hi", "Hi!", "hiii", "hello", "Chào shop", "xin chào ạ", "alo 👋", "shop ơi", "dạ chào bạn ơi", "hello ad ơi"]) {
+    const out = step({ ...emptyState(), greeted: true, misses: 1 }, { kind: "text", text: t }, tctx());
+    assert.equal(out.action, undefined, t);
+    assert.equal(out.state.misses, 0, t);
+    assert.deepEqual(out.replies.at(-1).quick_replies.map((q) => q.payload), MENU_PAYLOADS, t);
+    assert.doesNotMatch(out.replies.at(-1).text, /chưa hiểu/, t);
+  }
+  let out = step(emptyState(), { kind: "text", text: "hi" }, tctx());
+  assert.match(out.replies[0].text, /trợ lý tự động/, "first greeting still says automated");
+  out = step(out.state, { kind: "text", text: "hi" }, tctx());
+  assert.equal(out.action, undefined, "two greetings open no ticket");
+  for (const t of ["hi bạn ơi cho hỏi giá", "chào", "hiểu"]) {
+    // only "chào" alone is a greeting; a question that starts with hi is not swallowed
+    const r = step({ ...emptyState(), greeted: true }, { kind: "text", text: t }, tctx());
+    assert.equal(r.state.misses, t === "chào" ? 0 : 1, t);
+  }
+  out = step({ ...emptyState(), greeted: true }, { kind: "text", text: "asdf" }, tctx());
+  out = step(out.state, { kind: "text", text: "qwer" }, tctx());
+  assert.deepEqual(out.action, { type: "openTicket", reason: "unclear" });
+});
+
+test("'menu' shows the menu and keeps the order; 'Khoá khác' still starts over", () => {
+  const withOrder = { ...emptyState(), greeted: true, course: "khoa-test", gmail: "a@gmail.com", gmailOk: true, orderId: UUID };
+  for (const c of [tctx(), { ...tctx(), ticketsEnabled: false }]) {
+    for (const m of ["menu.", "Menu ạ"]) assert.equal(step(withOrder, { kind: "text", text: m }, c).state.orderId, UUID, m);
+    let out = step(withOrder, { kind: "text", text: "Menu" }, c);
+    assert.equal(out.state.orderId, UUID);
+    assert.equal(out.state.course, "khoa-test");
+    assert.ok(out.replies.at(-1).quick_replies?.length);
+    out = step(out.state, { kind: "text", text: "đơn của tôi sao rồi" }, c);
+    assert.deepEqual(out.action, { type: "orderStatus", orderId: UUID }, "order still found after menu");
+    out = step(withOrder, { kind: "postback", payload: "RESTART" }, c);
+    assert.equal(out.state.orderId, null, "RESTART still clears");
+    out = step(withOrder, { kind: "text", text: "khoá khác" }, c);
+    assert.equal(out.state.orderId, null);
+  }
+});
+
 test("flag on: FAQ draft is never sent, approved is; FAQ without answer goes to a ticket", () => {
   let out = step(emptyState(), { kind: "text", text: "video bị lỗi" }, tctx());
   assert.ok(!JSON.stringify(out.replies).includes("Chrome"));
