@@ -90,8 +90,8 @@ test("setTicketStatus: only open->in_progress and open|in_progress->done, uuid r
 });
 
 // ---- bot with the flag on ----
-const tctx = (extra = {}) => ({ now: 1_000_000, courses: COURSES, approveSla: "12 giờ", ticketsEnabled: true, faq: FAQ, activeTicket: null, ...extra });
-const MENU_PAYLOADS = ["MENU_COURSES", "MENU_BOUGHT", "MENU_FAQ", "HUMAN"];
+const tctx = (extra = {}) => ({ now: 1_000_000, courses: COURSES, ticketsEnabled: true, faq: FAQ, activeTicket: null, ...extra });
+const MENU_PAYLOADS = ["BUY", "LIST", "ADMIN"];
 
 test("flag on: GET_STARTED and unclear text show the 4-button menu; second miss opens an 'unclear' ticket", () => {
   let out = step(emptyState(), { kind: "postback", payload: "GET_STARTED" }, tctx());
@@ -135,14 +135,15 @@ test("'menu' shows the menu and keeps the order; 'Khoá khác' still starts over
     for (const m of ["menu.", "Menu ạ"]) assert.equal(step(withOrder, { kind: "text", text: m }, c).state.orderId, UUID, m);
     let out = step(withOrder, { kind: "text", text: "Menu" }, c);
     assert.equal(out.state.orderId, UUID);
-    assert.equal(out.state.course, "khoa-test");
+    assert.equal(out.state.course, null, "legacy state: the draft was spent on the order");
     assert.ok(out.replies.at(-1).quick_replies?.length);
     out = step(out.state, { kind: "text", text: "đơn của tôi sao rồi" }, c);
-    assert.deepEqual(out.action, { type: "orderStatus", orderId: UUID }, "order still found after menu");
+    assert.deepEqual(out.action, { type: "orderStatus", mode: "list", orders: [{ id: UUID, slug: "khoa-test" }] }, "order still found after menu");
     out = step(withOrder, { kind: "postback", payload: "RESTART" }, c);
-    assert.equal(out.state.orderId, null, "RESTART still clears");
+    assert.equal(out.state.course, null, "RESTART clears the draft");
+    assert.deepEqual(out.state.orders, [{ id: UUID, slug: "khoa-test" }], "RESTART keeps the orders");
     out = step(withOrder, { kind: "text", text: "khoá khác" }, c);
-    assert.equal(out.state.orderId, null);
+    assert.equal(out.state.orders.length, 1);
   }
 });
 
@@ -203,7 +204,7 @@ test("DO: 'gặp admin' writes one ticket and says so; 10 spams still one ticket
   db.rows[0].status = "done";
   await convo.handle(PSID, msg("m20", { text: "hi" }));
   assert.ok(sent.length > before, "bot answers again once the ticket is done");
-  assert.ok(sent.at(-1).quick_replies.some((q) => q.payload === "HUMAN"));
+  assert.ok(sent.at(-1).quick_replies.some((q) => q.payload === "ADMIN"));
 });
 
 test("DO: a first message that opens a ticket still starts with the automated-assistant greeting", async () => {
@@ -303,7 +304,7 @@ test("DO: flag off keeps H4 behaviour (no ticket lookup, 12 hour pause)", async 
   await convo.handle(PSID, msg("m1", { text: "gặp admin" }));
   assert.equal(looked, 0);
   assert.equal(db.rows.length, 0);
-  assert.match(sent.at(-1).text, /Mình đã chuyển cho Admin/);
+  assert.match(sent.at(-1).text, /Mình đã chuyển yêu cầu của bạn tới Admin/);
 });
 
 test("loadFaq returns nothing while every faq.json entry is a draft", () => {

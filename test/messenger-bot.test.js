@@ -13,7 +13,7 @@ const SECRET = "test-app-secret";
 const PSID = "1234567890123";
 const COURSES = [{ slug: "khoa-test", title: "Khoá TEST", price: "100.000đ", bankName: "VCB", bankAccount: "0123", bankOwner: "A", transferNote: "TEST", qrImageUrl: "" }];
 const sign = (body, secret = SECRET) => "sha256=" + createHmac("sha256", secret).update(body).digest("hex");
-const ctx = (now = 1_000_000) => ({ now, courses: COURSES, approveSla: "12 giờ" });
+const ctx = (now = 1_000_000) => ({ now, courses: COURSES, commerceUrl: "https://shop.example" });
 
 function fakeStorage() {
   const map = new Map();
@@ -125,18 +125,19 @@ test("conversation: course -> Gmail confirm -> bill creates exactly one order", 
   let s = emptyState();
   let out = step(s, { kind: "postback", payload: "GET_STARTED" }, ctx());
   assert.match(out.replies[0].text, /trợ lý tự động/);
-  assert.equal(out.replies[0].quick_replies[0].payload, "COURSE:khoa-test");
+  assert.equal(out.replies[0].quick_replies[0].payload, "BUY:khoa-test");
   out = step(out.state, { kind: "image", url: IMG }, ctx());
   assert.equal(out.action, undefined, "no order before course and Gmail");
   out = step(out.state, { kind: "text", text: "x", payload: "COURSE:khoa-test" }, ctx());
   assert.equal(out.state.course, "khoa-test");
-  assert.ok(out.replies.some((r) => /0123/.test(r.text || "")), "bank info shown");
+  assert.ok(!out.replies.some((r) => /0123/.test(r.text || "")), "no bank info before the Gmail is confirmed");
   out = step(out.state, { kind: "image", url: IMG }, ctx());
   assert.equal(out.action, undefined, "no order before Gmail is confirmed");
   out = step(out.state, { kind: "text", text: "a@gmail.com" }, ctx());
   assert.equal(out.state.gmail, "a@gmail.com");
   assert.equal(out.state.gmailOk, false);
   out = step(out.state, { kind: "text", text: "Đúng", payload: "GMAIL_OK" }, ctx());
+  assert.ok(out.replies.some((r) => /0123/.test(r.text || "")), "bank info shown after GMAIL_OK");
   out = step(out.state, { kind: "image", url: IMG }, ctx());
   assert.deepEqual(out.action, { type: "createOrder", url: IMG });
 });
@@ -274,15 +275,15 @@ test("after an order, a text gets this sender's own order status (24-hour window
   // Typing someone else's Gmail does not change whose order is looked up.
   await convo.handle(PSID, msg("m6", { text: "khac@gmail.com duyệt chưa?" }));
   assert.deepEqual(lookups, ["order-1"]);
-  assert.match(f.sent.at(-1).body.message.text, /đã được duyệt.*hoc\.vien@gmail\.com/s);
+  assert.match(f.sent.at(-1).body.message.text, /Khoá TEST: Đã duyệt - https:[/][/]hoc[.]yeubep[.]shop[/]my-courses[.]html/);
   convo.deps.loadOrder = async () => ({ status: "Chờ duyệt" });
   await convo.handle(PSID, msg("m7", { text: "?" }));
-  assert.match(f.sent.at(-1).body.message.text, /đang chờ Admin xác nhận/);
+  assert.match(f.sent.at(-1).body.message.text, /Khoá TEST: Chờ duyệt/);
 });
 
 test("greeting is the Owner text and says it is automated", () => {
   const out = step(emptyState(), { kind: "postback", payload: "GET_STARTED" }, ctx());
-  assert.match(out.replies[0].text, /^Chào bạn! 👋 Mình là trợ lý tự động của Yêu Bếp\./);
+  assert.match(out.replies[0].text, /^Chào bạn! 👋 Mình là trợ lý tự động của Yêu học bánh\./);
 });
 
 test("Admin is told to message the buyer by hand when the approval notice fails", () => {
@@ -292,7 +293,7 @@ test("Admin is told to message the buyer by hand when the approval notice fails"
 
 test("first reply of a conversation carries the automated-assistant greeting once", () => {
   let out = step(emptyState(), { kind: "text", text: "hi" }, ctx());
-  assert.match(out.replies[0].text, /trợ lý tự động của Yêu Bếp/);
+  assert.match(out.replies[0].text, /trợ lý tự động của Yêu học bánh/);
   assert.equal(out.state.greeted, true);
   out = step(out.state, { kind: "text", text: "hi" }, ctx());
   assert.ok(!out.replies.some((r) => /trợ lý tự động/.test(r.text || "")));

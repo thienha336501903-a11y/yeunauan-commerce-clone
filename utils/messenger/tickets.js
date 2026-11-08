@@ -69,3 +69,13 @@ export async function setTicketStatus(id, status, db = supabase) {
   if (error) throw error;
   return data?.length ? { ok: true } : { ok: false, status: 400, error: "invalid_transition" };
 }
+
+export const isTicketId = (id) => UUID.test(String(id || ""));
+
+// One active ticket by id (psid stays server-side: used to reach the sender's conversation, never sent to the Admin UI).
+export async function getActiveTicket(id, db = supabase) {
+  if (!isTicketId(id)) return null;
+  const { data, error } = await db.from(TABLE).select("id,psid,page_id,status").eq("id", id).in("status", ACTIVE).limit(1).maybeSingle();
+  if (error) throw error;
+  return data || null;
+}

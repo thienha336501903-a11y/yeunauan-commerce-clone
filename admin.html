@@ -721,6 +721,8 @@
         const link = `${origin}/?course=${encodeURIComponent(slug)}`;
         const active = course.active;
         const salePaused = course.salePaused === true;
+        const messengerSale = course.messengerSale === true;
+        const messengerFeatured = course.messengerFeatured === true;
         const selling = active && !salePaused;
         const isPublished = course.is_published === true;
         const originalLessonEntryVisible = course.originalLessonEntryVisible !== false;
@@ -837,12 +839,21 @@
                 </div>
 
                 <div class="bg-slate-50 rounded-2xl p-3 text-xs break-all text-slate-500 mb-5 font-mono flex justify-between items-center border border-slate-100">
-                  <span class="truncate mr-2">${link}</span>
+                  <span class="truncate mr-2">Link web: ${link}</span>
                   <button 
                     onclick="copyLink('${link}')" 
                     class="text-pink-600 hover:text-pink-700 font-bold shrink-0 uppercase tracking-wider text-[10px]"
                   >
                     Copy
+                  </button>
+                </div>
+                <div class="bg-slate-50 rounded-2xl p-3 text-xs break-all text-slate-500 mb-5 font-mono flex justify-between items-center border border-slate-100">
+                  <span class="truncate mr-2">Mã chiến dịch Messenger: c__${escapeAttr(slug)}</span>
+                  <button
+                    onclick="copyLink('c__${escapeAttr(slug)}')"
+                    class="text-pink-600 hover:text-pink-700 font-bold shrink-0 uppercase tracking-wider text-[10px]"
+                  >
+                    Sao chép
                   </button>
                 </div>
               </div>
@@ -877,7 +888,22 @@
                   Xóa
                 </button>
               </div>
-              
+
+              <div class="grid grid-cols-2 gap-2 mt-2">
+                <button
+                  onclick="toggleMessengerFlag('${id}', 'messengerSale', ${messengerSale})"
+                  class="text-[10px] font-bold py-2 rounded-lg border ${messengerSale ? 'border-green-200 text-green-700 bg-green-50' : 'border-slate-200 text-slate-600 hover:bg-slate-50'} transition text-center"
+                >
+                  Bán qua Messenger: ${messengerSale ? 'Bật' : 'Tắt'}
+                </button>
+                <button
+                  onclick="toggleMessengerFlag('${id}', 'messengerFeatured', ${messengerFeatured})"
+                  class="text-[10px] font-bold py-2 rounded-lg border ${messengerFeatured ? 'border-pink-200 text-pink-700 bg-pink-50' : 'border-slate-200 text-slate-600 hover:bg-slate-50'} transition text-center"
+                >
+                  Khóa nổi bật: ${messengerFeatured ? 'Bật' : 'Tắt'}
+                </button>
+              </div>
+
               <!-- Quick preview link -->
               <a 
                 href="${link}" 
@@ -923,7 +949,7 @@
     // 6. COPY LINK HELPER
     function copyLink(link) {
       navigator.clipboard.writeText(link).then(() => {
-        showToast("Đã copy link trang đăng ký");
+        showToast("Đã sao chép");
       });
     }
 
@@ -2221,6 +2247,46 @@
         await loadCourses();
       } catch (error) {
         alert(`Lỗi kết nối khi ${action} khóa học`);
+      } finally {
+        hideLoader();
+      }
+    }
+
+    // Messenger switches (Admin): messengerSale / messengerFeatured, same PUT as the sale pause; unset keys keep their value.
+    async function toggleMessengerFlag(id, key, current) {
+      const course = allCourses.find(c => c.id === id);
+      if (!course) return;
+      const payload = {
+        id: course.id,
+        slug: course.slug,
+        courseName: course.courseName,
+        price: course.price,
+        sort_order: course.sort_order,
+        teacher_name: course.teacher_name,
+        expected_start_date: course.expected_start_date || "",
+        description: course.description,
+        imageUrl: course.imageUrl,
+        active: course.active,
+        deliveryMode: course.deliveryMode || 'lms',
+        telegramChatId: course.telegramChatId || '',
+        telegramChatTitle: course.telegramChatTitle || '',
+        telegramInviteTtlHours: course.telegramInviteTtlHours || 72,
+        allowSellingUnpublishedV4: course.v4SellBeforePublishAcknowledged === true,
+        [key]: !current
+      };
+      showLoader('Đang lưu...');
+      try {
+        const response = await fetch('/api/courses', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'X-Admin-Password': currentAdminPassword },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) { alert(data.error || 'Không thể lưu thiết lập Messenger'); return; }
+        showToast('Đã lưu thiết lập Messenger.');
+        await loadCourses();
+      } catch (error) {
+        alert('Lỗi kết nối khi lưu thiết lập Messenger');
       } finally {
         hideLoader();
       }

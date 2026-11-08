@@ -258,6 +258,12 @@ export default async function handler(req, res) {
         }
         rawDataPatch.salePaused = body.salePaused;
       }
+      for (const key of ['messengerSale', 'messengerFeatured']) {
+        if (hasOwn(body, key)) {
+          if (typeof body[key] !== 'boolean') return res.status(400).json({ error: 'Trạng thái bán qua Messenger không hợp lệ.' });
+          rawDataPatch[key] = body[key];
+        }
+      }
 
       const base = {
         slug,
@@ -461,6 +467,17 @@ export default async function handler(req, res) {
         const result = await supabase.from('courses').update(base).eq('id', id).select().single();
         if (result.error) throw result.error;
         data = result.data;
+      }
+
+      // One featured course for the Messenger bot: turn the flag off elsewhere (merge raw_data, never overwrite other keys).
+      if (rawDataPatch.messengerFeatured === true) {
+        const { data: others, error: othersError } = await supabase.from('courses').select('id,raw_data').neq('id', data.id);
+        if (othersError) throw othersError;
+        for (const other of others || []) {
+          if (other.raw_data?.messengerFeatured !== true) continue;
+          const { error: offError } = await supabase.from('courses').update({ raw_data: { ...other.raw_data, messengerFeatured: false } }).eq('id', other.id);
+          if (offError) throw offError;
+        }
       }
 
       let syncResults = { lms: 'PENDING', portal: 'PENDING', error: null };

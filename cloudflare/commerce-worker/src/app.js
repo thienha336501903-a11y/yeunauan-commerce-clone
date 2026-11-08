@@ -67,7 +67,7 @@ export async function route(request, env, ctx) {
   // Messenger bot webhook (H4): Worker-only, signed by Meta; see messenger.js.
   if (url.pathname === "/api/messenger-webhook") return messengerWebhook(request, env, ctx);
   // Admin ticket list (M-A): Worker-only too; 404 unless MESSENGER_TICKETS_ENABLED = "1".
-  if (url.pathname === "/api/messenger-tickets") return runCompatHandler(messengerTickets, request, { maxBodyBytes: MAX_BODY_BYTES });
+  if (url.pathname === "/api/messenger-tickets") return runCompatHandler(messengerTickets, request, { maxBodyBytes: MAX_BODY_BYTES, __env: env });
   const api = /^\/api\/([a-z0-9-]+)\/?$/.exec(url.pathname);
   if (api) {
     const handler = Object.hasOwn(API_HANDLERS, api[1]) ? API_HANDLERS[api[1]] : null;

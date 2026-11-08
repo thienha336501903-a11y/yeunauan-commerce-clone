@@ -19,8 +19,6 @@ enabled = true
 [vars]
 NODE_ENV = "production"
 MESSENGER_BOT_ENABLED = "0"
-MESSENGER_COURSE_SLUGS = "clone-factory-test-phase2-range-20260907"
-MESSENGER_APPROVE_SLA = "24 giờ"
 # Support tickets (M-A): bot writes tickets and Admin sees them in orders.html. Off until a separate Owner gate; needs migration 20261107100000.
 MESSENGER_TICKETS_ENABLED = "0"
 META_APP_ID = ""
@@ -28,7 +26,7 @@ META_PAGE_ID = ""
 
 # Messenger bot (H4). Off until a separate Owner gate sets MESSENGER_BOT_ENABLED = "1".
 # Secrets (wrangler secret put, by name): META_APP_SECRET, META_VERIFY_TOKEN, META_PAGE_ACCESS_TOKEN.
-# MESSENGER_COURSE_SLUGS = comma list of courses the bot may sell; selling a real course is its own gate.
+# MESSENGER_COURSE_SLUGS = optional comma list that only narrows the courses the bot may sell; empty or unset = follow the Admin switch "Bán qua Messenger".
 [[durable_objects.bindings]]
 name = "MESSENGER_CONVERSATIONS"
 class_name = "MessengerConversation"

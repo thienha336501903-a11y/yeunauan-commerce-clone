@@ -378,7 +378,8 @@
     }
 
     // Messenger support tickets. Every value is set with textContent: ticket text comes from customers.
-    const TICKET_REASONS = { human: "Muốn gặp Admin", unclear: "Bot chưa hiểu", self_help: "Cần hỗ trợ thêm", admin_reply: "Admin đã trả lời" };
+    const TICKET_REASONS = { human: "Muốn gặp Admin", unclear: "Bot chưa hiểu", self_help: "Cần hỗ trợ thêm", admin_reply: "Admin đã trả lời", other_course: "Hỏi khóa khác", support: "Hỗ trợ khác" };
+    let ticketCourses = [];
     const TICKET_STATUS = { open: "Chờ xử lý", in_progress: "Đang xử lý", done: "Đã xong" };
     const TICKET_LATE_MS = 2 * 60 * 60 * 1000;
 
@@ -415,6 +416,14 @@
           finish.addEventListener("click", () => updateTicket(t.id, "done"));
           row.appendChild(finish);
         }
+        if (t.status !== "done" && ticketCourses.length) {
+          const pick = ticketEl("select", "px-2 py-1 rounded-lg border border-slate-200 text-xs");
+          for (const c of ticketCourses) { const o = ticketEl("option", "", c.title || c.slug); o.value = c.slug; pick.appendChild(o); }
+          const send = ticketEl("button", "px-3 py-1 rounded-lg bg-pink-600 text-white font-bold hover:bg-pink-700", "Gửi đăng ký khóa");
+          send.addEventListener("click", () => offerCourse(t.id, pick.value, pick.selectedOptions[0].textContent));
+          row.appendChild(pick);
+          row.appendChild(send);
+        }
         list.appendChild(row);
       }
       box.classList.remove("hidden");
@@ -424,10 +433,30 @@
       try {
         const res = await fetch("/api/messenger-tickets", { cache: "no-store", headers: { "X-Admin-Password": currentAdminPassword } });
         if (!res.ok) { document.getElementById("ticketBox").classList.add("hidden"); return; } // 404 = feature off
-        renderTickets((await res.json()).tickets || []);
+        const body = await res.json();
+        ticketCourses = Array.isArray(body.courses) ? body.courses : [];
+        renderTickets(body.tickets || []);
       } catch (err) {
         document.getElementById("ticketBox").classList.add("hidden");
       }
+    }
+
+    async function offerCourse(id, slug, title) {
+      if (!confirm("Gửi hướng dẫn đăng ký khóa \"" + title + "\" cho khách này?")) return;
+      try {
+        const res = await fetch("/api/messenger-tickets", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Admin-Password": currentAdminPassword },
+          body: JSON.stringify({ id, action: "offer", slug })
+        });
+        const body = await res.json().catch(() => ({}));
+        showToast(!res.ok ? "Chưa gửi được (khóa không còn mở bán hoặc Meta từ chối)."
+          : body.done === false ? "Đã gửi cho khách nhưng chưa đóng được ticket, bấm Hoàn thành."
+          : "Đã gửi đăng ký khóa cho khách.");
+      } catch (err) {
+        showToast("Chưa gửi được đăng ký khóa.");
+      }
+      loadTickets();
     }
 
     async function updateTicket(id, status) {
