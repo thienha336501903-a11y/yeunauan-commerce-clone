@@ -187,7 +187,7 @@ function ticketConvo({ db = fakeDb(), env = {}, deps = {} } = {}) {
   const fetchImpl = async (url, init) => { sent.push(JSON.parse(init.body).message); return new Response("{}", { status: 200 }); };
   const convo = new MessengerConversation({ storage: fakeStorage() }, { META_PAGE_ACCESS_TOKEN: "t", META_APP_ID: "777", META_PAGE_ID: PAGE, MESSENGER_TICKETS_ENABLED: "1", ...env }, {
     fetchImpl, now: () => 1_000_000, loadCourses: async () => COURSES, loadFaq: () => FAQ.filter((f) => f.status === "approved"),
-    activeTicket: (a) => activeTicket(a, db), openTicket: (a) => openTicket(a, db), touchTicket: async () => {}, ...deps
+    activeTicket: (a) => activeTicket(a, db), openTicket: (a) => openTicket(a, db), touchTicket: async () => {}, loadCourseOrders: async () => [], ...deps
   });
   return { convo, db, sent };
 }

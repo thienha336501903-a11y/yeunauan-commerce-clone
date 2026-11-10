@@ -26,11 +26,11 @@ export const ticketReply = (ok) => ({ text: ok ? TICKET_OK_TEXT : TICKET_FAIL_TE
 
 // Draft = course, gmail, gmailOk. Placed orders live in `orders` ([{ id, slug }], absent in states saved before V2).
 // draftMisses (U4): consecutive non-email texts while a draft is open.
-export const emptyState = () => ({ course: null, gmail: null, gmailOk: false, orderId: null, pendingAdmin: null, ref: null, pausedUntil: 0, greeted: false, draftMisses: 0, lastInboundAt: 0 });
+export const emptyState = () => ({ course: null, gmail: null, gmailOk: false, orderId: null, pendingAdmin: null, ref: null, pausedUntil: 0, greeted: false, draftMisses: 0, lastInboundAt: 0, adminSeenAt: 0, ticketBusyAt: 0, switchRef: null });
 export const ordersOf = (s) => (Array.isArray(s?.orders) ? s.orders : s?.orderId ? [{ id: s.orderId, slug: s.course }] : []);
-export const clearDraft = (s) => ({ ...s, course: null, courseTitle: null, courseTitleFor: null, gmail: null, gmailOk: false, draftMisses: 0 });
+export const clearDraft = (s) => ({ ...s, course: null, courseTitle: null, courseTitleFor: null, gmail: null, gmailOk: false, draftMisses: 0, switchRef: null });
 // A new order spends the draft and the campaign ref; a stale pendingAdmin must not open a ticket afterwards.
-export const addOrder = (s, id, slug) => ({ ...s, orders: [...ordersOf(s), { id, slug }].slice(-MAX_ORDERS), orderId: id, pendingAdmin: null, ref: null });
+export const addOrder = (s, id, slug) => ({ ...s, orders: [...ordersOf(s), { id, slug }].slice(-MAX_ORDERS), orderId: id, pendingAdmin: null, ref: null, switchRef: null });
 // Full state from a saved one. An orderId missing from `orders` (saved before V2, or by an older build after a rollback)
 // is an order already placed: add it and clear the draft, or the next bill would create it twice.
 export function normalizeState(prev) {
@@ -111,7 +111,7 @@ function ticketStep(state, event, ctx, payload) {
   // U8.3/U8.8: back to the step the draft stopped at (the transfer details again at the bill step); a course no longer sold ends the draft.
   if (payload === "CONTINUE_DRAFT") {
     if (state.course && !ctx.courses.some((c) => c.slug === state.course)) return soldOut(base, ctx);
-    return { state: base, replies: state.course && state.gmailOk ? paymentInfo(ctx.courses.find((c) => c.slug === state.course), true) : nextPrompt(state, ctx) };
+    return { state: { ...base, switchRef: null }, replies: state.course && state.gmailOk ? paymentInfo(ctx.courses.find((c) => c.slug === state.course), true) : nextPrompt(state, ctx) };
   }
   // U9: change course at any step. The list is the "other courses" one; the draft stays until SWITCH.
   if (payload === "CHANGE_COURSE") return { state: base, replies: [], action: { type: "listOther", page: 1 } };
@@ -215,7 +215,9 @@ const retryGmailAsk = (T) => withExits({ text: "Bạn gửi lại Gmail dùng đ
 // Generic template card for a course (G3-2). Needs ctx.commerceUrl for the "view" button.
 export function courseCard(c, ctx) {
   const buttons = [];
-  if (ctx.commerceUrl) buttons.push({ type: "web_url", url: `${ctx.commerceUrl.replace(/\/$/, "")}/?course=${encodeURIComponent(c.slug)}`, title: "Xem nội dung khóa" });
+  // Tickets on: the details are shown in Messenger (the website sale pages are closed); off: the old web link.
+  if (ctx.ticketsEnabled) buttons.push({ type: "postback", title: "Xem nội dung khóa", payload: `DETAIL:${c.slug}` });
+  else if (ctx.commerceUrl) buttons.push({ type: "web_url", url: `${ctx.commerceUrl.replace(/\/$/, "")}/?course=${encodeURIComponent(c.slug)}`, title: "Xem nội dung khóa" });
   buttons.push(ctx.ticketsEnabled ? { type: "postback", title: "Đổi khóa học", payload: "CHANGE_COURSE" } : { type: "postback", title: "Đổi khóa khác", payload: "LIST" });
   const element = { title: String(c.title || c.slug).slice(0, 80), subtitle: `Học phí: ${c.price}`.slice(0, 80), buttons };
   if (/^https:\/\//i.test(c.imageUrl || "")) element.image_url = c.imageUrl;
@@ -226,7 +228,7 @@ export function courseCard(c, ctx) {
 const billAsk = (T) => text("Bạn chụp ảnh bill chuyển khoản và gửi vào đây nhé.", T ? exits(T) : []);
 
 // Payment details, sent only after the customer confirmed the Gmail.
-function paymentInfo(c, T = false) {
+export function paymentInfo(c, T = false) {
   const lines = [`Khoá: ${c.title || c.slug}`];
   if (c.price) lines.push(`Học phí: ${c.price}`);
   if (c.bankAccount) lines.push(`Chuyển khoản: ${[c.bankName, c.bankAccount, c.bankOwner && `(${c.bankOwner})`].filter(Boolean).join(" ")}`);
@@ -252,7 +254,7 @@ function nextPrompt(state, ctx) {
 export function openCourse(state, course, ctx) {
   if (state.course === course.slug) return { state, replies: nextPrompt(state, ctx) };
   // courseTitle: the title for U8.8 once the course is no longer sold (then loadCourses no longer has it).
-  return { state: { ...state, course: course.slug, courseTitle: course.title || course.slug, courseTitleFor: course.slug, gmail: null, gmailOk: false, misses: 0, draftMisses: 0 }, replies: [courseCard(course, ctx), gmailAsk(Boolean(ctx.ticketsEnabled))] };
+  return { state: { ...state, course: course.slug, courseTitle: course.title || course.slug, courseTitleFor: course.slug, gmail: null, gmailOk: false, misses: 0, draftMisses: 0, switchRef: null }, replies: [courseCard(course, ctx), gmailAsk(Boolean(ctx.ticketsEnabled))] };
 }
 
 // BUY / BUY:<slug> / COURSE:<slug>. A course with an order already goes to a status lookup first (the DO decides).
@@ -262,6 +264,8 @@ const needsSwitchAsk = (state, ctx, course, confirmed) => Boolean(ctx.ticketsEna
 export function switchAsk(state, course, ctx) {
   return [text(`Bạn đang đăng ký dở khóa ${titleOf(ctx, state.course)}. Bạn muốn đổi sang khóa ${course.title || course.slug} không?`, [["Đổi sang khóa này", `SWITCH:${course.slug}`], ["Tiếp tục khóa cũ", "CONTINUE_DRAFT"], ["Xem các khóa học", "LIST"]])];
 }
+// Tickets on, a course the DO has no order for (and not the draft already open): the DO asks the DB first (P0-1, `checkCourse`),
+// then opens the draft or asks about switching. The state does not change before that answer.
 function buy(state, ctx, slug, { confirmed = false, ref } = {}) {
   const course = slug == null
     ? refCourse(state.ref, ctx) || ctx.courses.find((c) => c.featured)
@@ -269,8 +273,9 @@ function buy(state, ctx, slug, { confirmed = false, ref } = {}) {
   if (!course) return { state, replies: listReply(ctx, slug == null ? "" : "Khóa này hiện chưa mở đăng ký. ") };
   const ask = needsSwitchAsk(state, ctx, course, confirmed);
   const dup = ordersOf(state).find((o) => o.slug === course.slug);
-  if (dup) return { state, replies: [], action: { type: "orderStatus", mode: "buy", slug: course.slug, orders: [dup], ...(ask ? { ask: true } : {}) } };
-  if (ask) return { state, replies: switchAsk(state, course, ctx) };
+  const extra = { ask, confirmed, ref: ref || null };
+  if (dup) return { state, replies: [], action: { type: "orderStatus", mode: "buy", slug: course.slug, orders: [dup], ...extra } };
+  if (ctx.ticketsEnabled && state.course !== course.slug) return { state, replies: [], action: { type: "checkCourse", slug: course.slug, ...extra } };
   return openCourse(ref ? { ...state, ref } : state, course, ctx);
 }
 
@@ -287,7 +292,8 @@ export function step(prev, event, ctx) {
 export function stepRaw(prev, event, ctx) {
   const out = stepInner(prev, event, ctx);
   // A customer ticket gets its reply from the DO after the insert; the greeting must still come first.
-  const answersLater = out.action?.type === "openTicket" && out.action.reason !== "admin_reply";
+  // A course check (checkCourse) also answers later: the greeting of a first message must not be lost.
+  const answersLater = (out.action?.type === "openTicket" && out.action.reason !== "admin_reply") || out.action?.type === "checkCourse";
   if (prev?.greeted || (!out.replies.length && !answersLater)) return out;
   const first = out.replies[0];
   const replies = first?.text?.startsWith(GREETING) || first?.menu?.intro?.startsWith(GREETING) ? out.replies : [text(GREETING), ...out.replies];
@@ -296,7 +302,7 @@ export function stepRaw(prev, event, ctx) {
 
 // U8 exceptions: the customer chose clearly (these buttons, a campaign link), or a bill with a complete draft
 // (they may have paid already; blocking it would make them send it again).
-const RESUME_PAYLOAD = /^(CONTINUE_DRAFT|LIST|LIST:.*|LIST_OTHER(:.*)?|MENU_COURSES|ADMIN.*|CANCEL_DRAFT|CHANGE_COURSE|BUY.*|COURSE:.*|SWITCH:.*|PENDING_ORDERS|MENU|RESTART|HUMAN)$/;
+const RESUME_PAYLOAD = /^(CONTINUE_DRAFT|LIST|LIST:.*|LIST_OTHER(:.*)?|MENU_COURSES|ADMIN.*|CANCEL_DRAFT|CHANGE_COURSE|BUY.*|COURSE:.*|SWITCH:.*|PENDING_ORDERS|MENU|RESTART|HUMAN|DETAIL:.*)$/;
 // Typed requests for a person or a restart are explicit too: they must not need two more taps after a break.
 const skipsResume = (state, event, payload) => Boolean(event.ref) || RESUME_PAYLOAD.test(payload)
   || (event.kind === "text" && !payload && (HUMAN.test(event.text || "") || RESTART.test((event.text || "").trim())))
@@ -311,7 +317,11 @@ function stepInner(prev, event, ctx) {
     // Tickets on: an Admin reply from the Page inbox opens an in-progress ticket (the bot stays silent while one is open).
     // Without META_APP_ID our own sends cannot be told apart from Admin replies: ignore echoes, or the bot
     // would open a ticket on its own first answer and go silent for good.
-    if (T) return { state, replies: [], action: event.fromThisApp || !ctx.appIdKnown ? undefined : { type: "openTicket", reason: "admin_reply", status: "in_progress" } };
+    if (T) {
+      // A human reply from the Page inbox (needs META_APP_ID to tell it from our own sends): remember when, for P0-2.
+      if (!event.fromThisApp && ctx.appIdKnown) state.adminSeenAt = now;
+      return { state, replies: [], action: event.fromThisApp || !ctx.appIdKnown ? undefined : { type: "openTicket", reason: "admin_reply", status: "in_progress" } };
+    }
     // A human replied from the Page inbox: stay silent for 12 hours. Our own sends echo back with our app id.
     if (!event.fromThisApp) state.pausedUntil = now + PAUSE_MS;
     return { state, replies: [] };
@@ -321,6 +331,13 @@ function stepInner(prev, event, ctx) {
   state.lastInboundAt = now;
   // Open ticket: silent for every kind (text, postback, image, referral).
   if (T && ctx.activeTicket) return { state, replies: [], action: { type: "touchTicket" } };
+  // P0-2: the ticket lookup failed or timed out, so an open ticket cannot be ruled out. No U8, no order, no ticket, the draft stays.
+  // Quiet if an Admin wrote from the inbox within 12 hours; else one busy message (with the Admin button) per 10 minutes.
+  if (T && ctx.ticketUnknown) {
+    if (state.adminSeenAt && now - state.adminSeenAt < PAUSE_MS) return { state, replies: [] };
+    if (!state.ticketBusyAt || now - state.ticketBusyAt >= 10 * 60 * 1000) return { state: { ...state, ticketBusyAt: now }, replies: busyAdminReplies() };
+    return { state, replies: [] };
+  }
   if (!T && state.pausedUntil > now) return { state, replies: [] };
 
   const payload = event.payload || "";
@@ -363,10 +380,22 @@ function stepInner(prev, event, ctx) {
   if (/^LIST:/.test(payload)) return { state, replies: listReply(ctx, "", T, /^\d{1,6}$/.test(payload.slice(5)) ? Number(payload.slice(5)) : 1) };
   if (payload === "BUY") return buy(state, ctx, null);
   if (payload.startsWith("BUY:") || payload.startsWith("COURSE:")) return buy(state, ctx, payload.slice(payload.indexOf(":") + 1));
-  if (payload.startsWith("SWITCH:")) return buy(state, ctx, payload.slice(7), { confirmed: true });
+  if (payload.startsWith("SWITCH:")) {
+    // The campaign ref kept by the switch question counts only for the course it was kept for.
+    const slug = payload.slice(7);
+    const sr = state.switchRef;
+    return buy(state, ctx, slug, { confirmed: true, ref: sr?.slug === slug && refCourse(sr.ref, ctx)?.slug === slug ? sr.ref : undefined });
+  }
+  // P1-5: course details inside Messenger (tickets on).
+  if (T && payload.startsWith("DETAIL:")) {
+    const course = ctx.courses.find((c) => c.slug === payload.slice(7));
+    return { state, replies: course ? detailReplies(course) : listReply(ctx, "Khóa này hiện chưa mở đăng ký. ") };
+  }
   if (payload === "GMAIL_OK" && state.gmail && state.course) {
     const course = ctx.courses.find((c) => c.slug === state.course);
     if (!course) return { state: clearDraft(state), replies: listReply(ctx, "Khóa này hiện chưa mở đăng ký. ") };
+    // Tickets on: the DO checks the DB for an order of this course before the transfer details (P0-1); it sets gmailOk after.
+    if (T) return { state, replies: [], action: { type: "checkPayment", slug: course.slug, gmail: state.gmail } };
     state.gmailOk = true;
     return { state, replies: paymentInfo(course, T) };
   }
@@ -427,7 +456,7 @@ export function orderStatusReplies(order, ctx) {
 
 export const busyReplies = () => mainMenu("Hệ thống đang bận, bạn thử lại sau ít phút nhé.", [], false);
 // A failed "Đơn chờ duyệt" read: never "no orders" (I9); no menu read either, which would hit the same DB.
-export const busyAdminReplies = () => [text("Hệ thống đang bận, bạn thử lại sau ít phút nhé.", [adminBtn(true), ["Quay lại menu", "MENU"]])];
+export const busyAdminReplies = (T = true) => [text("Hệ thống đang bận, bạn thử lại sau ít phút nhé.", [adminBtn(T), ["Quay lại menu", "MENU"]])];
 
 const ALT = [["Đăng ký khóa khác", "LIST_OTHER"], ["Quay lại menu", "MENU"]];
 // Customer picked a course that already has an order: pending -> say so (no new draft), approved -> the approved notice.
@@ -479,14 +508,29 @@ export function pendingOrdersReplies(verified, unverified) {
   return texts.map((t, i) => text(t, i === texts.length - 1 ? ALT : []));
 }
 
+// ---- Course details in Messenger (P2-5): one text message (<= 2000), description cut to 600, HTML removed ----
+const plain = (t) => String(t || "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&")
+  .split(/\r?\n/).map((l) => l.replace(/[ \t]+/g, " ").trim()).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+export function detailReplies(c) {
+  const desc = plain(c.description);
+  const lines = [cut(plain(c.title) || c.slug, 200), c.price ? `Học phí: ${cut(plain(c.price), 100)}` : "", cut(plain(c.subtitle), 200), cut(desc, 600)].filter(Boolean);
+  const out = [];
+  if (/^https:\/\//i.test(c.imageUrl || "")) out.push({ attachment: { type: "image", payload: { url: c.imageUrl, is_reusable: true } } });
+  out.push(text(cut(lines.join("\n\n"), 2000), [["Đăng ký", `BUY:${c.slug}`], ["Xem các khóa học", "LIST"], adminBtn(true)]));
+  return out;
+}
+
+// P0-1 layer (b): a bill arrives for a course that already has an order. No order is created; the Admin checks the bill.
+export const dupBillReplies = (T) => [text("Mình đã nhận ảnh. Khóa này đã có đơn trước đó, Admin sẽ kiểm tra bill này và trả lời bạn.", [adminBtn(T)])];
+
 // ---- Rendering of the placeholders (menu B6, course carousel U7) ----
 const cut = (t, n) => (String(t).length > n ? `${String(t).slice(0, n - 1)}…` : String(t));
 const shortDesc = (c) => String(c.subtitle || c.description || "").replace(/\s+/g, " ").trim();
 const quickOf = (quick) => quick.map(([title, payload]) => ({ content_type: "text", title, payload }));
 
 function cardOf(c, ctx, pending) {
-  const buttons = [];
-  if (ctx.commerceUrl) buttons.push({ type: "web_url", url: `${ctx.commerceUrl.replace(/\/$/, "")}/?course=${encodeURIComponent(c.slug)}`, title: "Xem chi tiết" });
+  // "Xem chi tiết" is a postback (DETAIL:<slug>): the details are shown in Messenger, the website sale pages are closed.
+  const buttons = [{ type: "postback", title: "Xem chi tiết", payload: `DETAIL:${c.slug}` }];
   buttons.push(pending ? { type: "postback", title: PENDING_BTN[0], payload: PENDING_BTN[1] } : { type: "postback", title: "Đăng ký", payload: `BUY:${c.slug}` });
   const desc = shortDesc(c);
   const element = { title: cut(c.title || c.slug, 80), subtitle: pending ? "Bạn đã có đơn chờ duyệt" : cut(`Học phí: ${c.price}${desc ? ` · ${desc}` : ""}`, 80), buttons };

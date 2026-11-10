@@ -4,7 +4,7 @@
 // serialises that sender's events, drops duplicate deliveries and keeps the conversation state.
 import { createBillOrder } from "../../../utils/bill-order.js";
 import { supabase } from "../../../utils/supabase.js";
-import { PAUSE_MS, addOrder, busyAdminReplies, busyReplies, buyDuplicateReplies, clearDraft, emptyState, hasPlaceholder, normalizeState, openCourse, orderCreatedReply, orderFailedReply, ordersOf, ordersSummaryReplies, pendingOrdersReplies, refCourse, renderReplies, stepRaw, switchAsk, ticketReply } from "../../../utils/messenger/bot.js";
+import { PAUSE_MS, addOrder, busyAdminReplies, busyReplies, buyDuplicateReplies, clearDraft, dupBillReplies, emptyState, hasPlaceholder, normalizeState, openCourse, orderCreatedReply, orderFailedReply, ordersOf, ordersSummaryReplies, paymentInfo, pendingOrdersReplies, refCourse, renderReplies, stepRaw, switchAsk, ticketReply } from "../../../utils/messenger/bot.js";
 import faqData from "../../../utils/messenger/faq.json" with { type: "json" };
 import { activeTicket, openTicket, redactSummary, touchTicket } from "../../../utils/messenger/tickets.js";
 import { cloneConfig } from "../../../utils/clone-config.js";
@@ -81,10 +81,28 @@ export function toEvent(ev, appId) {
 
 export const eventId = (ev) => String(ev?.message?.mid || ev?.postback?.mid || `${ev?.timestamp || ""}:${ev?.postback?.payload || ev?.referral?.ref || ""}`);
 
-export async function loadOrder(orderId, db = supabase) {
-  const { data, error } = await db.from("orders").select("status,course_slug,course_title,customer_email").eq("id", orderId).maybeSingle();
+// Timeout like the other order reads (P1-4): a stuck DB must not leave the customer without an answer.
+export async function loadOrder(orderId, db = supabase, timeoutMs = 5000) {
+  const { data, error } = await db.from("orders").select("status,course_slug,course_title,customer_email").eq("id", orderId).abortSignal(AbortSignal.timeout(timeoutMs)).maybeSingle();
   if (error) throw error;
   return data;
+}
+
+// This sender's live ("Chờ duyệt" / "Đã duyệt") orders for ONE course (P0-1): same scope rules as loadPendingOrders
+// (psid, and pageId = this Page or no pageId), plus course_slug. A blank/odd pageId, psid or slug is an error and no query.
+export async function loadCourseOrders({ psid, pageId, slug }, db = supabase, timeoutMs = 5000) {
+  if (!/^\d{1,32}$/.test(String(pageId || ""))) throw new Error("page_id_missing");
+  if (!/^\d{5,32}$/.test(String(psid || ""))) throw new Error("psid_invalid");
+  if (!/^[a-z0-9_-]+$/.test(String(slug || ""))) throw new Error("slug_invalid");
+  const { data, error } = await db.from("orders").select("id,course_slug,course_title,customer_email,status,created_at,raw_data")
+    .eq("course_slug", slug).in("status", ["Chờ duyệt", "Đã duyệt"]).eq("raw_data->>psid", psid)
+    .or(`raw_data->>pageId.eq.${pageId},raw_data->>pageId.is.null`)
+    .order("created_at", { ascending: true }).limit(10).abortSignal(AbortSignal.timeout(timeoutMs));
+  if (error) throw error;
+  return (data || []).map((r) => ({
+    id: r.id, slug: r.course_slug, status: r.status, title: r.course_title || r.course_slug, email: r.customer_email || "", createdAt: r.created_at,
+    psid: String(r.raw_data?.psid ?? ""), pageId: r.raw_data?.pageId == null ? "" : String(r.raw_data.pageId)
+  }));
 }
 
 // This sender's "Chờ duyệt" orders (U6): one read, never by Gmail, name or phone. A blank or odd pageId is an error and
@@ -138,7 +156,7 @@ export class MessengerConversation {
   constructor(state, env, deps = {}) {
     this.storage = state.storage;
     this.env = env;
-    this.deps = { fetchImpl: fetch, loadCourses, loadOrder, createBillOrder, loadPendingOrders, now: Date.now, loadFaq, activeTicket, openTicket, touchTicket, ...deps };
+    this.deps = { fetchImpl: fetch, loadCourses, loadOrder, createBillOrder, loadPendingOrders, loadCourseOrders, now: Date.now, loadFaq, activeTicket, openTicket, touchTicket, ...deps };
   }
 
   // /event: a webhook event (the only path the webhook calls). /offer: Admin sends a registration card (messenger-tickets.js).
@@ -154,6 +172,13 @@ export class MessengerConversation {
     return new Response("ok");
   }
 
+  // Run a lookup with a timeout (deps.lookupMs for tests); rejects on error or timeout.
+  timed(fn) {
+    let timer;
+    const limit = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("timeout")), this.deps.lookupMs ?? 5000); });
+    return Promise.race([(async () => fn())(), limit]).finally(() => clearTimeout(timer));
+  }
+
   async sendAll(psid, replies) {
     for (const message of replies) {
       const res = await sendMessage(psid, message, { token: this.env.META_PAGE_ACCESS_TOKEN, fetchImpl: this.deps.fetchImpl });
@@ -164,11 +189,16 @@ export class MessengerConversation {
 
   // Open the draft after the status lookup said "no live order": re-read, change, write, no network in between.
   // ask: a customer pick (not an Admin /offer). If another draft was opened meanwhile (I11), ask before replacing it.
-  async openDraft(course, ctx, { ask = false } = {}) {
+  // ref: campaign ref of the pick (P1-3): stored with the draft, or kept as switchRef while the switch question is open.
+  async openDraft(course, ctx, { ask = false, ref } = {}) {
     const cur = (await this.storage.get("s")) || { state: emptyState(), mids: [], hits: [] };
     const st = normalizeState(cur.state);
-    if (ask && st.course && st.course !== course.slug) return switchAsk(st, course, ctx);
-    const r = openCourse(st, course, ctx);
+    if (ask && st.course && st.course !== course.slug) {
+      cur.state = { ...st, switchRef: ref ? { slug: course.slug, ref } : null };
+      await this.storage.put("s", cur);
+      return switchAsk(st, course, ctx);
+    }
+    const r = openCourse(ref ? { ...st, ref } : st, course, ctx);
     cur.state = r.state;
     await this.storage.put("s", cur);
     return r.replies;
@@ -186,6 +216,67 @@ export class MessengerConversation {
     if (action.mode === "buy") return buyDuplicateReplies(orders[0], full);
     const title = (slug) => ctx.courses.find((c) => c.slug === slug)?.title || slug;
     return ordersSummaryReplies(action.orders.map((o, i) => ({ title: title(o.slug), order: orders[i] })), full);
+  }
+
+  // P0-1: does this sender already hold a live order for the course? One read (timeout); null = it failed, or no usable Page ID.
+  // verified = this Page, or no pageId and the id is in this conversation (R2); unverified = no pageId and not in it (R1).
+  async courseOrder(psid, slug, state) {
+    const pageId = String(this.env.META_PAGE_ID || "").trim();
+    let rows;
+    try { rows = await this.deps.loadCourseOrders({ psid, pageId, slug }); } catch { return null; }
+    const ids = new Set(ordersOf(state).map((o) => o.id));
+    const live = (rows || []).filter((r) => r.psid === psid && r.slug === slug && ["Chờ duyệt", "Đã duyệt"].includes(r.status));
+    const verified = live.find((r) => r.pageId === pageId || (!r.pageId && ids.has(r.id))) || null;
+    return { verified, unverified: !verified && live.some((r) => !r.pageId), pageId };
+  }
+
+  // Order found in the DB: put its id back into the conversation (self-heal after lost storage). Only an order of this Page
+  // and only while there is room (< 10); an order without pageId is never added (R1/I7). Read, change, write, no network between.
+  async healOrder(row, pageId) {
+    if (!row || row.pageId !== pageId) return;
+    const cur = await this.storage.get("s");
+    if (!cur) return;
+    const st = normalizeState(cur.state);
+    const list = ordersOf(st);
+    if (list.length >= 10 || list.some((o) => o.id === row.id)) return;
+    cur.state = { ...st, orders: [...list, { id: row.id, slug: row.slug }] };
+    await this.storage.put("s", cur);
+  }
+
+  // Replies for "there is already an order" from a courseOrder result, or null when there is none.
+  async existingOrderReplies(r, ctx) {
+    if (r.verified) {
+      await this.healOrder(r.verified, r.pageId);
+      return buyDuplicateReplies({ status: r.verified.status, course_title: r.verified.title, customer_email: r.verified.email }, { ...ctx, lmsUrl: cloneConfig(this.env).lmsPublicUrl });
+    }
+    if (r.unverified) return pendingOrdersReplies([], [{ title: "", createdAt: "" }]);
+    return null;
+  }
+
+  // action checkCourse: nothing was changed yet. DB error / no Page ID: busy, no draft. Order exists: say so. Else open (or ask to switch).
+  async checkCourseReplies(psid, action, state, ctx) {
+    const course = ctx.courses.find((c) => c.slug === action.slug);
+    const r = await this.courseOrder(psid, action.slug, state);
+    if (!r) return busyAdminReplies();
+    const existing = await this.existingOrderReplies(r, ctx);
+    if (existing) return existing;
+    return this.openDraft(course, ctx, { ask: !action.confirmed, ref: action.ref || undefined });
+  }
+
+  // action checkPayment (GMAIL_OK): same check before the transfer details; gmailOk is set only when it is clear.
+  async checkPaymentReplies(psid, state, ctx, gmail = state.gmail) {
+    const course = ctx.courses.find((c) => c.slug === state.course);
+    const r = await this.courseOrder(psid, state.course, state);
+    if (!r) return busyAdminReplies();
+    const existing = await this.existingOrderReplies(r, ctx);
+    if (existing) return existing;
+    const cur = await this.storage.get("s");
+    const st = normalizeState(cur?.state);
+    // Only the Gmail the customer confirmed: one typed during the lookup is not confirmed yet.
+    if (!cur || st.course !== course.slug || !st.gmail || st.gmail !== gmail) return [];
+    cur.state = { ...st, gmailOk: true };
+    await this.storage.put("s", cur);
+    return paymentInfo(course, true);
   }
 
   // Pending orders of this sender, classified (R2): verified = this Page, or no pageId and the id is in this conversation;
@@ -266,8 +357,10 @@ export class MessengerConversation {
     // A DB error counts as "no ticket": the sales flow keeps working, and a new ticket would report its own failure
     // honestly. Staying silent instead could leave a customer unanswered while no Admin is handling them.
     const tickets = ticketsEnabled(env);
+    // P0-2: an error or a 5 s timeout is "unknown", not "no ticket": the bot then stays out of an Admin's way (see bot.js).
     let ticket = null;
-    if (tickets && event.kind !== "echo") ticket = await deps.activeTicket({ pageId: env.META_PAGE_ID, psid }).catch(() => null);
+    let ticketUnknown = false;
+    if (tickets && event.kind !== "echo") ticket = await this.timed(() => deps.activeTicket({ pageId: env.META_PAGE_ID, psid })).catch(() => { ticketUnknown = true; return null; });
     const now = deps.now();
     const saved = (await this.storage.get("s")) || { state: emptyState(), mids: [], hits: [] };
     const mid = eventId(ev);
@@ -277,7 +370,7 @@ export class MessengerConversation {
     if (event.kind !== "echo" && saved.hits.length >= RATE_PER_MINUTE) { await this.storage.put("s", saved); return; }
     if (event.kind !== "echo") saved.hits.push(now);
     const ctx = { now, courses, commerceUrl: cloneConfig(env).commercePublicUrl };
-    if (tickets) Object.assign(ctx, { ticketsEnabled: true, resumeGapMs: resumeGapMs(env), faq: deps.loadFaq(), activeTicket: ticket, appIdKnown: Boolean(String(env.META_APP_ID || "").trim()) });
+    if (tickets) Object.assign(ctx, { ticketsEnabled: true, resumeGapMs: resumeGapMs(env), faq: deps.loadFaq(), activeTicket: ticket, ticketUnknown, appIdKnown: Boolean(String(env.META_APP_ID || "").trim()) });
     // A DO only blocks other events during storage calls, not during outbound fetch: while one bill is being
     // uploaded, a second image must not start a second order. The lock expires so a crash cannot stick it.
     if (event.kind === "image" && saved.creatingAt && now - saved.creatingAt < 120000) {
@@ -305,6 +398,8 @@ export class MessengerConversation {
         latest.state = next;
         replies.push(orderCreatedReply(tickets));
         finalState = latest.state;
+      } else if (result.handled) {
+        replies.push(...result.replies); // duplicate bill / DB error: the draft stays, creatingAt is released
       } else {
         replies.push(orderFailedReply());
       }
@@ -316,10 +411,11 @@ export class MessengerConversation {
       if (out.action?.type === "orderStatus") {
         const found = await this.statusReplies(out.action, ctx);
         if (found) replies.push(...found);
-        // U9.3/I11: no live order for that course, but another draft is open: ask, do not replace it.
-        else if (out.action.ask) replies.push(...switchAsk(finalState, courses.find((c) => c.slug === out.action.slug), ctx));
-        else replies.push(...await this.openDraft(courses.find((c) => c.slug === out.action.slug), ctx, { ask: true }));
+        // No live order for that course: open it (U9.3/I11: if another draft was opened meanwhile, ask before replacing it).
+        else replies.push(...await this.openDraft(courses.find((c) => c.slug === out.action.slug), ctx, { ask: !out.action.confirmed, ref: out.action.ref || undefined }));
       }
+      if (out.action?.type === "checkCourse") replies.push(...await this.checkCourseReplies(psid, out.action, finalState, ctx));
+      if (out.action?.type === "checkPayment") replies.push(...await this.checkPaymentReplies(psid, finalState, ctx, out.action.gmail));
       if (out.action?.type === "pendingOrders") replies.push(...await this.pendingOrdersActionReplies(psid, finalState));
       if (out.action?.type === "listOther") replies.push(...await this.listOtherReplies(finalState, out.action.page));
       // Ticket writes also run after the state is saved. Admin replies (echo) are recorded without answering the customer.
@@ -337,6 +433,15 @@ export class MessengerConversation {
   }
 
   async createOrder(psid, state, url, mid, courses = []) {
+    // P0-1 layer (b), before anything is uploaded or created (also with tickets off): a course that already has an order
+    // gets no second one; the Admin checks the bill instead. A failed read (or no Page ID) creates nothing either.
+    const T = ticketsEnabled(this.env);
+    const dup = await this.courseOrder(psid, state.course, state);
+    if (!dup) return { ok: false, handled: true, replies: busyAdminReplies(T) };
+    if (dup.verified || dup.unverified) {
+      if (T) await Promise.resolve(this.deps.openTicket({ pageId: this.env.META_PAGE_ID, psid, reason: "support", summary: `Bill gửi lại cho khóa đã có đơn: ${state.course}` })).catch(() => {});
+      return { ok: false, handled: true, replies: dupBillReplies(T) };
+    }
     const bill = await downloadBill(url, { fetchImpl: this.deps.fetchImpl });
     if (!bill.ok) return { ok: false, error: bill.error };
     const result = await this.deps.createBillOrder({

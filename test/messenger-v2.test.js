@@ -4,7 +4,7 @@ import "data:text/javascript,process.env.SUPABASE_URL%3D%3Dprocess.env.SUPABASE_
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { step, emptyState, ordersOf, normalizeState, MENU3, TICKET_OK_TEXT, orderCreatedReply } from "../utils/messenger/bot.js";
+import { step, emptyState, ordersOf, normalizeState, MENU3, TICKET_OK_TEXT, orderCreatedReply, openCourse, switchAsk } from "../utils/messenger/bot.js";
 import { MessengerConversation, loadCourses, toEvent, eventId } from "../cloudflare/commerce-worker/src/messenger.js";
 import { createHandler } from "../cloudflare/commerce-worker/src/messenger-tickets.js";
 import { runCompatHandler } from "../cloudflare/commerce-worker/src/http-compat.js";
@@ -19,6 +19,15 @@ const ctx = (extra = {}) => ({ now: 1_000_000, courses: COURSES, ticketsEnabled:
 const txt = (text, payload) => ({ kind: "text", text, ...(payload ? { payload } : {}) });
 const pb = (payload) => ({ kind: "postback", payload });
 const G = { ...emptyState(), greeted: true };
+// The DO answers a checkCourse action from the DB; with no order found it opens the draft, or asks to switch. Same here, without a DB.
+const settle = (out, c = ctx()) => {
+  const a = out.action;
+  if (a?.type !== "checkCourse") return out;
+  const course = c.courses.find((x) => x.slug === a.slug);
+  if (a.ask && out.state.course && out.state.course !== a.slug) return { ...out, replies: [...out.replies, ...switchAsk(out.state, course, c)] };
+  const r = openCourse(a.ref ? { ...out.state, ref: a.ref } : out.state, course, c);
+  return { ...out, state: r.state, replies: [...out.replies, ...r.replies] };
+};
 const payloads = (r) => r.quick_replies.map((q) => q.payload);
 
 // ---- 1-2 menu and greeting ----
@@ -38,7 +47,7 @@ test("menu: hi, menu, GET_STARTED, RESTART all show it; legacy payloads still wo
   assert.deepEqual(list.attachment.payload.elements.map((e) => e.buttons.at(-1).payload), ["BUY:khoa_b", "BUY:khoa-a"]);
   assert.deepEqual(payloads(list), ["MENU", "ADMIN"]);
   assert.equal(step(G, pb("HUMAN"), ctx()).action.reason, "human");
-  const old = step(G, txt("Khóa A", "COURSE:khoa-a"), ctx());
+  const old = settle(step(G, txt("Khóa A", "COURSE:khoa-a"), ctx()));
   assert.equal(old.state.course, "khoa-a", "COURSE:<slug> behaves like BUY:<slug>");
 });
 
@@ -112,8 +121,8 @@ test("loadCourses: featured first, only one featured, returns imageUrl", async (
 
 // ---- 6-7 BUY / LIST ----
 test("BUY without slug: ref course, else featured, else the list", () => {
-  assert.equal(step(G, pb("BUY"), ctx()).state.course, "khoa_b", "featured");
-  assert.equal(step({ ...G, ref: "c__khoa-a" }, pb("BUY"), ctx()).state.course, "khoa-a", "ref first");
+  assert.equal(settle(step(G, pb("BUY"), ctx())).state.course, "khoa_b", "featured");
+  assert.equal(settle(step({ ...G, ref: "c__khoa-a" }, pb("BUY"), ctx())).state.course, "khoa-a", "ref first");
   const none = step(G, pb("BUY"), ctx({ courses: [A] }));
   // U7: carousel, one card with "Đăng ký" (BUY:khoa-a).
   assert.deepEqual(none.replies.at(-1).attachment.payload.elements[0].buttons.at(-1), { type: "postback", title: "Đăng ký", payload: "BUY:khoa-a" });
@@ -140,11 +149,11 @@ test("LIST (U7 carousel): 15 courses -> page 1 has 9 full-name cards + Xem tiế
 
 // ---- 8 short buy flow ----
 test("short flow: card, Gmail ask with user_email, confirm text, payment only after GMAIL_OK", () => {
-  let out = step(G, pb("BUY:khoa-a"), ctx());
+  let out = settle(step(G, pb("BUY:khoa-a"), ctx()));
   const card = out.replies[0].attachment.payload.elements[0];
   assert.equal(out.replies[0].attachment.payload.template_type, "generic");
   assert.deepEqual([card.title, card.subtitle, card.image_url], ["Khóa A", "Học phí: 100.000đ", "https://img.example/a.jpg"]);
-  assert.deepEqual(card.buttons, [{ type: "web_url", url: "https://shop.example/?course=khoa-a", title: "Xem nội dung khóa" }, { type: "postback", title: "Đổi khóa học", payload: "CHANGE_COURSE" }]); // U9: label and payload
+  assert.deepEqual(card.buttons, [{ type: "postback", title: "Xem nội dung khóa", payload: "DETAIL:khoa-a" }, { type: "postback", title: "Đổi khóa học", payload: "CHANGE_COURSE" }]); // U9: label and payload
   assert.equal(out.replies[1].text, "Bạn gửi Gmail dùng để học (đăng nhập Google trên trang học) nhé.");
   // U2: the Gmail ask also carries "Hủy đăng ký" and "Chat với Admin".
   assert.deepEqual(out.replies[1].quick_replies[0], { content_type: "user_email" });
@@ -154,10 +163,11 @@ test("short flow: card, Gmail ask with user_email, confirm text, payment only af
   assert.match(out.replies[0].text, /không phải tài khoản Google/);
   assert.equal(out.replies[1].text, 'Đăng ký khóa "Khóa A" bằng Gmail me@yahoo.com. Đúng không?');
   assert.deepEqual(out.replies[1].quick_replies.map((q) => q.payload), ["GMAIL_OK", "GMAIL_NO", "CHANGE_COURSE", "CANCEL_DRAFT", "ADMIN"], "U2/U9 exits");
+  // P0-1: GMAIL_OK is answered by the DO after an order check (checkPayment); the pure step only asks for it and sets nothing.
   out = step(out.state, txt("Đúng", "GMAIL_OK"), ctx());
-  assert.match(out.replies[0].text, /0123/);
-  assert.equal(out.replies.at(-1).text, "Bạn chụp ảnh bill chuyển khoản và gửi vào đây nhé.");
-  assert.equal(out.state.gmailOk, true);
+  assert.deepEqual(out.action, { type: "checkPayment", slug: "khoa-a", gmail: "me@yahoo.com" });
+  assert.equal(out.state.gmailOk, false);
+  assert.deepEqual(out.replies, []);
 });
 
 test("toEvent: user_email quick reply (payload = e-mail) becomes typed text", () => {
@@ -194,6 +204,7 @@ function harness({ statuses = {}, courses = COURSES, tickets = true, active = nu
     activeTicket: async () => active, openTicket: async (a) => { opened.push(a); return { ok: true }; }, touchTicket: async () => {},
     loadOrder: async (id) => statuses[id] ?? null,
     loadPendingOrders: async () => [],
+    loadCourseOrders: async () => [],
     createBillOrder: async (input, opts) => { orders.push({ input, opts }); return { status: 200, body: { orderId: `o${orders.length}` } }; },
     ...extraDeps
   });
@@ -354,11 +365,11 @@ test("toEvent: postback keeps kind+payload and adds ref; messaging_referrals giv
 });
 
 test("referral: valid ref (with label, underscore slug) opens that course's flow and stores state.ref", () => {
-  let out = step(emptyState(), { kind: "referral", ref: "c__khoa-a__fb_ad-1" }, ctx());
+  let out = settle(step(emptyState(), { kind: "referral", ref: "c__khoa-a__fb_ad-1" }, ctx()));
   assert.equal(out.state.course, "khoa-a");
   assert.equal(out.state.ref, "c__khoa-a__fb_ad-1");
   assert.ok(out.replies.some((r) => r.attachment), "card sent");
-  out = step(emptyState(), { kind: "postback", payload: "GET_STARTED", ref: "c__khoa_b" }, ctx());
+  out = settle(step(emptyState(), { kind: "postback", payload: "GET_STARTED", ref: "c__khoa_b" }, ctx()));
   assert.equal(out.state.course, "khoa_b");
 });
 

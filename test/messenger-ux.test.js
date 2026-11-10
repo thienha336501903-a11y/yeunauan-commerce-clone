@@ -73,6 +73,7 @@ function harness({ rows = [], courses = COURSES, statuses = {}, tickets = true, 
     activeTicket: async () => null, openTicket: async () => ({ ok: true }), touchTicket: async () => {},
     loadOrder: async (id) => statuses[id] ?? null,
     loadPendingOrders: (a) => loadPendingOrders(a, db),
+    loadCourseOrders: async () => [],
     createBillOrder: async (input, opts) => { orders.push({ input, opts }); return { status: 200, body: { orderId: `new${orders.length}` } }; },
     ...deps
   });
@@ -498,9 +499,9 @@ test("UX-37 one course: one card with title, subtitle (price + short description
   assert.equal(out.length, 1);
   const [e] = elements(out[0]);
   assert.deepEqual([e.title, e.subtitle, e.image_url], ["Khóa A", "Học phí: 100.000đ · Mô tả A", "https://img.example/a.jpg"]);
-  assert.deepEqual(e.buttons, [{ type: "web_url", url: "https://shop.example/?course=khoa-a", title: "Xem chi tiết" }, { type: "postback", title: "Đăng ký", payload: "BUY:khoa-a" }]);
+  assert.deepEqual(e.buttons, [{ type: "postback", title: "Xem chi tiết", payload: "DETAIL:khoa-a" }, { type: "postback", title: "Đăng ký", payload: "BUY:khoa-a" }]); // P2-5: details inside Messenger
   const noUrl = elements(step(G, pb("LIST"), ctx({ courses: [A], commerceUrl: "" })).replies[0])[0];
-  assert.deepEqual(noUrl.buttons.map((b) => b.title), ["Đăng ký"]);
+  assert.deepEqual(noUrl.buttons.map((b) => b.title), ["Xem chi tiết", "Đăng ký"]);
   assert.equal(elements(step(G, pb("LIST"), ctx({ courses: [B] })).replies[0])[0].subtitle, "Học phí: 200.000đ · Dòng 1 Dòng 2", "description, newlines removed");
 });
 

@@ -48,8 +48,9 @@ const IMG = "https://scontent.xx.fbcdn.net/v/bill.jpg";
 function conversation({ createBillOrder, fetchImpl, env = {} } = {}) {
   const state = { storage: fakeStorage() };
   const calls = [];
-  const convo = new MessengerConversation(state, { META_PAGE_ACCESS_TOKEN: "page-token", META_APP_ID: "777", ...env }, {
+  const convo = new MessengerConversation(state, { META_PAGE_ACCESS_TOKEN: "page-token", META_APP_ID: "777", META_PAGE_ID: "555", ...env }, {
     fetchImpl,
+    loadCourseOrders: async () => [], // P0-1: no earlier order of this course
     now: () => 1_000_000,
     loadCourses: async () => COURSES,
     createBillOrder: createBillOrder || (async (input, opts) => { calls.push({ input, opts }); return { status: 200, body: { success: true, orderId: "order-" + calls.length } }; })
@@ -180,7 +181,7 @@ test("DO: happy path creates one Facebook order, replies via Send API with heade
   assert.equal(calls[0].input.gmail, "hoc.vien@gmail.com");
   assert.equal(calls[0].input.course, "khoa-test");
   assert.equal(calls[0].input.billType, "image/jpeg");
-  assert.deepEqual(calls[0].opts.rawExtra, { channel: "facebook", psid: PSID });
+  assert.deepEqual(calls[0].opts.rawExtra, { channel: "facebook", psid: PSID, pageId: "555" }); // harness env now has META_PAGE_ID
   assert.match(f.sent.at(-1).body.message.text, /đã nhận bill/);
   assert.ok(f.sent.every((s) => s.auth === "Bearer page-token" && !s.url.includes("page-token")));
   // A second bill after the order does not create another order.

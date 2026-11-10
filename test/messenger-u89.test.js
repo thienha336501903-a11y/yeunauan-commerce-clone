@@ -1,7 +1,7 @@
 // Messenger V2 U8 (back after a gap with a draft) + U9 (change course any time). U89-47..U89-74 = tests 47-74 of CLAUDE_MESSENGER_V2_UX_FIX_20261109.md.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { step, emptyState, normalizeState, PAUSE_MS } from "../utils/messenger/bot.js";
+import { step, emptyState, normalizeState, PAUSE_MS, openCourse, switchAsk, paymentInfo } from "../utils/messenger/bot.js";
 import { MessengerConversation, loadPendingOrders, resumeGapMs } from "../cloudflare/commerce-worker/src/messenger.js";
 
 const PSID = "1234567890123";
@@ -12,6 +12,15 @@ const A = { slug: "khoa-a", title: "Khóa A", price: "100.000đ", subtitle: "", 
 const B = { slug: "khoa_b", title: "Khóa B", price: "200.000đ", subtitle: "", description: "", bankName: "VCB", bankAccount: "0456", bankOwner: "X", transferNote: "B", qrImageUrl: "", imageUrl: "", featured: true };
 const COURSES = [B, A];
 const ctx = (extra = {}) => ({ now: T0, courses: COURSES, ticketsEnabled: true, faq: [], activeTicket: null, commerceUrl: "https://shop.example", ...extra });
+// The DO answers a checkCourse action from the DB; with no order found it opens the draft, or asks to switch. Same here, without a DB.
+const settle = (out, c = ctx()) => {
+  const a = out.action;
+  if (a?.type !== "checkCourse") return out;
+  const course = c.courses.find((x) => x.slug === a.slug);
+  if (a.ask && out.state.course && out.state.course !== a.slug) return { ...out, replies: [...out.replies, ...switchAsk(out.state, course, c)] };
+  const r = openCourse(a.ref ? { ...out.state, ref: a.ref } : out.state, course, c);
+  return { ...out, state: r.state, replies: [...out.replies, ...r.replies] };
+};
 const txt = (text, payload) => ({ kind: "text", text, ...(payload ? { payload } : {}) });
 const pb = (payload) => ({ kind: "postback", payload });
 const G = { ...emptyState(), greeted: true };
@@ -69,6 +78,7 @@ function harness({ rows = [], courses = COURSES, statuses = {}, tickets = true, 
     activeTicket: async () => h.active ?? null, openTicket: async (a) => { opened.push(a); return { ok: true }; }, touchTicket: async (id) => { touched.push(id); },
     loadOrder: loadOrder ?? (async (id) => statuses[id] ?? null),
     loadPendingOrders: (a) => loadPendingOrders(a, db),
+    loadCourseOrders: async () => [],
     createBillOrder: async (input, opts) => { orders.push({ input, opts }); return { status: 200, body: { orderId: `new${orders.length}` } }; },
     ...deps
   });
@@ -310,12 +320,12 @@ test("U89-64 rollback: state with lastInboundAt survives normalizeState; SWITCH 
 // ======== U9 ========
 test("U89-65 'Đổi khóa học' on the card, Gmail ask, retry, confirm and bill step; titles <= 20, <= 13 quick replies", () => {
   const has = (m) => m.quick_replies.some((q) => q.payload === "CHANGE_COURSE");
-  const card = step(G, pb("BUY:khoa-a"), ctx()).replies;
+  const card = settle(step(G, pb("BUY:khoa-a"), ctx())).replies;
   assert.deepEqual(elements(card[0])[0].buttons.at(-1), { type: "postback", title: "Đổi khóa học", payload: "CHANGE_COURSE" });
   assert.ok(has(card[1]), "Gmail ask");
   const msgs = [card[1], step({ ...G, course: "khoa-a", gmail: "a@gmail.com" }, pb("GMAIL_NO"), ctx()).replies[0],
     step({ ...G, course: "khoa-a" }, txt("a@gmail.com"), ctx()).replies.at(-1),
-    step({ ...G, course: "khoa-a", gmail: "a@gmail.com" }, pb("GMAIL_OK"), ctx()).replies.at(-1),
+    paymentInfo(A, true).at(-1), // GMAIL_OK now goes through the DO check (checkPayment)
     step({ ...G, course: "khoa-a", gmail: "a@gmail.com", gmailOk: true }, txt("..."), ctx()).replies[0]];
   for (const m of msgs) {
     assert.ok(has(m), m.text);
@@ -337,14 +347,14 @@ test("U89-66 CHANGE_COURSE: carousel without courses that have a pending/approve
 });
 
 test("U89-67 draft A, BUY:B asks before switching; the draft stays A", () => {
-  const out = step({ ...G, course: "khoa-a", gmail: "a@gmail.com" }, pb("BUY:khoa_b"), ctx());
+  const out = settle(step({ ...G, course: "khoa-a", gmail: "a@gmail.com" }, pb("BUY:khoa_b"), ctx()));
   assert.equal(out.replies[0].text, ASK_AB);
   assert.deepEqual(out.replies[0].quick_replies.map((q) => [q.title, q.payload]), [["Đổi sang khóa này", "SWITCH:khoa_b"], ["Tiếp tục khóa cũ", "CONTINUE_DRAFT"], ["Xem các khóa học", "LIST"]]);
   assert.deepEqual([out.state.course, out.state.gmail], ["khoa-a", "a@gmail.com"]);
 });
 
 test("U89-68 SWITCH:B opens the draft for B (card + Gmail ask); A's Gmail does not carry over", () => {
-  const out = step({ ...G, course: "khoa-a", gmail: "a@gmail.com", gmailOk: true }, pb("SWITCH:khoa_b"), ctx());
+  const out = settle(step({ ...G, course: "khoa-a", gmail: "a@gmail.com", gmailOk: true }, pb("SWITCH:khoa_b"), ctx()));
   assert.deepEqual([out.state.course, out.state.gmail, out.state.gmailOk], ["khoa_b", null, false]);
   assert.equal(elements(out.replies[0])[0].title, "Khóa B");
   assert.equal(out.replies[1].text, GMAIL_ASK);
@@ -392,16 +402,16 @@ test("U89-72 SWITCH:B when B is no longer sold: sentence + carousel; draft A kep
 
 test("U89-73 referral, 'Đúng' (U5) and a typed course name while another draft is open all ask the same question", () => {
   const st = { ...G, course: "khoa-a", gmail: "a@gmail.com" };
-  const ref = step(st, { kind: "referral", ref: "c__khoa_b" }, ctx());
+  const ref = settle(step(st, { kind: "referral", ref: "c__khoa_b" }, ctx()));
   assert.equal(ref.replies[0].text, ASK_AB);
   assert.equal(ref.state.ref, null, "the campaign ref is not stored before SWITCH");
   assert.equal(ref.state.course, "khoa-a");
-  const yes = step(st, txt("Đúng", "BUY:khoa_b"), ctx());
+  const yes = settle(step(st, txt("Đúng", "BUY:khoa_b"), ctx()));
   assert.equal(yes.replies[0].text, ASK_AB);
-  const typed = step(st, txt("Khóa B"), ctx());
+  const typed = settle(step(st, txt("Khóa B"), ctx()));
   assert.equal(typed.replies[0].text, ASK_AB);
   assert.equal(typed.state.course, "khoa-a");
-  const free = step({ ...st, draftMisses: 1 }, txt("cho mình hỏi khóa b"), ctx());
+  const free = settle(step({ ...st, draftMisses: 1 }, txt("cho mình hỏi khóa b"), ctx()));
   assert.equal(free.replies[0].text, ASK_AB);
 });
 
