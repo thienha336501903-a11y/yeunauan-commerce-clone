@@ -4,7 +4,8 @@
 // serialises that sender's events, drops duplicate deliveries and keeps the conversation state.
 import { createBillOrder } from "../../../utils/bill-order.js";
 import { supabase } from "../../../utils/supabase.js";
-import { PAUSE_MS, addOrder, busyAdminReplies, busyReplies, buyDuplicateReplies, clearDraft, dupBillReplies, emptyState, hasPlaceholder, normalizeState, openCourse, orderCreatedReply, orderFailedReply, ordersOf, ordersSummaryReplies, paymentInfo, pendingOrdersReplies, refCourse, renderReplies, stepRaw, switchAsk, ticketReply } from "../../../utils/messenger/bot.js";
+import { AI_MODEL_DEFAULT, AI_SCHEMA, AI_TIMEOUT_MS, aiMessages, parseAiResult } from "../../../utils/messenger/ai.js";
+import { PAUSE_MS, addOrder, aiReply, busyAdminReplies, busyReplies, buyDuplicateReplies, clearDraft, dupBillReplies, emptyState, hasPlaceholder, normalizeState, openCourse, orderCreatedReply, orderFailedReply, ordersOf, ordersSummaryReplies, paymentInfo, pendingOrdersReplies, refCourse, renderReplies, stepRaw, switchAsk, ticketReply } from "../../../utils/messenger/bot.js";
 import faqData from "../../../utils/messenger/faq.json" with { type: "json" };
 import { activeTicket, openTicket, redactSummary, touchTicket } from "../../../utils/messenger/tickets.js";
 import { cloneConfig } from "../../../utils/clone-config.js";
@@ -15,6 +16,8 @@ const SEEN_MIDS = 200;
 const RATE_PER_MINUTE = 20;
 const enabled = (env) => String(env.MESSENGER_BOT_ENABLED || "").trim() === "1";
 const ticketsEnabled = (env) => String(env.MESSENGER_TICKETS_ENABLED || "").trim() === "1";
+// G-MC1: AI answers free text only when the flag is "1" and the Workers AI binding exists.
+const aiEnabled = (env) => String(env.MESSENGER_AI_ENABLED || "").trim() === "1" && Boolean(env.AI) && typeof env.AI.run === "function";
 // U8: how long a customer may be silent before the "back with a draft" question. Only a whole number of ms >= 60000 counts; else 12 hours.
 export const resumeGapMs = (env) => {
   const raw = String(env?.MESSENGER_RESUME_GAP_MS ?? "").trim();
@@ -371,6 +374,7 @@ export class MessengerConversation {
     if (event.kind !== "echo") saved.hits.push(now);
     const ctx = { now, courses, commerceUrl: cloneConfig(env).commercePublicUrl };
     if (tickets) Object.assign(ctx, { ticketsEnabled: true, resumeGapMs: resumeGapMs(env), faq: deps.loadFaq(), activeTicket: ticket, ticketUnknown, appIdKnown: Boolean(String(env.META_APP_ID || "").trim()) });
+    if (tickets && !ticketUnknown && aiEnabled(env)) ctx.aiEnabled = true;
     // A DO only blocks other events during storage calls, not during outbound fetch: while one bill is being
     // uploaded, a second image must not start a second order. The lock expires so a crash cannot stick it.
     if (event.kind === "image" && saved.creatingAt && now - saved.creatingAt < 120000) {
@@ -420,16 +424,59 @@ export class MessengerConversation {
       if (out.action?.type === "listOther") replies.push(...await this.listOtherReplies(finalState, out.action.page));
       // Ticket writes also run after the state is saved. Admin replies (echo) are recorded without answering the customer.
       if (out.action?.type === "touchTicket" && ticket) await deps.touchTicket(ticket.id);
-      if (out.action?.type === "openTicket") {
-        const { reason, status } = out.action;
-        const summary = redactSummary(out.action.summary ?? (event.kind === "text" ? event.text : ""));
-        const result = await Promise.resolve(deps.openTicket({ pageId: env.META_PAGE_ID, psid, reason, summary, status })).catch(() => ({ ok: false }));
-        if (reason !== "admin_reply") replies.push(ticketReply(Boolean(result?.ok)));
+      if (out.action?.type === "openTicket") replies.push(...await this.openTicketReplies(psid, out.action, event));
+      if (out.action?.type === "ai") {
+        const r = aiReply(finalState, await this.runAi(out.action.text, ctx), ctx);
+        // Re-read after the AI wait (up to 8 s). Another customer event or an Admin reply meanwhile makes this answer
+        // stale: send nothing and open no ticket, so a draft, an Admin request or an Admin chat is never overridden.
+        // The daily AI count was already saved before the call; only `misses` is written here.
+        const cur = (await this.storage.get("s")) || saved;
+        const st = normalizeState(cur.state);
+        const stale = st.lastInboundAt !== finalState.lastInboundAt || st.adminSeenAt !== finalState.adminSeenAt || st.course !== finalState.course || st.pendingAdmin !== finalState.pendingAdmin;
+        if (stale) finalState = st; // a first-message greeting already in `replies` is still sent (Meta: say it is a bot)
+        else {
+          replies.push(...r.replies);
+          cur.state = { ...st, misses: r.state.misses };
+          await this.storage.put("s", cur);
+          finalState = cur.state;
+          if (r.action?.type === "openTicket") replies.push(...await this.openTicketReplies(psid, r.action, event));
+        }
       }
     }
     for (const message of await this.finish(psid, replies, finalState, ctx, tickets)) {
       await sendMessage(psid, message, { token: env.META_PAGE_ACCESS_TOKEN, fetchImpl: deps.fetchImpl });
     }
+  }
+
+  // Opens the ticket after the state is saved; returns the reply for the customer (none for an Admin echo).
+  async openTicketReplies(psid, action, event) {
+    const { env, deps } = this;
+    const { reason, status } = action;
+    const summary = redactSummary(action.summary ?? (event.kind === "text" ? event.text : ""));
+    const result = await Promise.resolve(deps.openTicket({ pageId: env.META_PAGE_ID, psid, reason, summary, status })).catch(() => ({ ok: false }));
+    return reason !== "admin_reply" ? [ticketReply(Boolean(result?.ok))] : [];
+  }
+
+  // G-MC1: ask Workers AI; any error, timeout or bad JSON is null (the caller falls back). Logs no customer text, PSID or answer.
+  async runAi(text, ctx) {
+    const { env, deps } = this;
+    const t0 = Date.now();
+    let timer;
+    let ai = null;
+    try {
+      if (deps.runAi) ai = await deps.runAi(text, ctx);
+      else {
+        const call = env.AI.run(env.MESSENGER_AI_MODEL || AI_MODEL_DEFAULT, {
+          messages: aiMessages(text, ctx.courses, ctx.faq),
+          max_tokens: 300, temperature: 0, chat_template_kwargs: { enable_thinking: false },
+          response_format: { type: "json_schema", json_schema: AI_SCHEMA }
+        });
+        const limit = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("timeout")), deps.aiTimeoutMs ?? AI_TIMEOUT_MS); });
+        ai = parseAiResult(await Promise.race([call, limit]));
+      }
+    } catch { ai = null; } finally { clearTimeout(timer); }
+    console.log(JSON.stringify({ evt: "messenger_ai", route: ai?.route ?? null, ms: Date.now() - t0, ok: Boolean(ai) }));
+    return ai;
   }
 
   async createOrder(psid, state, url, mid, courses = []) {

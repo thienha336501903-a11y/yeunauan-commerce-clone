@@ -3,6 +3,8 @@
 // in Admin, and access is granted only by the existing approval path (approveV5Order -> /api/v5-sync).
 // It never reports order or enrollment status for a typed Gmail, so typing someone else's Gmail reveals nothing.
 
+import { AI_DAILY_CAP, badAnswer } from "./ai.js";
+
 export const PAUSE_MS = 12 * 60 * 60 * 1000;
 // Owner text (08/11). Says it is an automated assistant, as Meta policy requires.
 const GREETING = "Chào bạn! 👋 Mình là trợ lý tự động của Yêu học bánh. Bạn muốn đăng ký khóa học hay cần hỗ trợ gì ạ?";
@@ -193,8 +195,36 @@ function freeText(state, event, ctx) {
   if (close.length === 1) return { state: { ...state, misses: 0 }, replies: [text(`Bạn muốn hỏi khóa ${close[0].title || close[0].slug}?`, [["Đúng", `BUY:${close[0].slug}`], ["Không", "LIST"]])] };
   if (close.length > 1) return { state: { ...state, misses: 0 }, replies: listReply(ctx, "") };
   if (ordersOf(state).length) return pendingOrders({ ...state, misses: 0 });
+  // G-MC1: text nothing above understood goes to the AI (flag on, no draft, under the daily cap); it only answers.
+  const day = new Date(ctx.now).toISOString().slice(0, 10);
+  const n = state.ai?.day === day ? state.ai.n : 0;
+  if (ctx.aiEnabled && !state.course && n < AI_DAILY_CAP) return { state: { ...state, ai: { day, n: n + 1 } }, replies: [], action: { type: "ai", text: event.text } };
+  return freeTextFallback(state);
+}
+
+export function freeTextFallback(state) {
   if ((state.misses || 0) >= 1) return ticket(state, "unclear");
   return { state: { ...state, misses: 1 }, replies: mainMenu("Mình chưa hiểu ý bạn. ", draftExtra(state)) };
+}
+
+// AI result -> reply. Pure. The AI never produces BUY, an order, a payment check or a Gmail: only text and fixed buttons.
+// Its price is never used: the price comes from the course record (AI-I4).
+const SELF_HELP_IDS = ["faq-login", "faq-video", "faq-wrong-account"];
+export function aiReply(state, ai, ctx) {
+  if (!ai || ai.route === "clarify") return freeTextFallback(state);
+  if (ai.route === "ticket") return ticket(state, "unclear");
+  if (ai.route === "self_help") {
+    const f = approvedFaq(ctx).find((x) => SELF_HELP_IDS.includes(x.id) && (ai.sources || []).includes(x.id) && x.answer);
+    return f ? { state: { ...state, misses: 0 }, replies: [faqAnswer(f)] } : ticket(state, "unclear");
+  }
+  if (badAnswer(ai.answer)) return ticket(state, "unclear");
+  const next = { ...state, misses: 0 };
+  const course = ctx.courses.find((c) => c.slug === ai.course_slug);
+  // Price / payment questions: the AI text is replaced by fixed text with the price from the course record.
+  const aboutFee = /học phí|chuyển khoản/i.test(ai.answer);
+  if (!course) return { state: next, replies: aboutFee ? listReply(ctx, "Bạn muốn hỏi khóa nào? ") : mainMenu(`${ai.answer.trim()} `) };
+  const body = aboutFee ? `Học phí ${course.title || course.slug}: ${course.price}. Thông tin chuyển khoản sẽ gửi sau khi bạn bấm "Đăng ký" và xác nhận Gmail.` : ai.answer.trim();
+  return { state: next, replies: [text(body, [["Xem chi tiết", `DETAIL:${course.slug}`], ["Đăng ký", `BUY:${course.slug}`], adminBtn(true)])] };
 }
 
 // U2: every draft step has a way out: "Hủy đăng ký" and Admin (tickets off: "Gặp người thật").
@@ -293,7 +323,7 @@ export function stepRaw(prev, event, ctx) {
   const out = stepInner(prev, event, ctx);
   // A customer ticket gets its reply from the DO after the insert; the greeting must still come first.
   // A course check (checkCourse) also answers later: the greeting of a first message must not be lost.
-  const answersLater = (out.action?.type === "openTicket" && out.action.reason !== "admin_reply") || out.action?.type === "checkCourse";
+  const answersLater = (out.action?.type === "openTicket" && out.action.reason !== "admin_reply") || out.action?.type === "checkCourse" || out.action?.type === "ai";
   if (prev?.greeted || (!out.replies.length && !answersLater)) return out;
   const first = out.replies[0];
   const replies = first?.text?.startsWith(GREETING) || first?.menu?.intro?.startsWith(GREETING) ? out.replies : [text(GREETING), ...out.replies];
