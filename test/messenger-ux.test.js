@@ -196,7 +196,7 @@ test("UX-08 draft B: first stray text repeats Gmail with exit buttons, second ru
   const st = { ...G, course: "khoa_b" };
   const one = step(st, txt("blah blah"), ctx());
   assert.equal(one.replies[0].text, "Bạn gửi Gmail dùng để học (đăng nhập Google trên trang học) nhé.");
-  assert.deepEqual(one.replies[0].quick_replies.map((q) => q.payload ?? q.content_type), ["user_email", "CANCEL_DRAFT", "ADMIN"]);
+  assert.deepEqual(one.replies[0].quick_replies.map((q) => q.payload ?? q.content_type), ["user_email", "CHANGE_COURSE", "CANCEL_DRAFT", "ADMIN"]); // U9 adds "Đổi khóa học"
   assert.equal(one.state.draftMisses, 1);
   const two = step(one.state, txt("blah blah"), ctx());
   assert.match(two.replies[0].text, /^Mình chưa hiểu ý bạn\./);

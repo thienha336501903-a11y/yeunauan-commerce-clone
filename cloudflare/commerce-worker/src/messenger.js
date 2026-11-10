@@ -4,7 +4,7 @@
 // serialises that sender's events, drops duplicate deliveries and keeps the conversation state.
 import { createBillOrder } from "../../../utils/bill-order.js";
 import { supabase } from "../../../utils/supabase.js";
-import { addOrder, busyAdminReplies, busyReplies, buyDuplicateReplies, clearDraft, emptyState, hasPlaceholder, normalizeState, openCourse, orderCreatedReply, orderFailedReply, ordersOf, ordersSummaryReplies, pendingOrdersReplies, refCourse, renderReplies, stepRaw, ticketReply } from "../../../utils/messenger/bot.js";
+import { PAUSE_MS, addOrder, busyAdminReplies, busyReplies, buyDuplicateReplies, clearDraft, emptyState, hasPlaceholder, normalizeState, openCourse, orderCreatedReply, orderFailedReply, ordersOf, ordersSummaryReplies, pendingOrdersReplies, refCourse, renderReplies, stepRaw, switchAsk, ticketReply } from "../../../utils/messenger/bot.js";
 import faqData from "../../../utils/messenger/faq.json" with { type: "json" };
 import { activeTicket, openTicket, redactSummary, touchTicket } from "../../../utils/messenger/tickets.js";
 import { cloneConfig } from "../../../utils/clone-config.js";
@@ -15,6 +15,11 @@ const SEEN_MIDS = 200;
 const RATE_PER_MINUTE = 20;
 const enabled = (env) => String(env.MESSENGER_BOT_ENABLED || "").trim() === "1";
 const ticketsEnabled = (env) => String(env.MESSENGER_TICKETS_ENABLED || "").trim() === "1";
+// U8: how long a customer may be silent before the "back with a draft" question. Only a whole number of ms >= 60000 counts; else 12 hours.
+export const resumeGapMs = (env) => {
+  const raw = String(env?.MESSENGER_RESUME_GAP_MS ?? "").trim();
+  return /^\d{1,12}$/.test(raw) && Number(raw) >= 60000 ? Number(raw) : PAUSE_MS;
+};
 export const loadFaq = () => faqData.filter((f) => f.status === "approved");
 
 export async function messengerWebhook(request, env, ctx) {
@@ -158,9 +163,12 @@ export class MessengerConversation {
   }
 
   // Open the draft after the status lookup said "no live order": re-read, change, write, no network in between.
-  async openDraft(course, ctx) {
+  // ask: a customer pick (not an Admin /offer). If another draft was opened meanwhile (I11), ask before replacing it.
+  async openDraft(course, ctx, { ask = false } = {}) {
     const cur = (await this.storage.get("s")) || { state: emptyState(), mids: [], hits: [] };
-    const r = openCourse(normalizeState(cur.state), course, ctx);
+    const st = normalizeState(cur.state);
+    if (ask && st.course && st.course !== course.slug) return switchAsk(st, course, ctx);
+    const r = openCourse(st, course, ctx);
     cur.state = r.state;
     await this.storage.put("s", cur);
     return r.replies;
@@ -269,7 +277,7 @@ export class MessengerConversation {
     if (event.kind !== "echo" && saved.hits.length >= RATE_PER_MINUTE) { await this.storage.put("s", saved); return; }
     if (event.kind !== "echo") saved.hits.push(now);
     const ctx = { now, courses, commerceUrl: cloneConfig(env).commercePublicUrl };
-    if (tickets) Object.assign(ctx, { ticketsEnabled: true, faq: deps.loadFaq(), activeTicket: ticket, appIdKnown: Boolean(String(env.META_APP_ID || "").trim()) });
+    if (tickets) Object.assign(ctx, { ticketsEnabled: true, resumeGapMs: resumeGapMs(env), faq: deps.loadFaq(), activeTicket: ticket, appIdKnown: Boolean(String(env.META_APP_ID || "").trim()) });
     // A DO only blocks other events during storage calls, not during outbound fetch: while one bill is being
     // uploaded, a second image must not start a second order. The lock expires so a crash cannot stick it.
     if (event.kind === "image" && saved.creatingAt && now - saved.creatingAt < 120000) {
@@ -282,6 +290,8 @@ export class MessengerConversation {
     let finalState = out.state;
     if (out.action?.type === "createOrder") {
       saved.creatingAt = now;
+      // Keep this message's time mark (U8) even if the upload fails; the draft itself is changed only after the order.
+      saved.state = { ...saved.state, lastInboundAt: out.state.lastInboundAt };
       await this.storage.put("s", saved);
       const result = await this.createOrder(psid, out.state, out.action.url, mid, courses);
       // Re-read: events handled during the upload (e.g. "gặp người") must not be lost.
@@ -306,7 +316,9 @@ export class MessengerConversation {
       if (out.action?.type === "orderStatus") {
         const found = await this.statusReplies(out.action, ctx);
         if (found) replies.push(...found);
-        else replies.push(...await this.openDraft(courses.find((c) => c.slug === out.action.slug), ctx));
+        // U9.3/I11: no live order for that course, but another draft is open: ask, do not replace it.
+        else if (out.action.ask) replies.push(...switchAsk(finalState, courses.find((c) => c.slug === out.action.slug), ctx));
+        else replies.push(...await this.openDraft(courses.find((c) => c.slug === out.action.slug), ctx, { ask: true }));
       }
       if (out.action?.type === "pendingOrders") replies.push(...await this.pendingOrdersActionReplies(psid, finalState));
       if (out.action?.type === "listOther") replies.push(...await this.listOtherReplies(finalState, out.action.page));

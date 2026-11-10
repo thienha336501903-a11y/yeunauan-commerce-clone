@@ -26,9 +26,9 @@ export const ticketReply = (ok) => ({ text: ok ? TICKET_OK_TEXT : TICKET_FAIL_TE
 
 // Draft = course, gmail, gmailOk. Placed orders live in `orders` ([{ id, slug }], absent in states saved before V2).
 // draftMisses (U4): consecutive non-email texts while a draft is open.
-export const emptyState = () => ({ course: null, gmail: null, gmailOk: false, orderId: null, pendingAdmin: null, ref: null, pausedUntil: 0, greeted: false, draftMisses: 0 });
+export const emptyState = () => ({ course: null, gmail: null, gmailOk: false, orderId: null, pendingAdmin: null, ref: null, pausedUntil: 0, greeted: false, draftMisses: 0, lastInboundAt: 0 });
 export const ordersOf = (s) => (Array.isArray(s?.orders) ? s.orders : s?.orderId ? [{ id: s.orderId, slug: s.course }] : []);
-export const clearDraft = (s) => ({ ...s, course: null, gmail: null, gmailOk: false, draftMisses: 0 });
+export const clearDraft = (s) => ({ ...s, course: null, courseTitle: null, courseTitleFor: null, gmail: null, gmailOk: false, draftMisses: 0 });
 // A new order spends the draft and the campaign ref; a stale pendingAdmin must not open a ticket afterwards.
 export const addOrder = (s, id, slug) => ({ ...s, orders: [...ordersOf(s), { id, slug }].slice(-MAX_ORDERS), orderId: id, pendingAdmin: null, ref: null });
 // Full state from a saved one. An orderId missing from `orders` (saved before V2, or by an older build after a rollback)
@@ -49,8 +49,10 @@ export const MENU3 = [["Đăng ký khóa học", "BUY"], ["Xem khóa đang mở 
 const PENDING_BTN = ["Đơn chờ duyệt", "PENDING_ORDERS"];
 const DRAFT_BTNS = [["Tiếp tục đăng ký", "CONTINUE_DRAFT"], ["Hủy đăng ký", "CANCEL_DRAFT"]];
 // The one builder of the main menu (B6). pendingMenu: "show" | "hide" | "unknown" (DB error: show only if the DO already holds an order id, B5).
-export function menuButtons(pendingMenu, hasOrdersInDo, extra = []) {
+export function menuButtons(pendingMenu, hasOrdersInDo, extra = [], resume = false) {
   const show = pendingMenu === "show" || (pendingMenu === "unknown" && Boolean(hasOrdersInDo));
+  // U8 (back after a long gap with a draft): continue / see courses / [pending orders] / Admin.
+  if (resume) return [DRAFT_BTNS[0], ["Xem các khóa học", "LIST"], ...(show ? [PENDING_BTN] : []), MENU3[2]];
   return [...(show ? [MENU3[0], MENU3[1], PENDING_BTN, MENU3[2]] : MENU3), ...extra];
 }
 // Every message with the main menu is a placeholder; renderReplies fills it in once the DO knows pendingMenu.
@@ -106,7 +108,13 @@ function ticketStep(state, event, ctx, payload) {
   // U3: with a draft the menu also offers "Tiếp tục đăng ký" / "Hủy đăng ký"; the draft is kept.
   if (payload === "MENU" || (isText && MENU.test(clean(event.text)))) return { state: base, replies: mainMenu("", extra) };
   if (payload === "GET_STARTED") return { state: base, replies: mainMenu(GREETING, extra, false) };
-  if (payload === "CONTINUE_DRAFT") return { state: base, replies: nextPrompt(state, ctx) };
+  // U8.3/U8.8: back to the step the draft stopped at (the transfer details again at the bill step); a course no longer sold ends the draft.
+  if (payload === "CONTINUE_DRAFT") {
+    if (state.course && !ctx.courses.some((c) => c.slug === state.course)) return soldOut(base, ctx);
+    return { state: base, replies: state.course && state.gmailOk ? paymentInfo(ctx.courses.find((c) => c.slug === state.course), true) : nextPrompt(state, ctx) };
+  }
+  // U9: change course at any step. The list is the "other courses" one; the draft stays until SWITCH.
+  if (payload === "CHANGE_COURSE") return { state: base, replies: [], action: { type: "listOther", page: 1 } };
   // LIST_OTHER:<n> = a later page of the same filtered list (the DO recomputes the exclusions).
   if (payload === "LIST_OTHER" || payload.startsWith("LIST_OTHER:")) {
     const n = payload.slice(11);
@@ -167,6 +175,9 @@ const fuzzyCourses = (q, courses) => {
   return courses.filter((c) => words(c.title || "").some((cw) => ws.some((w) => near(w, cw))));
 };
 
+// A course named outright in the text (its title or slug).
+const courseNamed = (ctx, q) => ctx.courses.find((c) => (norm(c.title).length >= 4 && q.includes(norm(c.title))) || q.includes(String(c.slug).toLowerCase()));
+
 // Tickets on, free text (no draft, or a draft after a second miss in a row, U4): FAQ keyword or course name,
 // else a close course name (asks, never assigns), else (past orders -> pending orders), else ask once more, then ticket.
 // A draft is only replaced when the text names a course outright; it survives everything else.
@@ -176,7 +187,7 @@ function freeText(state, event, ctx) {
   if (GREET.test(clean(event.text))) return { state: { ...state, misses: 0 }, replies: mainMenu("") };
   const hit = approvedFaq(ctx).find((f) => (f.keywords || []).some((k) => k && q.includes(k)));
   if (hit) return hit.answer ? { state: { ...state, misses: 0 }, replies: [faqAnswer(hit)] } : ticket(state, "unclear");
-  const course = ctx.courses.find((c) => (norm(c.title).length >= 4 && q.includes(norm(c.title))) || q.includes(String(c.slug).toLowerCase()));
+  const course = courseNamed(ctx, q);
   if (course) return buy({ ...state, misses: 0 }, ctx, course.slug);
   const close = fuzzyCourses(event.text, ctx.courses);
   if (close.length === 1) return { state: { ...state, misses: 0 }, replies: [text(`Bạn muốn hỏi khóa ${close[0].title || close[0].slug}?`, [["Đúng", `BUY:${close[0].slug}`], ["Không", "LIST"]])] };
@@ -187,7 +198,13 @@ function freeText(state, event, ctx) {
 }
 
 // U2: every draft step has a way out: "Hủy đăng ký" and Admin (tickets off: "Gặp người thật").
-const exits = (T) => [["Hủy đăng ký", "CANCEL_DRAFT"], adminBtn(T)];
+const exits = (T) => [...(T ? [["Đổi khóa học", "CHANGE_COURSE"]] : []), ["Hủy đăng ký", "CANCEL_DRAFT"], adminBtn(T)];
+
+// U8.8: the draft's course is no longer sold: say so and drop the draft (orders stay, nothing is written to the DB).
+const soldOut = (state, ctx) => ({
+  state: clearDraft(state),
+  replies: [text(`Khóa ${(state.courseTitleFor === state.course && state.courseTitle) || titleOf(ctx, state.course)} hiện không còn mở đăng ký qua Messenger. Bạn muốn xem các khóa học khác đang mở bán hay trò chuyện với Admin ạ?`, [["Xem các khóa học", "LIST"], ["Chat với Admin", "ADMIN"]])]
+});
 const withExits = (message, T) => ({ ...message, quick_replies: [...message.quick_replies, ...exits(T).map(([title, payload]) => ({ content_type: "text", title, payload }))] });
 const gmailAsk = (T) => withExits({
   text: "Bạn gửi Gmail dùng để học (đăng nhập Google trên trang học) nhé.",
@@ -199,21 +216,24 @@ const retryGmailAsk = (T) => withExits({ text: "Bạn gửi lại Gmail dùng đ
 export function courseCard(c, ctx) {
   const buttons = [];
   if (ctx.commerceUrl) buttons.push({ type: "web_url", url: `${ctx.commerceUrl.replace(/\/$/, "")}/?course=${encodeURIComponent(c.slug)}`, title: "Xem nội dung khóa" });
-  buttons.push({ type: "postback", title: "Đổi khóa khác", payload: "LIST" });
+  buttons.push(ctx.ticketsEnabled ? { type: "postback", title: "Đổi khóa học", payload: "CHANGE_COURSE" } : { type: "postback", title: "Đổi khóa khác", payload: "LIST" });
   const element = { title: String(c.title || c.slug).slice(0, 80), subtitle: `Học phí: ${c.price}`.slice(0, 80), buttons };
   if (/^https:\/\//i.test(c.imageUrl || "")) element.image_url = c.imageUrl;
   return { attachment: { type: "template", payload: { template_type: "generic", elements: [element] } } };
 }
 
+// The bill step carries the exits too (U9.1), tickets on only.
+const billAsk = (T) => text("Bạn chụp ảnh bill chuyển khoản và gửi vào đây nhé.", T ? exits(T) : []);
+
 // Payment details, sent only after the customer confirmed the Gmail.
-function paymentInfo(c) {
+function paymentInfo(c, T = false) {
   const lines = [`Khoá: ${c.title || c.slug}`];
   if (c.price) lines.push(`Học phí: ${c.price}`);
   if (c.bankAccount) lines.push(`Chuyển khoản: ${[c.bankName, c.bankAccount, c.bankOwner && `(${c.bankOwner})`].filter(Boolean).join(" ")}`);
   if (c.transferNote) lines.push(`Nội dung chuyển khoản: ${c.transferNote}`);
   const out = [text(lines.join("\n"))];
   if (c.qrImageUrl) out.push({ attachment: { type: "image", payload: { url: c.qrImageUrl, is_reusable: true } } });
-  out.push(text("Bạn chụp ảnh bill chuyển khoản và gửi vào đây nhé."));
+  out.push(billAsk(T));
   return out;
 }
 
@@ -225,24 +245,33 @@ function nextPrompt(state, ctx) {
   if (!state.course) return T ? mainMenu("") : listReply(ctx, "");
   if (!state.gmail) return [gmailAsk(T)];
   if (!state.gmailOk) return [confirmGmail(state.gmail, titleOf(ctx, state.course), T)];
-  return [text("Bạn chụp ảnh bill chuyển khoản và gửi vào đây nhé.")];
+  return [billAsk(T)];
 }
 
 // Start (or continue) the draft for a course. Pure; the duplicate-order check is done by the caller.
 export function openCourse(state, course, ctx) {
   if (state.course === course.slug) return { state, replies: nextPrompt(state, ctx) };
-  return { state: { ...state, course: course.slug, gmail: null, gmailOk: false, misses: 0, draftMisses: 0 }, replies: [courseCard(course, ctx), gmailAsk(Boolean(ctx.ticketsEnabled))] };
+  // courseTitle: the title for U8.8 once the course is no longer sold (then loadCourses no longer has it).
+  return { state: { ...state, course: course.slug, courseTitle: course.title || course.slug, courseTitleFor: course.slug, gmail: null, gmailOk: false, misses: 0, draftMisses: 0 }, replies: [courseCard(course, ctx), gmailAsk(Boolean(ctx.ticketsEnabled))] };
 }
 
 // BUY / BUY:<slug> / COURSE:<slug>. A course with an order already goes to a status lookup first (the DO decides).
-function buy(state, ctx, slug) {
+// U9.3: with tickets on, picking a course other than the open draft asks first (I11); only SWITCH:<slug> (confirmed) replaces it.
+// The duplicate-order check comes first. `ref` (campaign entry) is applied only when the draft is opened.
+const needsSwitchAsk = (state, ctx, course, confirmed) => Boolean(ctx.ticketsEnabled && !confirmed && state.course && state.course !== course.slug);
+export function switchAsk(state, course, ctx) {
+  return [text(`Bạn đang đăng ký dở khóa ${titleOf(ctx, state.course)}. Bạn muốn đổi sang khóa ${course.title || course.slug} không?`, [["Đổi sang khóa này", `SWITCH:${course.slug}`], ["Tiếp tục khóa cũ", "CONTINUE_DRAFT"], ["Xem các khóa học", "LIST"]])];
+}
+function buy(state, ctx, slug, { confirmed = false, ref } = {}) {
   const course = slug == null
     ? refCourse(state.ref, ctx) || ctx.courses.find((c) => c.featured)
     : ctx.courses.find((c) => c.slug === slug);
   if (!course) return { state, replies: listReply(ctx, slug == null ? "" : "Khóa này hiện chưa mở đăng ký. ") };
+  const ask = needsSwitchAsk(state, ctx, course, confirmed);
   const dup = ordersOf(state).find((o) => o.slug === course.slug);
-  if (dup) return { state, replies: [], action: { type: "orderStatus", mode: "buy", slug: course.slug, orders: [dup] } };
-  return openCourse(state, course, ctx);
+  if (dup) return { state, replies: [], action: { type: "orderStatus", mode: "buy", slug: course.slug, orders: [dup], ...(ask ? { ask: true } : {}) } };
+  if (ask) return { state, replies: switchAsk(state, course, ctx) };
+  return openCourse(ref ? { ...state, ref } : state, course, ctx);
 }
 
 // event: { kind: "text", text, payload? } | { kind: "postback", payload, ref? } | { kind: "referral", ref } | { kind: "image", url } | { kind: "echo", fromThisApp }
@@ -265,6 +294,14 @@ export function stepRaw(prev, event, ctx) {
   return { ...out, state: { ...out.state, greeted: true }, replies };
 }
 
+// U8 exceptions: the customer chose clearly (these buttons, a campaign link), or a bill with a complete draft
+// (they may have paid already; blocking it would make them send it again).
+const RESUME_PAYLOAD = /^(CONTINUE_DRAFT|LIST|LIST:.*|LIST_OTHER(:.*)?|MENU_COURSES|ADMIN.*|CANCEL_DRAFT|CHANGE_COURSE|BUY.*|COURSE:.*|SWITCH:.*|PENDING_ORDERS|MENU|RESTART|HUMAN)$/;
+// Typed requests for a person or a restart are explicit too: they must not need two more taps after a break.
+const skipsResume = (state, event, payload) => Boolean(event.ref) || RESUME_PAYLOAD.test(payload)
+  || (event.kind === "text" && !payload && (HUMAN.test(event.text || "") || RESTART.test((event.text || "").trim())))
+  || (event.kind === "image" && state.gmail && state.gmailOk);
+
 function stepInner(prev, event, ctx) {
   const state = normalizeState(prev);
   const now = ctx.now;
@@ -279,18 +316,26 @@ function stepInner(prev, event, ctx) {
     if (!event.fromThisApp) state.pausedUntil = now + PAUSE_MS;
     return { state, replies: [] };
   }
+  // U8: every customer message (not echoes) moves the mark; the gap is read before. No mark yet (old state) = no U8 this time.
+  const sinceLast = typeof state.lastInboundAt === "number" && state.lastInboundAt > 0 ? now - state.lastInboundAt : -1;
+  state.lastInboundAt = now;
   // Open ticket: silent for every kind (text, postback, image, referral).
   if (T && ctx.activeTicket) return { state, replies: [], action: { type: "touchTicket" } };
   if (!T && state.pausedUntil > now) return { state, replies: [] };
 
   const payload = event.payload || "";
+  if (T && state.course && !state.pendingAdmin && sinceLast >= (ctx.resumeGapMs ?? PAUSE_MS) && !skipsResume(state, event, payload)) {
+    // Back after a long gap with an open draft: ask once (the mark is now fresh) instead of repeating the step.
+    if (!ctx.courses.some((c) => c.slug === state.course)) return soldOut(state, ctx);
+    return { state, replies: [{ menu: { intro: `Chào bạn! Trước đó bạn đang đăng ký khóa ${titleOf(ctx, state.course)} nhưng chưa hoàn tất. Bạn muốn tiếp tục đăng ký khóa này, xem các khóa học khác đang mở bán hay trò chuyện với Admin ạ?`, ask: false, resume: true } }] };
+  }
   if (payload) state.draftMisses = 0; // U4: any button resets the count
   // Campaign entry (m.me ref / ad): a valid, sellable course opens the buy flow, anything else the menu.
   if (event.ref) {
     const course = refCourse(event.ref, ctx);
     state.pendingAdmin = null;
     if (!course) return { state, replies: T ? mainMenu("") : listReply(ctx, "") };
-    return buy({ ...state, ref: event.ref }, ctx, course.slug);
+    return buy(state, ctx, course.slug, { ref: event.ref });
   }
   // U2: drop the draft, keep the orders; never touches the DB.
   if (payload === "CANCEL_DRAFT") {
@@ -318,11 +363,12 @@ function stepInner(prev, event, ctx) {
   if (/^LIST:/.test(payload)) return { state, replies: listReply(ctx, "", T, /^\d{1,6}$/.test(payload.slice(5)) ? Number(payload.slice(5)) : 1) };
   if (payload === "BUY") return buy(state, ctx, null);
   if (payload.startsWith("BUY:") || payload.startsWith("COURSE:")) return buy(state, ctx, payload.slice(payload.indexOf(":") + 1));
+  if (payload.startsWith("SWITCH:")) return buy(state, ctx, payload.slice(7), { confirmed: true });
   if (payload === "GMAIL_OK" && state.gmail && state.course) {
     const course = ctx.courses.find((c) => c.slug === state.course);
     if (!course) return { state: clearDraft(state), replies: listReply(ctx, "Khóa này hiện chưa mở đăng ký. ") };
     state.gmailOk = true;
-    return { state, replies: paymentInfo(course) };
+    return { state, replies: paymentInfo(course, T) };
   }
   if (payload === "GMAIL_NO") {
     return { state: { ...state, gmail: null, gmailOk: false }, replies: [retryGmailAsk(T)] };
@@ -342,6 +388,9 @@ function stepInner(prev, event, ctx) {
     if (T && !state.course) return freeText(state, event, ctx);
     // U4: with a draft, the first stray text repeats the step (with the exit buttons); the second in a row is handled as free text.
     if (T && state.course) {
+      // U9.3: a typed name of another course asks about switching right away (never replaces the draft).
+      const named = courseNamed(ctx, norm(event.text));
+      if (named && named.slug !== state.course) return buy({ ...state, misses: 0 }, ctx, named.slug);
       if (state.draftMisses >= 1) return freeText({ ...state, draftMisses: 2 }, event, ctx);
       return { state: { ...state, draftMisses: 1 }, replies: nextPrompt(state, ctx) };
     }
@@ -466,8 +515,8 @@ function courseList({ page, intro = "", exclude = [], other = false }, view, ctx
 export function renderReplies(replies, view, ctx) {
   return replies.flatMap((r) => {
     if (r.menu) {
-      const { intro, extra = [], ask = true } = r.menu;
-      return [text(`${intro}${ask ? "Bạn cần mình giúp gì?" : ""}`, menuButtons(view.pendingMenu, (view.doOrderIds || []).length > 0, extra))];
+      const { intro, extra = [], ask = true, resume = false } = r.menu;
+      return [text(`${intro}${ask ? "Bạn cần mình giúp gì?" : ""}`, menuButtons(view.pendingMenu, (view.doOrderIds || []).length > 0, extra, resume))];
     }
     if (r.courses) return courseList(r.courses, view, ctx);
     return [r];

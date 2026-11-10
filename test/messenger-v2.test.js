@@ -144,16 +144,16 @@ test("short flow: card, Gmail ask with user_email, confirm text, payment only af
   const card = out.replies[0].attachment.payload.elements[0];
   assert.equal(out.replies[0].attachment.payload.template_type, "generic");
   assert.deepEqual([card.title, card.subtitle, card.image_url], ["Khóa A", "Học phí: 100.000đ", "https://img.example/a.jpg"]);
-  assert.deepEqual(card.buttons, [{ type: "web_url", url: "https://shop.example/?course=khoa-a", title: "Xem nội dung khóa" }, { type: "postback", title: "Đổi khóa khác", payload: "LIST" }]);
+  assert.deepEqual(card.buttons, [{ type: "web_url", url: "https://shop.example/?course=khoa-a", title: "Xem nội dung khóa" }, { type: "postback", title: "Đổi khóa học", payload: "CHANGE_COURSE" }]); // U9: label and payload
   assert.equal(out.replies[1].text, "Bạn gửi Gmail dùng để học (đăng nhập Google trên trang học) nhé.");
   // U2: the Gmail ask also carries "Hủy đăng ký" and "Chat với Admin".
   assert.deepEqual(out.replies[1].quick_replies[0], { content_type: "user_email" });
-  assert.deepEqual(payloads({ quick_replies: out.replies[1].quick_replies.slice(1) }), ["CANCEL_DRAFT", "ADMIN"]);
+  assert.deepEqual(payloads({ quick_replies: out.replies[1].quick_replies.slice(1) }), ["CHANGE_COURSE", "CANCEL_DRAFT", "ADMIN"]);
   assert.ok(!JSON.stringify(out.replies).includes("0123"));
   out = step(out.state, txt("me@yahoo.com"), ctx());
   assert.match(out.replies[0].text, /không phải tài khoản Google/);
   assert.equal(out.replies[1].text, 'Đăng ký khóa "Khóa A" bằng Gmail me@yahoo.com. Đúng không?');
-  assert.deepEqual(out.replies[1].quick_replies.map((q) => q.payload), ["GMAIL_OK", "GMAIL_NO", "CANCEL_DRAFT", "ADMIN"], "U2 exits");
+  assert.deepEqual(out.replies[1].quick_replies.map((q) => q.payload), ["GMAIL_OK", "GMAIL_NO", "CHANGE_COURSE", "CANCEL_DRAFT", "ADMIN"], "U2/U9 exits");
   out = step(out.state, txt("Đúng", "GMAIL_OK"), ctx());
   assert.match(out.replies[0].text, /0123/);
   assert.equal(out.replies.at(-1).text, "Bạn chụp ảnh bill chuyển khoản và gửi vào đây nhé.");
@@ -438,7 +438,7 @@ test("offer: sends card + Gmail ask, sets the ticket done, returns { ok, sent }"
   assert.deepEqual([r.json.ok, r.json.sent], [true, true]);
   assert.deepEqual(o.seen, ["/offer"]);
   assert.ok(o.h.sent[0].attachment, "card");
-  assert.deepEqual(o.h.sent[1].quick_replies.map((q) => q.payload ?? q.content_type), ["user_email", "CANCEL_DRAFT", "ADMIN"], "U2 exits");
+  assert.deepEqual(o.h.sent[1].quick_replies.map((q) => q.payload ?? q.content_type), ["user_email", "CHANGE_COURSE", "CANCEL_DRAFT", "ADMIN"], "U2/U9 exits");
   assert.equal(o.rows[0].status, "done");
   assert.equal((await o.h.storage.get("s")).state.course, "khoa-a");
 });
@@ -614,7 +614,7 @@ test("offer: bot off -> 503 bot_unavailable, nothing sent, ticket unchanged", as
 test("ref: only attached when it names the ordered course; cleared after the order and on RESTART; empty label invalid", async () => {
   const h = harness();
   await h.convo.handle(PSID, { sender: { id: PSID }, recipient: { id: PAGE }, timestamp: 9, referral: { ref: "c__khoa-a" } });
-  await h.convo.handle(PSID, quick("f1", "x", "BUY:khoa_b"));
+  await h.convo.handle(PSID, quick("f1", "x", "SWITCH:khoa_b")); // U9.3: BUY:khoa_b would ask first, the draft of khoa-a is open
   await h.convo.handle(PSID, msg("f2", { text: "b@gmail.com" }));
   await h.convo.handle(PSID, quick("f3", "Đúng", "GMAIL_OK"));
   await h.convo.handle(PSID, image("f4"));
