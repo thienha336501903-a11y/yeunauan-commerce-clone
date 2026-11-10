@@ -138,7 +138,8 @@ test("'menu' shows the menu and keeps the order; 'Khoá khác' still starts over
     assert.equal(out.state.course, null, "legacy state: the draft was spent on the order");
     assert.ok(out.replies.at(-1).quick_replies?.length);
     out = step(out.state, { kind: "text", text: "đơn của tôi sao rồi" }, c);
-    assert.deepEqual(out.action, { type: "orderStatus", mode: "list", orders: [{ id: UUID, slug: "khoa-test" }] }, "order still found after menu");
+    // Tickets on (U6): free text with orders asks the DO for this sender's pending orders instead of listing all of them.
+    assert.deepEqual(out.action, c.ticketsEnabled ? { type: "pendingOrders" } : { type: "orderStatus", mode: "list", orders: [{ id: UUID, slug: "khoa-test" }] }, "order still found after menu");
     out = step(withOrder, { kind: "postback", payload: "RESTART" }, c);
     assert.equal(out.state.course, null, "RESTART clears the draft");
     assert.deepEqual(out.state.orders, [{ id: UUID, slug: "khoa-test" }], "RESTART keeps the orders");

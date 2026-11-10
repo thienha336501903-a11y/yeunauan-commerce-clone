@@ -33,8 +33,10 @@ test("menu: hi, menu, GET_STARTED, RESTART all show it; legacy payloads still wo
   for (const e of [txt("hi"), txt("menu"), pb("GET_STARTED"), pb("RESTART"), txt("x", "MENU")]) {
     assert.deepEqual(payloads(step(G, e, ctx()).replies.at(-1)), ["BUY", "LIST", "ADMIN"], JSON.stringify(e));
   }
-  const list = step(G, pb("MENU_COURSES"), ctx()).replies[0];
-  assert.deepEqual(payloads(list), ["BUY:khoa_b", "BUY:khoa-a", "ADMIN"]);
+  // U7: the course list is a carousel (one card per course, "Đăng ký" = BUY:<slug>), not quick replies.
+  const list = step(G, pb("MENU_COURSES"), ctx()).replies.at(-1);
+  assert.deepEqual(list.attachment.payload.elements.map((e) => e.buttons.at(-1).payload), ["BUY:khoa_b", "BUY:khoa-a"]);
+  assert.deepEqual(payloads(list), ["MENU", "ADMIN"]);
   assert.equal(step(G, pb("HUMAN"), ctx()).action.reason, "human");
   const old = step(G, txt("Khóa A", "COURSE:khoa-a"), ctx());
   assert.equal(old.state.course, "khoa-a", "COURSE:<slug> behaves like BUY:<slug>");
@@ -113,25 +115,27 @@ test("BUY without slug: ref course, else featured, else the list", () => {
   assert.equal(step(G, pb("BUY"), ctx()).state.course, "khoa_b", "featured");
   assert.equal(step({ ...G, ref: "c__khoa-a" }, pb("BUY"), ctx()).state.course, "khoa-a", "ref first");
   const none = step(G, pb("BUY"), ctx({ courses: [A] }));
-  assert.deepEqual(payloads(none.replies[0]), ["BUY:khoa-a", "ADMIN"]);
+  // U7: carousel, one card with "Đăng ký" (BUY:khoa-a).
+  assert.deepEqual(none.replies.at(-1).attachment.payload.elements[0].buttons.at(-1), { type: "postback", title: "Đăng ký", payload: "BUY:khoa-a" });
 });
 
 test("BUY:<slug>: unknown slug says so and shows the list", () => {
   const out = step(G, pb("BUY:khoa-zzz"), ctx());
   assert.match(out.replies[0].text, /^Khóa này hiện chưa mở đăng ký\./);
-  assert.ok(payloads(out.replies[0]).includes("BUY:khoa-a"));
+  assert.ok(JSON.stringify(out.replies).includes("BUY:khoa-a"), "U7: the list is a carousel");
   assert.equal(out.state.course, null);
 });
 
-test("LIST: up to 12 courses cut to 20 chars + Admin button; empty list keeps Admin button", () => {
+test("LIST (U7 carousel): 15 courses -> page 1 has 9 full-name cards + Xem tiếp + Admin; empty list keeps the Admin button", () => {
   const many = Array.from({ length: 15 }, (_, i) => ({ ...A, slug: `c${i}`, title: "Một tên khóa học rất là dài dòng" }));
-  const r = step(G, pb("LIST"), ctx({ courses: many })).replies[0];
-  assert.equal(r.quick_replies.length, 13);
+  const r = step(G, pb("LIST"), ctx({ courses: many })).replies.at(-1);
+  assert.equal(r.attachment.payload.elements.length, 9);
+  assert.equal(r.attachment.payload.elements[0].title, "Một tên khóa học rất là dài dòng", "the whole name, not cut to 20");
   assert.ok(r.quick_replies.every((q) => q.title.length <= 20));
-  assert.equal(r.quick_replies.at(-1).payload, "ADMIN");
+  assert.deepEqual(payloads(r), ["MENU", "ADMIN", "LIST:2"]);
   const empty = step(G, pb("LIST"), ctx({ courses: [] })).replies[0];
-  assert.match(empty.text, /chưa có khoá nào/);
-  assert.deepEqual(payloads(empty), ["ADMIN"]);
+  assert.equal(empty.text, "Hiện chưa có khóa nào mở đăng ký qua Messenger.");
+  assert.deepEqual(payloads(empty), ["ADMIN", "MENU"]);
 });
 
 // ---- 8 short buy flow ----
@@ -142,12 +146,14 @@ test("short flow: card, Gmail ask with user_email, confirm text, payment only af
   assert.deepEqual([card.title, card.subtitle, card.image_url], ["Khóa A", "Học phí: 100.000đ", "https://img.example/a.jpg"]);
   assert.deepEqual(card.buttons, [{ type: "web_url", url: "https://shop.example/?course=khoa-a", title: "Xem nội dung khóa" }, { type: "postback", title: "Đổi khóa khác", payload: "LIST" }]);
   assert.equal(out.replies[1].text, "Bạn gửi Gmail dùng để học (đăng nhập Google trên trang học) nhé.");
-  assert.deepEqual(out.replies[1].quick_replies, [{ content_type: "user_email" }]);
+  // U2: the Gmail ask also carries "Hủy đăng ký" and "Chat với Admin".
+  assert.deepEqual(out.replies[1].quick_replies[0], { content_type: "user_email" });
+  assert.deepEqual(payloads({ quick_replies: out.replies[1].quick_replies.slice(1) }), ["CANCEL_DRAFT", "ADMIN"]);
   assert.ok(!JSON.stringify(out.replies).includes("0123"));
   out = step(out.state, txt("me@yahoo.com"), ctx());
   assert.match(out.replies[0].text, /không phải tài khoản Google/);
   assert.equal(out.replies[1].text, 'Đăng ký khóa "Khóa A" bằng Gmail me@yahoo.com. Đúng không?');
-  assert.deepEqual(out.replies[1].quick_replies.map((q) => q.payload), ["GMAIL_OK", "GMAIL_NO"]);
+  assert.deepEqual(out.replies[1].quick_replies.map((q) => q.payload), ["GMAIL_OK", "GMAIL_NO", "CANCEL_DRAFT", "ADMIN"], "U2 exits");
   out = step(out.state, txt("Đúng", "GMAIL_OK"), ctx());
   assert.match(out.replies[0].text, /0123/);
   assert.equal(out.replies.at(-1).text, "Bạn chụp ảnh bill chuyển khoản và gửi vào đây nhé.");
@@ -187,6 +193,7 @@ function harness({ statuses = {}, courses = COURSES, tickets = true, active = nu
     fetchImpl, now: () => 1_000_000, loadCourses: async () => courses, loadFaq: () => [],
     activeTicket: async () => active, openTicket: async (a) => { opened.push(a); return { ok: true }; }, touchTicket: async () => {},
     loadOrder: async (id) => statuses[id] ?? null,
+    loadPendingOrders: async () => [],
     createBillOrder: async (input, opts) => { orders.push({ input, opts }); return { status: 200, body: { orderId: `o${orders.length}` } }; },
     ...extraDeps
   });
@@ -229,13 +236,15 @@ test("re-registering an approved course shows the approved notice; a rejected/un
   h.convo.deps.loadOrder = async () => ({ status: "Từ chối" });
   await h.convo.handle(PSID, quick("r2", "x", "BUY:khoa-a"));
   assert.equal((await h.storage.get("s")).state.course, "khoa-a");
-  assert.deepEqual(h.sent.at(-1).quick_replies, [{ content_type: "user_email" }]);
+  assert.deepEqual(h.sent.at(-1).quick_replies[0], { content_type: "user_email" }, "U2: exits follow the e-mail button");
 });
 
 test("state with only orderId reads as one order; orders capped at 10 (oldest dropped)", () => {
   assert.deepEqual(ordersOf({ orderId: "x", course: "khoa-a" }), [{ id: "x", slug: "khoa-a" }]);
   const out = step({ ...G, orderId: "x", course: "khoa-a", gmail: "a@gmail.com", gmailOk: true }, txt("sao rồi shop"), ctx());
-  assert.deepEqual(out.action, { type: "orderStatus", mode: "list", orders: [{ id: "x", slug: "khoa-a" }] });
+  assert.deepEqual(out.action, { type: "pendingOrders" }, "U6: tickets on reads the pending orders instead of listing every order");
+  const off = step({ ...G, orderId: "x", course: "khoa-a", gmail: "a@gmail.com", gmailOk: true }, txt("sao rồi shop"), ctx({ ticketsEnabled: false }));
+  assert.deepEqual(off.action, { type: "orderStatus", mode: "list", orders: [{ id: "x", slug: "khoa-a" }] }, "tickets off keeps the old list");
 });
 
 test("orders cap: the 11th order drops the first", async () => {
@@ -258,19 +267,25 @@ test("RESTART and 'Khóa khác' clear the draft and pendingAdmin but keep orders
   }
 });
 
-test("free text with orders and no draft lists every order in one message with the menu", async () => {
+test("free text with orders and no draft (tickets on, U6): reads the pending orders only; tickets off still lists every order with its status", async () => {
   const h = harness({ statuses: { o1: { status: "Chờ duyệt" }, o2: { status: "Đã duyệt" } } });
   await buyFull(h.convo, "khoa-a", "a@gmail.com", "a");
   await buyFull(h.convo, "khoa_b", "b@gmail.com", "b");
+  h.convo.deps.loadPendingOrders = async () => [{ id: "o1", slug: "khoa-a", title: "Khóa A", createdAt: "2026-11-09T10:00:00Z", psid: PSID, pageId: PAGE }];
   const before = h.sent.length;
   await h.convo.handle(PSID, msg("q1", { text: "sao rồi shop" }));
   assert.equal(h.sent.length, before + 1);
-  const m = h.sent.at(-1);
+  assert.equal(h.sent.at(-1).text, "Đơn của tôi đang chờ duyệt\nKhóa A — gửi bill 09/11/2026");
+  const off = harness({ tickets: false, statuses: { o1: { status: "Chờ duyệt" }, o2: { status: "Đã duyệt" } } });
+  await buyFull(off.convo, "khoa-a", "a@gmail.com", "a");
+  await buyFull(off.convo, "khoa_b", "b@gmail.com", "b");
+  await off.convo.handle(PSID, msg("q1", { text: "sao rồi shop" }));
+  const m = off.sent.at(-1);
   assert.match(m.text, /Khóa A: Chờ duyệt\nKhóa B: Đã duyệt - https:\/\/hoc\.yeubep\.shop\/my-courses\.html/);
   assert.deepEqual(m.quick_replies.map((q) => q.payload), ["BUY", "LIST", "ADMIN"]);
-  h.convo.deps.loadOrder = async () => null;
-  await h.convo.handle(PSID, msg("q2", { text: "sao nữa shop" }));
-  assert.match(h.sent.at(-1).text, /Khóa A: chưa được duyệt/);
+  off.convo.deps.loadOrder = async () => null;
+  await off.convo.handle(PSID, msg("q2", { text: "sao nữa shop" }));
+  assert.match(off.sent.at(-1).text, /Khóa A: chưa được duyệt/);
 });
 
 test("image with an incomplete draft reminds the missing step; with no draft it shows order status", async () => {
@@ -283,7 +298,8 @@ test("image with an incomplete draft reminds the missing step; with no draft it 
   await h.convo.handle(PSID, quick("a4", "Đúng", "GMAIL_OK"));
   await h.convo.handle(PSID, image("a5"));
   await h.convo.handle(PSID, image("a6"));
-  assert.match(h.sent.at(-1).text, /Khóa A: Chờ duyệt/);
+  // U6: with tickets on a bill-less image reads the pending orders (here the fake DB answers none).
+  assert.equal(h.sent.at(-1).text, "Bạn hiện không có đơn đăng ký nào đang chờ duyệt.");
 });
 
 test("duplicate mid creates no second order", async () => {
@@ -298,10 +314,11 @@ test("duplicate mid creates no second order", async () => {
 
 test("a typed Gmail never changes whose order is looked up", async () => {
   const looked = [];
-  const h = harness({ extraDeps: { loadOrder: async (id) => { looked.push(id); return { status: "Chờ duyệt" }; } } });
+  const h = harness({ extraDeps: { loadPendingOrders: async (a) => { looked.push(a); return []; } } });
   await buyFull(h.convo, "khoa-a", "a@gmail.com", "a");
   await h.convo.handle(PSID, msg("t1", { text: "kiểm tra khac@gmail.com giúp" }));
-  assert.deepEqual(looked, ["o1"]);
+  // U6: the lookup is keyed by PSID + Page ID only (was: the order ids of the conversation).
+  assert.deepEqual(looked, [{ psid: PSID, pageId: PAGE }]);
 });
 
 // ---- 9/12 tickets silent ----
@@ -359,10 +376,10 @@ test("order gets the ref in rawExtra only when there is one", async () => {
   await h.convo.handle(PSID, msg("r2", { text: "a@gmail.com" }));
   await h.convo.handle(PSID, quick("r3", "Đúng", "GMAIL_OK"));
   await h.convo.handle(PSID, image("r4"));
-  assert.deepEqual(h.orders[0].opts.rawExtra, { channel: "facebook", psid: PSID, ref: "c__khoa-a__fb1" });
+  assert.deepEqual(h.orders[0].opts.rawExtra, { channel: "facebook", psid: PSID, pageId: PAGE, ref: "c__khoa-a__fb1" });
   const h2 = harness();
   await buyFull(h2.convo, "khoa-a", "a@gmail.com", "n");
-  assert.deepEqual(h2.orders[0].opts.rawExtra, { channel: "facebook", psid: PSID });
+  assert.deepEqual(h2.orders[0].opts.rawExtra, { channel: "facebook", psid: PSID, pageId: PAGE });
 });
 
 // ---- 12 admin ticket reasons in DO ----
@@ -421,7 +438,7 @@ test("offer: sends card + Gmail ask, sets the ticket done, returns { ok, sent }"
   assert.deepEqual([r.json.ok, r.json.sent], [true, true]);
   assert.deepEqual(o.seen, ["/offer"]);
   assert.ok(o.h.sent[0].attachment, "card");
-  assert.deepEqual(o.h.sent[1].quick_replies, [{ content_type: "user_email" }]);
+  assert.deepEqual(o.h.sent[1].quick_replies.map((q) => q.payload ?? q.content_type), ["user_email", "CANCEL_DRAFT", "ADMIN"], "U2 exits");
   assert.equal(o.rows[0].status, "done");
   assert.equal((await o.h.storage.get("s")).state.course, "khoa-a");
 });
@@ -601,7 +618,7 @@ test("ref: only attached when it names the ordered course; cleared after the ord
   await h.convo.handle(PSID, msg("f2", { text: "b@gmail.com" }));
   await h.convo.handle(PSID, quick("f3", "Đúng", "GMAIL_OK"));
   await h.convo.handle(PSID, image("f4"));
-  assert.deepEqual(h.orders[0].opts.rawExtra, { channel: "facebook", psid: PSID }, "ref of another course is not attached");
+  assert.deepEqual(h.orders[0].opts.rawExtra, { channel: "facebook", psid: PSID, pageId: PAGE }, "ref of another course is not attached");
   assert.equal((await h.storage.get("s")).state.ref, null, "cleared after the order");
   assert.equal(step({ ...G, ref: "c__khoa-a" }, pb("RESTART"), ctx()).state.ref, null);
   assert.equal(step({ ...G, ref: "c__khoa-a" }, pb("RESTART"), ctx({ ticketsEnabled: false })).state.ref, null);
