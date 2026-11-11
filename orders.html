@@ -1143,6 +1143,21 @@
       showToast(`Đã copy ${gmails.length} Gmail của lớp ${courseSlug}!`);
     }
 
+    // C1-1: bulk approval reports what did not go through, not only "thành công".
+    function bulkApproveSummary(data) {
+      const kept = Number(data.v5KeptPending) || 0;
+      const syncErr = (Number(data.syncFailed) || 0) - kept;
+      const hand = Number(data.messengerNeedsHand) || 0;
+      const unsaved = Number(data.messengerNoticeUnsaved) || 0;
+      const lines = [`Đã duyệt ${Number(data.count) || 0} học viên.`];
+      if (kept > 0) lines.push(`⚠ ${kept} đơn vẫn ở "Chờ duyệt" vì chưa cấp được quyền học.`);
+      if (syncErr > 0) lines.push(`⚠ ${syncErr} đơn đã duyệt nhưng đồng bộ quyền học lỗi, hãy bấm Re-sync.`);
+      if (hand > 0) lines.push(`⚠ ${hand} đơn Facebook chưa báo được cho khách qua Messenger, hãy nhắn tay.`);
+      if (unsaved > 0) lines.push(`⚠ ${unsaved} đơn Facebook không lưu được kết quả thông báo nên không hiện trong danh sách cần xử lý, hãy kiểm tra và nhắn tay.`);
+      if ((data.gmails || []).length) lines.push("Danh sách email đã được copy vào clipboard.");
+      return lines.join("\n");
+    }
+
     async function approveGroupAll(courseSlug) {
       const pendingCount = allOrders.filter(o => o.course === courseSlug && o.status === "Chờ duyệt").length;
 
@@ -1172,7 +1187,7 @@
           if (gmailText) {
             await navigator.clipboard.writeText(gmailText);
           }
-          alert(`Đã duyệt hàng loạt ${data.count} học viên thành công!\nDanh sách email của họ đã được tự động copy vào clipboard.`);
+          alert(bulkApproveSummary(data));
           loadOrders();
         } else {
           alert(data.error || "Gặp lỗi khi duyệt hàng loạt.");
@@ -1599,7 +1614,7 @@
           if (gmailText) {
             await navigator.clipboard.writeText(gmailText);
           }
-          alert(`Đã duyệt hàng loạt ${data.count} học viên thành công!\nDanh sách email của họ đã được tự động copy vào clipboard của bạn.`);
+          alert(bulkApproveSummary(data));
           loadOrders();
         } else {
           alert(data.error || "Gặp lỗi khi duyệt hàng loạt.");

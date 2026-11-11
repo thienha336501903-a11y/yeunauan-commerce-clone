@@ -2,6 +2,7 @@ import { supabase } from "../utils/supabase.js";
 import { syncV4EnrollmentToLms } from "../utils/v4-sync-helpers.js";
 import { approveV5Order, v5SyncFailed } from "../utils/v5-order-approval.js";
 import { enforceSameOriginAdminRequest } from "../utils/admin-cors.js";
+import { noticeForApproved } from "../utils/messenger/notify.js";
 
 function syncFailed(syncResults) {
   if (!syncResults) return true;
@@ -55,7 +56,10 @@ export default async function handler(req, res) {
           continue;
         }
         approvedOrders.push(result.data);
-        results.push({ id: order.id, ok: !v5SyncFailed(result.syncResults), sync: result.syncResults });
+        // C1-1: Facebook buyers get the same notice as a single approval; it can only add a warning.
+        const { notice, saved } = await noticeForApproved(supabase, { ...order, ...result.data });
+        const sync = notice ? { ...result.syncResults, messenger: notice.status, messengerNoticeSaved: saved } : result.syncResults;
+        results.push({ id: order.id, ok: !v5SyncFailed(result.syncResults), sync });
       } catch (syncErr) {
         const message = syncErr?.message || String(syncErr);
         console.error("Bulk approve V5 error:", order.id, message);
@@ -128,6 +132,10 @@ export default async function handler(req, res) {
     const syncSucceeded = results.filter(result => result.ok).length;
     const syncFailedCount = results.length - syncSucceeded;
     const v5KeptPending = results.filter(result => result.keptPending).length;
+    const noticed = results.filter(result => result.sync?.messenger);
+    const messengerNotified = noticed.filter(result => result.sync.messenger === "sent").length;
+    const messengerNeedsHand = noticed.length - messengerNotified;
+    const messengerNoticeUnsaved = noticed.filter(result => result.sync.messengerNoticeSaved !== true).length;
 
     return res.status(200).json({
       success: true,
@@ -138,6 +146,9 @@ export default async function handler(req, res) {
       v5KeptPending,
       syncSucceeded,
       syncFailed: syncFailedCount,
+      messengerNotified,
+      messengerNeedsHand,
+      messengerNoticeUnsaved,
       results
     });
   } catch (error) {

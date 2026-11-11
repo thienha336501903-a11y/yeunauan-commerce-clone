@@ -53,6 +53,18 @@ export async function saveApprovalNotice(db, order, notice) {
   }
 }
 
+// C1-1: the notice step of bulk approval (same rule as api/orders.js). The approval is already committed, so
+// this never throws: a failure only becomes a warning. notice null = not a Facebook order.
+export async function noticeForApproved(db, approved, deps) {
+  try {
+    const notice = await notifyApprovedOrder(approved, deps);
+    if (!notice) return { notice: null, saved: null };
+    return { notice, saved: await saveApprovalNotice(db, approved, { ...notice, approvedAt: new Date().toISOString() }) };
+  } catch {
+    return { notice: { status: 'unknown', reason: 'internal' }, saved: false };
+  }
+}
+
 // G2: "Đã xử lý thủ công" only marks the support task: raw_data.messengerNotify.manual, nothing else.
 export async function markNoticeManual(db, order, note) {
   const notice = order?.raw_data?.messengerNotify;
