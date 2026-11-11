@@ -118,6 +118,12 @@
         <div id="ticketList" class="space-y-2"></div>
       </section>
 
+      <!-- G2: approved Facebook orders whose Messenger notice was not confirmed (filled with textContent only) -->
+      <section id="notifyBox" class="hidden bg-white rounded-3xl p-6 border border-amber-200 shadow-sm mb-8">
+        <h2 class="text-lg font-black text-slate-800 flex items-center gap-2 mb-4">Đơn cần xử lý thông báo thủ công <span id="notifyBadge" class="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-amber-500 text-white">0</span></h2>
+        <div id="notifyList" class="space-y-2"></div>
+      </section>
+
       <!-- GROUPED PENDING ORDERS BOXES -->
       <div id="pendingGroupedContainer" class="mb-8 hidden"></div>
 
@@ -473,6 +479,68 @@
       loadTickets();
     }
 
+    // G2: why the approval notice did not reach the buyer. Fixed texts only; never Meta's own error text.
+    const NOTIFY_REASON = {
+      window: "Đơn đã duyệt nhưng chưa gửi được thông báo Messenger. Admin cần liên hệ khách thủ công.",
+      user_unavailable: "Khách hiện không nhận được tin từ Trang. Admin cần liên hệ khách thủ công.",
+      page_config: "Lỗi kết nối Trang. Cần báo kỹ thuật; Admin liên hệ khách thủ công.",
+      rate_limit: "Meta đang giới hạn gửi tin. Admin liên hệ khách thủ công.",
+      timeout: "Không xác định được đã gửi hay chưa. Kiểm tra Hộp thư trước khi nhắn để tránh trùng.",
+      network: "Không xác định được đã gửi hay chưa. Kiểm tra Hộp thư trước khi nhắn để tránh trùng.",
+      no_message_id: "Không xác định được đã gửi hay chưa. Kiểm tra Hộp thư trước khi nhắn để tránh trùng.",
+      meta_error: "Meta báo lỗi máy chủ, không xác định được đã gửi hay chưa. Kiểm tra Hộp thư trước khi nhắn để tránh trùng.",
+      internal: "Lỗi hệ thống khi gửi thông báo. Kiểm tra Hộp thư rồi liên hệ khách thủ công.",
+      bot_off: "Bot Messenger đang tắt nên chưa gửi thông báo. Admin liên hệ khách thủ công.",
+      api_other: "Meta từ chối gửi tin, chưa rõ nguyên nhân. Admin liên hệ khách thủ công."
+    };
+    const NOTIFY_STATUS = { failed: "Gửi thất bại", unknown: "Chưa xác định", skipped: "Chưa gửi" };
+    const notifyNeedsHand = (o) => o.status === "Đã duyệt" && o.messengerNotify && o.messengerNotify.status !== "sent";
+
+    function renderNotify() {
+      const box = document.getElementById("notifyBox");
+      const list = document.getElementById("notifyList");
+      const rows = allOrders.filter(notifyNeedsHand);
+      list.replaceChildren();
+      document.getElementById("notifyBadge").textContent = String(rows.filter((o) => !o.messengerNotify.manual).length);
+      box.classList.toggle("hidden", rows.length === 0);
+      for (const o of rows) {
+        const n = o.messengerNotify;
+        const row = ticketEl("div", "flex flex-wrap items-center gap-x-4 gap-y-1 rounded-2xl border border-slate-100 px-4 py-3 text-sm" + (n.manual ? " opacity-60" : ""));
+        row.appendChild(ticketEl("span", "font-mono text-slate-500", "#" + String(o.id).slice(0, 8)));
+        row.appendChild(ticketEl("span", "font-bold", o.courseName || o.course || ""));
+        row.appendChild(ticketEl("span", "text-slate-500", "Duyệt " + (n.approvedAt ? new Date(n.approvedAt).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "")));
+        row.appendChild(ticketEl("span", "text-slate-600", "Quyền học: " + (o.sync_lms_status || "")));
+        row.appendChild(ticketEl("span", "font-bold text-amber-700", NOTIFY_STATUS[n.status] || "Chưa xác định"));
+        row.appendChild(ticketEl("span", "flex-1 min-w-[12rem] text-slate-700", NOTIFY_REASON[n.reason] || NOTIFY_REASON.api_other));
+        if (n.manual) {
+          row.appendChild(ticketEl("span", "font-bold text-emerald-700", "Đã xử lý thủ công " + new Date(n.manual.at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) + (n.manual.note ? " — " + n.manual.note : "")));
+        } else {
+          const done = ticketEl("button", "px-3 py-1 rounded-lg bg-emerald-600 text-white font-bold hover:bg-emerald-700", "Đã xử lý thủ công");
+          done.addEventListener("click", () => markNotifyManual(o.id));
+          row.appendChild(done);
+        }
+        list.appendChild(row);
+      }
+    }
+
+    async function markNotifyManual(id) {
+      const note = prompt("Ghi chú (không bắt buộc):", "");
+      if (note === null) return;
+      try {
+        const res = await fetch("/api/orders", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", "X-Admin-Password": currentAdminPassword },
+          body: JSON.stringify({ id, action: "messenger_notify_manual", note })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) return alert(data.error || "Không lưu được trạng thái xử lý.");
+        showToast("Đã đánh dấu xử lý thủ công");
+        loadOrders();
+      } catch (err) {
+        alert("Lỗi kết nối máy chủ");
+      }
+    }
+
     async function loadOrders() {
       const container = document.getElementById("orderContainer");
       try {
@@ -486,6 +554,7 @@
         renderSummaryStats();
         renderPendingGrouped();
         renderOrders();
+        renderNotify();
       } catch (err) {
         container.innerHTML = `
           <div class="text-center py-12 text-red-500 font-bold">
@@ -1200,8 +1269,10 @@
           showToast(`Đã chuyển đơn hàng sang [${newStatus}]`);
           // Facebook order: Meta only lets the Page message a buyer within 24 h of the buyer's last message.
           const data = await response.json().catch(() => ({}));
-          if (data?.data?.syncResults?.messenger === "FAILED") {
-            alert("Đã duyệt, nhưng bot không nhắn được khách qua Messenger (thường do khách im lặng quá 24 giờ). Hãy nhắn tay cho khách trong Hộp thư Page. Khi khách nhắn lại, bot cũng sẽ báo đơn đã duyệt.");
+          const notice = data?.data?.syncResults?.messengerNotice;
+          if (notice && notice.status !== "sent") {
+            const unsaved = data.data.syncResults.messengerNoticeSaved === false ? " Cảnh báo này chưa lưu được vào đơn: hãy ghi lại mã đơn." : "";
+            alert((NOTIFY_REASON[notice.reason] || NOTIFY_REASON.api_other) + unsaved);
           }
           loadOrders();
         } else {

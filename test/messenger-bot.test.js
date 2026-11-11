@@ -245,17 +245,17 @@ test("approval notice: only Facebook orders, only when the bot is on, failures r
   const f = fakeFetch();
   const order = { course_title: "Khoá TEST", customer_email: "a@gmail.com", raw_data: { channel: "facebook", psid: PSID } };
   assert.equal(await notifyApprovedOrder({ raw_data: {} }, { env: { MESSENGER_BOT_ENABLED: "1" } }), null);
-  assert.equal(await notifyApprovedOrder(order, { env: { MESSENGER_BOT_ENABLED: "0" } }), "SKIPPED_BOT_OFF");
+  assert.equal((await notifyApprovedOrder(order, { env: { MESSENGER_BOT_ENABLED: "0" } })).reason, "bot_off");
   const env = { MESSENGER_BOT_ENABLED: "1", META_PAGE_ACCESS_TOKEN: "page-token", LMS_PUBLIC_URL: "https://hoc.yeubep.shop", V5_LMS_PUBLIC_URL: "https://sync-only.example" };
-  assert.equal(await notifyApprovedOrder(order, { env, fetchImpl: f.impl }), "SENT");
+  assert.equal((await notifyApprovedOrder(order, { env, fetchImpl: f.impl })).status, "unknown", "fake Meta reply has no message_id");
   assert.match(f.sent[0].body.message.text, /https:\/\/hoc\.yeubep\.shop\/my-courses\.html.*a@gmail\.com/);
   const failing = async () => new Response('{"error":{"code":10,"error_subcode":2018278}}', { status: 400 });
-  assert.equal(await notifyApprovedOrder(order, { env, fetchImpl: failing }), "FAILED");
+  assert.equal((await notifyApprovedOrder(order, { env, fetchImpl: failing })).reason, "window");
 });
 
 test("orders API notifies after a successful V5 approval only", () => {
   const src = readFileSync(new URL("../api/orders.js", import.meta.url), "utf8");
-  assert.match(src, /const result = await approveV5Order\(orderForSync, updateData\);\s*if \(!result\.ok\) return[^\n]*\n\s*const messenger = await notifyApprovedOrder/);
+  assert.match(src, /const result = await approveV5Order\(orderForSync, updateData\);\s*if \(!result\.ok\) return[^\n]*\n[\s\S]{0,400}notice = await notifyApprovedOrder\(approved\)/);
 });
 
 test("Admin orders page escapes buyer-controlled fields", () => {
@@ -289,7 +289,7 @@ test("greeting is the Owner text and says it is automated", () => {
 
 test("Admin is told to message the buyer by hand when the approval notice fails", () => {
   const html = readFileSync(new URL("../orders.html", import.meta.url), "utf8");
-  assert.match(html, /syncResults\?\.messenger === "FAILED"[\s\S]{0,80}alert\(/);
+  assert.match(html, /notice && notice\.status !== "sent"[\s\S]{0,300}alert\(/);
 });
 
 test("first reply of a conversation carries the automated-assistant greeting once", () => {

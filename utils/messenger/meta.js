@@ -31,10 +31,11 @@ export async function sendMessage(psid, message, { token, fetchImpl = fetch, tim
       body: JSON.stringify({ recipient: { id: psid }, messaging_type: "RESPONSE", message }),
       signal: AbortSignal.timeout(timeoutMs)
     });
-    if (res.ok) return { ok: true };
     const body = await res.json().catch(() => ({}));
-    // Code 10 / subcode 2018278 = outside the 24-hour window; the caller treats every failure the same.
-    return { ok: false, error: `graph_${res.status}_${body?.error?.code || ""}_${body?.error?.error_subcode || ""}` };
+    // G2: Meta's message_id is the proof the message was accepted.
+    if (res.ok) return { ok: true, messageId: typeof body?.message_id === "string" ? body.message_id : null };
+    // Code 10 / subcode 2018278 = outside the 24-hour window (notify.js classifies the codes).
+    return { ok: false, error: `graph_${res.status}_${body?.error?.code || ""}_${body?.error?.error_subcode || ""}`, code: body?.error?.code ?? null, subcode: body?.error?.error_subcode ?? null, httpStatus: res.status };
   } catch (error) {
     return { ok: false, error: error?.name === "TimeoutError" ? "graph_timeout" : "graph_network" };
   }

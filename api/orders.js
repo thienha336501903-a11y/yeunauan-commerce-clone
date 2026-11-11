@@ -3,7 +3,7 @@ import { supabase } from '../utils/supabase.js';
 import { extractCloudinaryBillPublicId } from '../utils/cloudinary-public-id.js';
 import { syncV4EnrollmentToLms } from '../utils/v4-sync-helpers.js';
 import { approveV5Order, resyncV5Order, revokeV5Order } from '../utils/v5-order-approval.js';
-import { notifyApprovedOrder } from '../utils/messenger/notify.js';
+import { markNoticeManual, notifyApprovedOrder, saveApprovalNotice } from '../utils/messenger/notify.js';
 import { enforceSameOriginAdminRequest } from '../utils/admin-cors.js';
 
 import { resolveRequestRoute } from '../utils/agency-routing.js';
@@ -77,6 +77,12 @@ export default async function handler(req, res) {
       const { data: existingOrder, error: fetchErr } = await supabase.from('orders').select('*').eq('id', id).maybeSingle();
       if (fetchErr) throw fetchErr;
       if (!existingOrder) return res.status(404).json({ error: 'Không tìm thấy đơn hàng' });
+      // G2: marks the Messenger notice as handled by hand. Changes nothing but raw_data.messengerNotify.manual.
+      if (action === 'messenger_notify_manual') {
+        const marked = await markNoticeManual(supabase, existingOrder, note);
+        if (!marked.ok) return res.status(marked.status).json({ error: marked.error });
+        return res.status(200).json({ success: true, data: { id, messengerNotify: marked.notice } });
+      }
       if (status !== undefined && !VALID_ORDER_STATUSES.has(status)) {
         return res.status(400).json({ error: 'Trạng thái đơn hàng không hợp lệ' });
       }
@@ -137,8 +143,18 @@ export default async function handler(req, res) {
         if (status === 'Đã duyệt') {
           const result = await approveV5Order(orderForSync, updateData);
           if (!result.ok) return res.status(result.statusCode || 409).json({ success: false, error: result.error, code: result.code, syncResults: result.syncResults || null });
-          const messenger = await notifyApprovedOrder({ ...orderForSync, ...(result.data || {}) });
-          const syncResults = messenger ? { ...result.syncResults, messenger } : result.syncResults;
+          // G2: the approval is done; the notice can only add a warning, never undo it.
+          const approved = { ...orderForSync, ...(result.data || {}) };
+          let notice = null;
+          let noticeSaved = null;
+          try {
+            notice = await notifyApprovedOrder(approved);
+            if (notice) noticeSaved = await saveApprovalNotice(supabase, approved, { ...notice, approvedAt: new Date().toISOString() });
+          } catch {
+            notice = { status: 'unknown', reason: 'internal' };
+            noticeSaved = false;
+          }
+          const syncResults = notice ? { ...result.syncResults, messenger: notice.status, messengerNotice: notice, messengerNoticeSaved: noticeSaved } : result.syncResults;
           return res.status(200).json({ success: true, data: { ...result.data, syncResults } });
         }
         if (existingOrder.status === 'Đã duyệt') {
