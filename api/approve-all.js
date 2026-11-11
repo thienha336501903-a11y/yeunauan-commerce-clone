@@ -4,8 +4,10 @@ import { approveV5Order, v5SyncFailed } from "../utils/v5-order-approval.js";
 import { enforceSameOriginAdminRequest } from "../utils/admin-cors.js";
 import { noticeForApproved } from "../utils/messenger/notify.js";
 
-// C1-1-cap: Workers Free allows 50 subrequests per request. One V5 approval uses up to 5 (course, config,
-// release, LMS sync, order update) and its Messenger notice 2 more: 1 + 6 x 7 = 43. The page calls again for the rest.
+// C1-1-cap: Workers Free allows 50 subrequests per request. One V5 approval uses 5 (course, config, release,
+// LMS sync, order update) and its Messenger notice 2 more: 1 + 6 x 7 = 43. The worst path (order write lost a
+// race, then compensation) is 8 per order: 1 + 6 x 8 = 49. The page calls again for the rest.
+// shortcut: legacy and V4 orders are still approved in one request with no cap, split them the same way if a legacy class grows past ~20 pending orders.
 const V5_BATCH_LIMIT = 6;
 
 function syncFailed(syncResults) {

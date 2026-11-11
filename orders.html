@@ -1156,7 +1156,7 @@
       if (unsaved > 0) lines.push(`⚠ ${unsaved} đơn Facebook không lưu được kết quả thông báo nên không hiện trong danh sách cần xử lý, hãy kiểm tra và nhắn tay.`);
       if (data.copied) lines.push("Danh sách email đã được copy vào clipboard.");
       if (Number(data.remaining) > 0) lines.push(`⚠ Còn ${Number(data.remaining)} đơn chưa xử lý, hãy tải lại trang rồi bấm duyệt lần nữa.`);
-      if (data.error) lines.push(`⚠ Dừng giữa chừng: ${data.error}`);
+      if (data.error) lines.push(`⚠ Dừng giữa chừng: ${data.error}. Lượt cuối có thể đã duyệt một phần, hãy tải lại trang để xem.`);
       return lines.join("\n");
     }
 
