@@ -5,7 +5,7 @@
 import { createBillOrder } from "../../../utils/bill-order.js";
 import { supabase } from "../../../utils/supabase.js";
 import { AI_MODEL_DEFAULT, AI_SCHEMA, AI_TIMEOUT_MS, aiMessages, parseAiResult } from "../../../utils/messenger/ai.js";
-import { PAUSE_MS, addOrder, aiReply, busyAdminReplies, busyReplies, buyDuplicateReplies, clearDraft, dupBillReplies, emptyState, hasPlaceholder, normalizeState, openCourse, orderCreatedReply, orderFailedReply, ordersOf, ordersSummaryReplies, paymentInfo, pendingOrdersReplies, refCourse, renderReplies, stepRaw, switchAsk, ticketReply } from "../../../utils/messenger/bot.js";
+import { PAUSE_MS, addOrder, aiReply, billRefusedReply, busyAdminReplies, busyReplies, buyDuplicateReplies, clearDraft, dupBillReplies, emptyState, extraImageReply, hasPlaceholder, normalizeState, openCourse, orderCreatedReply, orderFailedReply, orderSystemFailedReply, ordersOf, ordersSummaryReplies, paymentInfo, pendingOrdersReplies, refCourse, renderReplies, stepRaw, switchAsk, ticketReply } from "../../../utils/messenger/bot.js";
 import faqData from "../../../utils/messenger/faq.json" with { type: "json" };
 import { activeTicket, openTicket, redactSummary, touchTicket } from "../../../utils/messenger/tickets.js";
 import { cloneConfig } from "../../../utils/clone-config.js";
@@ -61,7 +61,7 @@ export async function messengerWebhook(request, env, ctx) {
   return new Response("EVENT_RECEIVED", { status: 200 });
 }
 
-// Meta messaging object -> bot event (null = ignore: delivery/read receipts, stickers, files, ...).
+// Meta messaging object -> bot event (null = ignore: delivery/read receipts, ...).
 export function toEvent(ev, appId) {
   const m = ev?.message;
   if (m?.is_echo) return { kind: "echo", fromThisApp: Boolean(appId) && String(m.app_id || "") === String(appId) };
@@ -71,9 +71,13 @@ export function toEvent(ev, appId) {
     if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p)) return { kind: "text", text: p };
     return { kind: "text", text: String(m.text || ""), payload: p };
   }
-  const image = Array.isArray(m?.attachments) ? m.attachments.find((a) => a?.type === "image" && a?.payload?.url) : null;
-  if (image) return { kind: "image", url: String(image.payload.url) };
+  const attachments = Array.isArray(m?.attachments) ? m.attachments : [];
+  // Gate 1: a sticker is never a bill. Meta sends it as type "sticker" or as an "image" carrying sticker_id.
+  if (m?.sticker_id || attachments.some((a) => a?.type === "sticker" || a?.payload?.sticker_id)) return { kind: "sticker" };
+  const images = attachments.filter((a) => a?.type === "image" && a?.payload?.url);
+  if (images.length) return { kind: "image", url: String(images[0].payload.url), ...(images.length > 1 ? { imageCount: images.length } : {}) };
   if (typeof m?.text === "string") return { kind: "text", text: m.text.slice(0, 1000) };
+  if (attachments.length || m?.is_unsupported) return { kind: "unsupported", type: String(attachments[0]?.type || "unknown").slice(0, 20) };
   if (ev?.postback?.payload) {
     const ref = ev.postback.referral?.ref;
     return { kind: "postback", payload: String(ev.postback.payload), ...(ref ? { ref: String(ref).slice(0, 200) } : {}) };
@@ -322,6 +326,19 @@ export class MessengerConversation {
     return pendingOrdersReplies(pv.verified.map(row), pv.unverified.map(row));
   }
 
+  // Gate 1: an image after the order exists may be the real bill. It is not attached to the order: the Admin is told to check it.
+  async extraImageReplies(psid, state) {
+    const pv = await this.pendingView(psid, state);
+    if (!pv) return busyAdminReplies();
+    if (!pv.verified.length && !pv.unverified.length) return pendingOrdersReplies([], []);
+    return [await this.extraImageTicket(psid, "Khách gửi thêm ảnh khi đang có đơn chờ duyệt. Xem ảnh trong Hộp thư Trang.")];
+  }
+
+  async extraImageTicket(psid, summary) {
+    const result = await Promise.resolve(this.deps.openTicket({ pageId: this.env.META_PAGE_ID, psid, reason: "support", summary })).catch(() => ({ ok: false }));
+    return result?.ok ? extraImageReply() : ticketReply(false);
+  }
+
   // "Đăng ký khóa khác": the course list without the courses this conversation has a pending or approved order for (read only).
   async listOtherReplies(state, page = 1) {
     const orders = ordersOf(state);
@@ -400,7 +417,8 @@ export class MessengerConversation {
         // The draft is spent; one the customer started during the upload (another course) stays.
         if (next.course === slug) next = clearDraft(next);
         latest.state = next;
-        replies.push(orderCreatedReply(tickets));
+        // A ticket opened below silences the bot, so no "Đơn chờ duyệt" button then.
+        replies.push(orderCreatedReply(tickets && !(event.imageCount > 1)));
         finalState = latest.state;
       } else if (result.handled) {
         replies.push(...result.replies); // duplicate bill / DB error: the draft stays, creatingAt is released
@@ -408,6 +426,9 @@ export class MessengerConversation {
         replies.push(orderFailedReply());
       }
       await this.storage.put("s", latest);
+      // Gate 1: only the first image of a message becomes the bill; the Admin is told to look at the others in the Page inbox.
+      // After the put: no network between storage.get and storage.put.
+      if (result.ok && event.imageCount > 1 && tickets) replies.push(await this.extraImageTicket(psid, `Khách gửi ${event.imageCount} ảnh trong một tin; đơn chỉ lấy ảnh đầu. Xem các ảnh còn lại trong Hộp thư Trang.`));
     } else {
       saved.state = out.state;
       await this.storage.put("s", saved);
@@ -421,6 +442,7 @@ export class MessengerConversation {
       if (out.action?.type === "checkCourse") replies.push(...await this.checkCourseReplies(psid, out.action, finalState, ctx));
       if (out.action?.type === "checkPayment") replies.push(...await this.checkPaymentReplies(psid, finalState, ctx, out.action.gmail));
       if (out.action?.type === "pendingOrders") replies.push(...await this.pendingOrdersActionReplies(psid, finalState));
+      if (out.action?.type === "extraImage") replies.push(...await this.extraImageReplies(psid, finalState));
       if (out.action?.type === "listOther") replies.push(...await this.listOtherReplies(finalState, out.action.page));
       // Ticket writes also run after the state is saved. Admin replies (echo) are recorded without answering the customer.
       if (out.action?.type === "touchTicket" && ticket) await deps.touchTicket(ticket.id);
@@ -490,15 +512,29 @@ export class MessengerConversation {
       if (T) await Promise.resolve(this.deps.openTicket({ pageId: this.env.META_PAGE_ID, psid, reason: "support", summary: `Bill gửi lại cho khóa đã có đơn: ${state.course}` })).catch(() => {});
       return { ok: false, handled: true, replies: dupBillReplies(T) };
     }
-    const bill = await downloadBill(url, { fetchImpl: this.deps.fetchImpl });
-    if (!bill.ok) return { ok: false, error: bill.error };
-    const result = await this.deps.createBillOrder({
-      gmail: state.gmail,
-      course: state.course,
-      billName: `messenger-${mid}`.slice(0, 120),
-      billType: bill.type,
-      billData: Buffer.from(bill.bytes).toString("base64")
-    }, { rawExtra: { channel: "facebook", psid, ...(String(this.env.META_PAGE_ID || "").trim() ? { pageId: String(this.env.META_PAGE_ID).trim() } : {}), ...(state.ref && refCourse(state.ref, { courses })?.slug === state.course ? { ref: state.ref } : {}) } });
-    return result.status === 200 && result.body?.orderId ? { ok: true, orderId: result.body.orderId } : { ok: false, error: result.body?.code || "order_failed" };
+    let result;
+    try {
+      const bill = await downloadBill(url, { fetchImpl: this.deps.fetchImpl });
+      if (bill.error === "download_failed") return { ok: false, handled: true, replies: [orderSystemFailedReply()] }; // Meta CDN, not the customer's image
+      if (!bill.ok) return { ok: false, error: bill.error };
+      result = await this.deps.createBillOrder({
+        gmail: state.gmail,
+        course: state.course,
+        billName: `messenger-${mid}`.slice(0, 120),
+        billType: bill.type,
+        billData: Buffer.from(bill.bytes).toString("base64")
+      }, { rawExtra: { channel: "facebook", psid, ...(String(this.env.META_PAGE_ID || "").trim() ? { pageId: String(this.env.META_PAGE_ID).trim() } : {}), ...(state.ref && refCourse(state.ref, { courses })?.slug === state.course ? { ref: state.ref } : {}) } });
+    } catch {
+      return { ok: false, handled: true, replies: [orderSystemFailedReply()] }; // the caller releases creatingAt; the draft stays for a retry
+    }
+    if (result.status === 200 && result.body?.orderId) return { ok: true, orderId: result.body.orderId };
+    // Gate 1: the image was fine but the course refused the order (paused, closed): the customer may already have paid, so an Admin must know.
+    if (result.status === 404 || result.status === 409) {
+      if (!T) return { ok: false, handled: true, replies: [billRefusedReply(false)] };
+      const opened = await Promise.resolve(this.deps.openTicket({ pageId: this.env.META_PAGE_ID, psid, reason: "support", summary: `Khách gửi bill nhưng khóa ${state.course} không nhận đăng ký (${String(result.body?.code || result.status).slice(0, 40)}). Xem ảnh trong Hộp thư Trang.` })).catch(() => ({ ok: false }));
+      return { ok: false, handled: true, replies: [billRefusedReply(Boolean(opened?.ok))] };
+    }
+    if (result.status >= 500) return { ok: false, handled: true, replies: [orderSystemFailedReply()] };
+    return { ok: false, error: result.body?.code || "order_failed" };
   }
 }

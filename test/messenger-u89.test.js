@@ -446,7 +446,7 @@ test("U89-76 review fixes: failed bill upload after 12h keeps the time mark (nex
   const h = harness({ deps: { createBillOrder: async () => ({ status: 500, body: { code: "x" } }) } });
   await h.seed(DRAFTS.bill);
   h.later(H12 + 1000);
-  assert.match(last(await h.img()).text, /chưa ghi nhận được bill/);
+  assert.match(last(await h.img()).text, /chưa tạo được đơn/); // Gate 1: a server error is not an image problem
   h.later(10_000);
   assert.notEqual(last(await h.say("sao vậy")).text, U8_B);
   assert.equal(h.orders.length, 0);

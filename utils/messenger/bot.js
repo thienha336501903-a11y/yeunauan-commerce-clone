@@ -433,6 +433,21 @@ const skipsResume = (state, event, payload) => Boolean(event.ref) || RESUME_PAYL
   || (event.kind === "text" && !payload && (HUMAN.test(event.text || "") || RESTART.test((event.text || "").trim())))
   || (event.kind === "image" && state.gmail && state.gmailOk);
 
+// Gate 1: stickers, voice, files, video... never create anything. A draft keeps its step; a sticker with no draft needs no answer.
+const UNREADABLE = "Mình chưa đọc được loại tin này";
+function attachmentReply(state, event, ctx) {
+  const T = Boolean(ctx.ticketsEnabled);
+  const billStep = Boolean(state.course && state.gmail && state.gmailOk);
+  if (event.kind === "sticker") {
+    if (!state.course) return { state, replies: [] };
+    return { state, replies: billStep ? [text("Khi chuyển khoản xong, bạn gửi ảnh chụp bill vào đây giúp mình nhé.", exits(T))] : nextPrompt(state, ctx) };
+  }
+  if (billStep) return { state, replies: [text(`${UNREADABLE}. Bạn gửi ảnh chụp bill (JPG, PNG hoặc WEBP, dưới 5MB) giúp mình nhé.`, exits(T))] };
+  if (state.course) return { state, replies: [text(`${UNREADABLE}.`), ...nextPrompt(state, ctx)] };
+  const intro = `${UNREADABLE}, bạn nhắn bằng chữ giúp mình nhé. `;
+  return { state, replies: T ? mainMenu(intro) : listReply(ctx, intro) };
+}
+
 function stepInner(prev, event, ctx) {
   const state = normalizeState(prev);
   const now = ctx.now;
@@ -483,6 +498,7 @@ function stepInner(prev, event, ctx) {
   if (payload === "CANCEL_DRAFT") {
     return { state: { ...clearDraft(state), ref: null, pendingAdmin: null, misses: 0 }, replies: T ? mainMenu("Đã hủy đăng ký dở. ") : listReply(ctx, "Đã hủy đăng ký dở. ") };
   }
+  if (event.kind === "sticker" || event.kind === "unsupported") return attachmentReply(state, event, ctx);
   if (T) {
     const t = ticketStep(state, event, ctx, payload);
     if (t) return t;
@@ -561,7 +577,8 @@ function stepInner(prev, event, ctx) {
   }
 
   if (event.kind === "image") {
-    if (!state.course && state.orders.length) return T ? pendingOrders(state) : listOrders(state);
+    // Gate 1: with orders and no draft the image may be the real bill: the DO checks for a pending order and tells the Admin.
+    if (!state.course && state.orders.length) return T ? { state, replies: [], action: { type: "extraImage" } } : listOrders(state);
     if (!state.course || !state.gmail || !state.gmailOk) return { state, replies: nextPrompt(state, ctx) };
     return { state, replies: [], action: { type: "createOrder", url: event.url } };
   }
@@ -572,6 +589,10 @@ function stepInner(prev, event, ctx) {
 // U6/B7: with tickets on, the receipt carries the "Đơn chờ duyệt" button.
 export const orderCreatedReply = (T = true) => text("Mình đã nhận bill. Đơn đang chờ Admin đối chiếu chuyển khoản. Khi được duyệt, mình sẽ nhắn bạn cách vào học.", T ? [PENDING_BTN] : []);
 export const orderFailedReply = () => text("Mình chưa ghi nhận được bill (ảnh phải là JPG/PNG/WEBP dưới 5MB). Bạn gửi lại ảnh khác, hoặc nhắn \"gặp người\" để Admin hỗ trợ.");
+// Gate 1: failures that are not about the image must not ask for another image.
+export const orderSystemFailedReply = () => text("Hệ thống chưa tạo được đơn. Bạn thử gửi lại ảnh bill sau ít phút, hoặc nhắn \"gặp người\" để Admin hỗ trợ.");
+export const billRefusedReply = (ticketOpened) => text(`Mình đã nhận ảnh bill, nhưng khóa này hiện chưa nhận đăng ký nên chưa tạo được đơn. ${ticketOpened ? "Mình đã chuyển Admin kiểm tra giúp bạn." : "Bạn nhắn \"gặp người\" để Admin kiểm tra giúp nhé."} Bạn chưa cần chuyển khoản thêm.`);
+export const extraImageReply = () => text("Mình đã nhận thêm ảnh của bạn và chuyển Admin kiểm tra.");
 export const approvedMessage = ({ courseTitle, gmail, lmsUrl }) =>
   `Đơn khoá "${courseTitle}" đã được duyệt. Bạn vào ${lmsUrl.replace(/\/$/, "")}/my-courses.html, đăng nhập Google bằng ${gmail} để học nhé.`;
 
