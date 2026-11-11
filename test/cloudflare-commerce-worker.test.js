@@ -122,6 +122,24 @@ test("Production config (H5 P1): no routes or workers.dev, checkout closed, LMS 
   assert.match(toml, /\[\[services\]\]\nbinding = "LMS"\nservice = "systemb-lms"/);
 });
 
+test("Production config (G-PROD-code): Messenger ids, AI binding, flags; a live bot sells only listed non-TEST courses", () => {
+  const toml = readFileSync(new URL("../cloudflare/commerce-worker/wrangler.production.toml", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const v = (k) => toml.match(new RegExp(`^${k} = "([^"]*)"$`, "m"))?.[1];
+  assert.equal(v("META_APP_ID"), "2162114824732775");
+  assert.equal(v("META_PAGE_ID"), "1238655599320121");
+  assert.match(toml, /^\[ai\]\nbinding = "AI"$/m);
+  assert.match(toml, /\[\[durable_objects\.bindings\]\]\nname = "MESSENGER_CONVERSATIONS"\nclass_name = "MessengerConversation"/);
+  for (const k of ["MESSENGER_BOT_ENABLED", "MESSENGER_TICKETS_ENABLED", "MESSENGER_AI_ENABLED"]) assert.ok(["0", "1"].includes(v(k)), k);
+  assert.doesNotMatch(toml, /^META_(APP_SECRET|VERIFY_TOKEN|PAGE_ACCESS_TOKEN)\s*=/m); // secrets only via wrangler secret put
+  const slugs = String(v("MESSENGER_COURSE_SLUGS") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  // Owner 03/11: every current Production course is TEST; banh-mi-meili is the E2E course.
+  for (const s of slugs) {
+    assert.match(s.toLowerCase(), /^[a-z0-9_-]+$/, s); // loadCourses drops other slugs; an all-dropped list would sell every switched-on course
+    assert.doesNotMatch(s, /^(stg-|test|clone-factory|system-b-benchmark|banh-mi-meili$)/i, s);
+  }
+  if (v("MESSENGER_BOT_ENABLED") === "1") assert.ok(slugs.length > 0, "a live bot needs MESSENGER_COURSE_SLUGS");
+});
+
 test("worker source is never a static asset: assets dir is public/ and the build copies only root pages", async () => {
   const toml = readFileSync(new URL("../cloudflare/commerce-worker/wrangler.toml", import.meta.url), "utf8");
   assert.match(toml, /\[assets\][^[]*directory = "public"/);
