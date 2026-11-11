@@ -4,6 +4,10 @@ import { approveV5Order, v5SyncFailed } from "../utils/v5-order-approval.js";
 import { enforceSameOriginAdminRequest } from "../utils/admin-cors.js";
 import { noticeForApproved } from "../utils/messenger/notify.js";
 
+// C1-1-cap: Workers Free allows 50 subrequests per request. One V5 approval uses up to 5 (course, config,
+// release, LMS sync, order update) and its Messenger notice 2 more: 1 + 6 x 7 = 43. The page calls again for the rest.
+const V5_BATCH_LIMIT = 6;
+
 function syncFailed(syncResults) {
   if (!syncResults) return true;
   const lmsFailed = String(syncResults.lms || "").toUpperCase() === "FAILED";
@@ -40,8 +44,13 @@ export default async function handler(req, res) {
     if (pendingError) throw pendingError;
 
     const enrollmentOrders = (pendingOrders || []).filter(order => String(order.delivery_mode || '').toLowerCase() !== "telegram");
-    const v5Orders = enrollmentOrders.filter(order => String(order.delivery_mode || '').toLowerCase() === 'v5');
-    const standardOrders = enrollmentOrders.filter(order => String(order.delivery_mode || '').toLowerCase() !== 'v5');
+    // C1-1-cap: `skip` holds the ids this bulk run already tried, so a run moves past orders that stay pending.
+    const skip = new Set(Array.isArray(req.body?.skip) ? req.body.skip.slice(0, 1000).map(String) : []);
+    const todo = enrollmentOrders.filter(order => !skip.has(String(order.id)));
+    const v5Orders = todo.filter(order => String(order.delivery_mode || '').toLowerCase() === 'v5').slice(0, V5_BATCH_LIMIT);
+    // Legacy and V4 orders wait for the request that has no V5 order left, so they never share its budget.
+    const standardOrders = v5Orders.length ? [] : todo.filter(order => String(order.delivery_mode || '').toLowerCase() !== 'v5');
+    const remaining = todo.length - v5Orders.length - standardOrders.length;
     const skippedTelegram = (pendingOrders || []).length - enrollmentOrders.length;
     const results = [];
     const approvedOrders = [];
@@ -140,6 +149,7 @@ export default async function handler(req, res) {
     return res.status(200).json({
       success: true,
       requested: enrollmentOrders.length,
+      remaining,
       count: approvedOrders.length,
       gmails,
       skippedTelegram,

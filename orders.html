@@ -1154,8 +1154,55 @@
       if (syncErr > 0) lines.push(`⚠ ${syncErr} đơn đã duyệt nhưng đồng bộ quyền học lỗi, hãy bấm Re-sync.`);
       if (hand > 0) lines.push(`⚠ ${hand} đơn Facebook chưa báo được cho khách qua Messenger, hãy nhắn tay.`);
       if (unsaved > 0) lines.push(`⚠ ${unsaved} đơn Facebook không lưu được kết quả thông báo nên không hiện trong danh sách cần xử lý, hãy kiểm tra và nhắn tay.`);
-      if ((data.gmails || []).length) lines.push("Danh sách email đã được copy vào clipboard.");
+      if (data.copied) lines.push("Danh sách email đã được copy vào clipboard.");
+      if (Number(data.remaining) > 0) lines.push(`⚠ Còn ${Number(data.remaining)} đơn chưa xử lý, hãy tải lại trang rồi bấm duyệt lần nữa.`);
+      if (data.error) lines.push(`⚠ Dừng giữa chừng: ${data.error}`);
       return lines.join("\n");
+    }
+
+    // C1-1-cap: the server approves a few orders per request (Workers subrequest limit). One click keeps
+    // calling until nothing is left, passing the ids already tried so an order that stays pending is not retried.
+    async function bulkApproveRun(course, post = bulkApprovePost) {
+      const total = { count: 0, gmails: [], v5KeptPending: 0, syncFailed: 0, messengerNeedsHand: 0, messengerNoticeUnsaved: 0, remaining: 0, copied: false, error: "" };
+      const skip = [];
+      for (let round = 0; round < 50; round++) {
+        let reply;
+        try {
+          reply = await post({ course, skip });
+        } catch (err) {
+          total.error = "Lỗi kết nối";
+          break;
+        }
+        const data = reply.data || {};
+        if (!reply.ok) {
+          total.error = data.error || "Gặp lỗi khi duyệt hàng loạt.";
+          break;
+        }
+        const results = data.results || [];
+        for (const key of ["count", "v5KeptPending", "syncFailed", "messengerNeedsHand", "messengerNoticeUnsaved"]) total[key] += Number(data[key]) || 0;
+        total.gmails.push(...(data.gmails || []));
+        skip.push(...results.map((result) => result.id));
+        total.remaining = Number(data.remaining) || 0;
+        if (!total.remaining || !results.length) break;
+      }
+      if (total.gmails.length) {
+        try {
+          await navigator.clipboard.writeText(total.gmails.join("\n"));
+          total.copied = true;
+        } catch (err) {
+          total.copied = false;
+        }
+      }
+      return total;
+    }
+
+    async function bulkApprovePost(body) {
+      const res = await fetch("/api/approve-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Admin-Password": currentAdminPassword },
+        body: JSON.stringify(body)
+      });
+      return { ok: res.ok, data: await res.json() };
     }
 
     async function approveGroupAll(courseSlug) {
@@ -1171,27 +1218,9 @@
 
       showLoader("Đang phê duyệt hàng loạt & cấp quyền...");
       try {
-        const res = await fetch("/api/approve-all", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Admin-Password": currentAdminPassword
-          },
-          body: JSON.stringify({ course: courseSlug })
-        });
-
-        const data = await res.json();
-
-        if (res.ok) {
-          const gmailText = (data.gmails || []).join("\n");
-          if (gmailText) {
-            await navigator.clipboard.writeText(gmailText);
-          }
-          alert(bulkApproveSummary(data));
-          loadOrders();
-        } else {
-          alert(data.error || "Gặp lỗi khi duyệt hàng loạt.");
-        }
+        const data = await bulkApproveRun(courseSlug);
+        alert(bulkApproveSummary(data));
+        loadOrders();
       } catch (err) {
         alert("Lỗi kết nối");
       } finally {
@@ -1611,27 +1640,9 @@
 
       showLoader("Đang phê duyệt hàng loạt & cấp quyền...");
       try {
-        const res = await fetch("/api/approve-all", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Admin-Password": currentAdminPassword
-          },
-          body: JSON.stringify({ course: selectedCourse })
-        });
-
-        const data = await res.json();
-
-        if (res.ok) {
-          const gmailText = (data.gmails || []).join("\n");
-          if (gmailText) {
-            await navigator.clipboard.writeText(gmailText);
-          }
-          alert(bulkApproveSummary(data));
-          loadOrders();
-        } else {
-          alert(data.error || "Gặp lỗi khi duyệt hàng loạt.");
-        }
+        const data = await bulkApproveRun(selectedCourse);
+        alert(bulkApproveSummary(data));
+        loadOrders();
       } catch (err) {
         alert("Lỗi kết nối");
       } finally {
