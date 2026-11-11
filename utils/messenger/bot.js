@@ -298,6 +298,25 @@ export function freeTextFallback(state) {
 
 // AI result -> reply. Pure. The AI never produces BUY, an order, a payment check or a Gmail: only text and fixed buttons.
 // Its price is never used: the price comes from the course record (AI-I4).
+// G3: the customer decides; a ticket silences the bot until an Admin closes it.
+const offerAdmin = (state) => ({ state: { ...state, misses: 0 }, replies: [text("Phần này mình chưa có đủ thông tin để trả lời chắc chắn. Bạn có muốn Admin hỗ trợ thêm không?", [["Chat với Admin", "HUMAN"], ["Xem các khóa học", "LIST"], ["Quay lại menu", "MENU"]])] });
+// Only a plain amount ("1.000đ", "1,000 VND"); anything else ("500k", "liên hệ") cannot be compared safely.
+const priceVnd = (p) => {
+  const m = /^\s*(\d{1,3}(?:[.,]\d{3})+|\d+)\s*(đ|đồng|vnd|vnđ)(?![\p{L}/])(.*)$/iu.exec(plain(p));
+  return m && !/\d/.test(m[3]) ? Number(m[1].replace(/[.,]/g, "")) : null;
+};
+// G3: facts about the catalogue come from code, never from the model.
+function factReply(state, intent, ctx) {
+  if (intent === "catalog") return { state, replies: listReply(ctx, "") };
+  if (intent === "newest") return { state, replies: listReply(ctx, "Mình chưa có thông tin khóa nào mới nhất. Các khóa đang mở đăng ký: ") };
+  if (intent !== "cheapest") return null;
+  const priced = ctx.courses.map((c) => ({ c, v: priceVnd(c.price) }));
+  if (!priced.length || priced.some((p) => p.v === null)) return { state, replies: listReply(ctx, "Bạn xem học phí của từng khóa bên dưới nhé. ") };
+  const low = Math.min(...priced.map((p) => p.v));
+  const best = priced.filter((p) => p.v === low);
+  if (best.length === 1) return { state, replies: infoReply(best[0].c, "price") };
+  return { state, replies: listReply(ctx, `Học phí thấp nhất hiện là ${cut(plain(best[0].c.price), 100)}, có ${best.length} khóa cùng mức này. `) };
+}
 const SELF_HELP_IDS = ["faq-login", "faq-video", "faq-wrong-account"];
 export function aiReply(state, ai, ctx, match) {
   if (!ai || ai.route === "clarify") {
@@ -310,11 +329,15 @@ export function aiReply(state, ai, ctx, match) {
     return ordersOf(state).length ? pendingOrders({ ...state, misses: 0 }) : freeTextFallback(state);
   }
   if (ai.route === "ticket") return ticket(state, "unclear");
+  if (ai.route === "offer_admin") return offerAdmin(state);
   if (ai.route === "self_help") {
     const f = approvedFaq(ctx).find((x) => SELF_HELP_IDS.includes(x.id) && (ai.sources || []).includes(x.id) && x.answer);
     return f ? { state: { ...state, misses: 0 }, replies: [faqAnswer(f)] } : ticket(state, "unclear");
   }
-  if (badAnswer(ai.answer)) return ticket(state, "unclear");
+  const fact = factReply({ ...state, misses: 0 }, ai.intent, ctx);
+  if (fact) return fact;
+  // G3: an answer the filter refuses is never sent, but it does not lock the conversation behind a ticket either.
+  if (badAnswer(ai.answer)) return { ...offerAdmin(state), filtered: true };
   const next = { ...state, misses: 0 };
   const course = ctx.courses.find((c) => c.slug === ai.course_slug);
   // Price / payment questions: the AI text is replaced by fixed text with the price from the course record.

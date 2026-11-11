@@ -9,7 +9,7 @@ import { PAUSE_MS, addOrder, aiReply, billRefusedReply, busyAdminReplies, busyRe
 import faqData from "../../../utils/messenger/faq.json" with { type: "json" };
 import { activeTicket, openTicket, redactSummary, touchTicket } from "../../../utils/messenger/tickets.js";
 import { cloneConfig } from "../../../utils/clone-config.js";
-import { downloadBill, sendMessage, verifySignature } from "../../../utils/messenger/meta.js";
+import { downloadBill, sendMessage, sendTyping, verifySignature } from "../../../utils/messenger/meta.js";
 
 const MAX_WEBHOOK_BYTES = 256 * 1024;
 const SEEN_MIDS = 200;
@@ -394,7 +394,7 @@ export class MessengerConversation {
     saved.hits = saved.hits.filter((t) => now - t < 60000);
     if (event.kind !== "echo" && saved.hits.length >= RATE_PER_MINUTE) { await this.storage.put("s", saved); return; }
     if (event.kind !== "echo") saved.hits.push(now);
-    const ctx = { now, courses, commerceUrl: cloneConfig(env).commercePublicUrl };
+    const ctx = { now, courses, commerceUrl: cloneConfig(env).commercePublicUrl, psid };
     if (tickets) Object.assign(ctx, { ticketsEnabled: true, resumeGapMs: resumeGapMs(env), faq: deps.loadFaq(), activeTicket: ticket, ticketUnknown, appIdKnown: Boolean(String(env.META_APP_ID || "").trim()) });
     if (tickets && !ticketUnknown && aiEnabled(env)) ctx.aiEnabled = true;
     // A DO only blocks other events during storage calls, not during outbound fetch: while one bill is being
@@ -454,6 +454,7 @@ export class MessengerConversation {
       if (out.action?.type === "openTicket") replies.push(...await this.openTicketReplies(psid, out.action, event));
       if (out.action?.type === "ai") {
         const r = aiReply(finalState, await this.runAi(out.action.text, ctx), ctx, out.action.match);
+        if (r.filtered) console.log(JSON.stringify({ evt: "messenger_ai_filtered" })); // an answer was refused; never the text
         // Re-read after the AI wait (up to 8 s). Another customer event or an Admin reply meanwhile makes this answer
         // stale: send nothing and open no ticket, so a draft, an Admin request or an Admin chat is never overridden.
         // The daily AI count was already saved before the call; only `misses` is written here.
@@ -494,6 +495,7 @@ export class MessengerConversation {
     try {
       if (deps.runAi) ai = await deps.runAi(text, ctx);
       else {
+        await sendTyping(ctx.psid, { token: env.META_PAGE_ACCESS_TOKEN, fetchImpl: deps.fetchImpl });
         const call = env.AI.run(env.MESSENGER_AI_MODEL || AI_MODEL_DEFAULT, {
           messages: aiMessages(text, ctx.courses, ctx.faq),
           max_tokens: 300, temperature: 0, chat_template_kwargs: { enable_thinking: false },

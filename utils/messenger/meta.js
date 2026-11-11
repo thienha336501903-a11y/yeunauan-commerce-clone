@@ -40,6 +40,14 @@ export async function sendMessage(psid, message, { token, fetchImpl = fetch, tim
   }
 }
 
+// G3: "typing..." while the AI answers. Best effort: a failure here never affects the reply.
+export async function sendTyping(psid, { token, fetchImpl = fetch, timeoutMs = 1500 } = {}) {
+  if (!token) return;
+  try {
+    await fetchImpl(`${GRAPH}/me/messages`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ recipient: { id: psid }, sender_action: "typing_on" }), signal: AbortSignal.timeout(timeoutMs) });
+  } catch { /* best effort */ }
+}
+
 export async function downloadBill(url, { fetchImpl = fetch } = {}) {
   let parsed;
   try { parsed = new URL(url); } catch { return { ok: false, error: "bad_url" }; }

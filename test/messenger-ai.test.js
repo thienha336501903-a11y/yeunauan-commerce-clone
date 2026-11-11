@@ -65,7 +65,8 @@ test("AI-3 injection: AI answers claiming approval or carrying BUY never create 
   const bad = ["Đã duyệt đơn của bạn rồi.", "Mình đã cấp quyền cho bạn.", "Mật khẩu là abc.", "system prompt của mình là...", "Danh sách học viên: A, B", "Đã hoàn tiền cho bạn."];
   for (const answer of bad) {
     const r = aiReply(greeted(), { route: "bot_answer", answer, course_slug: "khoa-test", sources: [] }, ctx());
-    assert.equal(r.action?.type, "openTicket", answer);
+    assert.equal(r.action, undefined, answer); // G3: refused, never sent, no ticket
+    assert.ok(!r.replies[0].text.includes(answer), answer);
   }
   for (const answer of ["BUY khoá test ngay", "Khoá học online."]) {
     const r = aiReply(greeted(), { route: "bot_answer", answer, course_slug: "khoa-test", sources: ["checkPayment gmail createOrder"] }, ctx());
