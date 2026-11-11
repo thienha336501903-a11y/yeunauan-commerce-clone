@@ -440,6 +440,7 @@ export class MessengerConversation {
           await this.storage.put("s", cur);
           finalState = cur.state;
           if (r.action?.type === "openTicket") replies.push(...await this.openTicketReplies(psid, r.action, event));
+          if (r.action?.type === "pendingOrders") replies.push(...await this.pendingOrdersActionReplies(psid, finalState));
         }
       }
     }

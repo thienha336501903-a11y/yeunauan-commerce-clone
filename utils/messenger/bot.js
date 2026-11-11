@@ -20,6 +20,18 @@ const GREET = /^(da )?((hi+|hello|helo|hey|alo+|xin chao|chao)( (ban|shop|ad|adm
 const MAX_ORDERS = 10;
 // Typed form of the "Đơn chờ duyệt" button, matched against clean(text).
 const PENDING_TEXT = /^(don cua toi|don hang|kiem tra don|xem don)$/;
+// G-MC1-route: free text about an existing order (only used when the customer has orders; everything else may go to the AI).
+// "đơn" is matched with its accent when the text has accents, so "đón" or "đơn giản" never count; unaccented typing uses "don".
+// Cooking words ("thực đơn", "đơn vị", "kích hoạt men") are not orders.
+const ORDER_WORDS = /\b(bill|duyet|kich hoat(?! men)|cap quyen|(chuyen khoan|ck|chuyen tien|thanh toan) (roi|xong)|da (chuyen khoan|ck|chuyen tien|thanh toan)|vao hoc (chua|duoc chua))\b/;
+const orderText = (raw) => {
+  const t = String(raw || "").normalize("NFC").toLowerCase();
+  const accented = norm(t) !== t.replace(/đ/g, "d");
+  const don = accented
+    ? /(^|[^\p{L}])đơn(?! giản| vị)([^\p{L}]|$)/u.test(t) && !/thực đơn/.test(t)
+    : /\bdon\b(?! gian| vi)/.test(clean(t)) && !/\bthuc don\b/.test(clean(t));
+  return don || ORDER_WORDS.test(clean(t));
+};
 
 // Ticket replies (Owner text, 08/11). Used by the DO after it knows whether the ticket was written.
 export const TICKET_OK_TEXT = "Mình đã chuyển yêu cầu của bạn tới Admin. Admin sẽ hỗ trợ trực tiếp trong cuộc trò chuyện này.";
@@ -194,11 +206,15 @@ function freeText(state, event, ctx) {
   const close = fuzzyCourses(event.text, ctx.courses);
   if (close.length === 1) return { state: { ...state, misses: 0 }, replies: [text(`Bạn muốn hỏi khóa ${close[0].title || close[0].slug}?`, [["Đúng", `BUY:${close[0].slug}`], ["Không", "LIST"]])] };
   if (close.length > 1) return { state: { ...state, misses: 0 }, replies: listReply(ctx, "") };
-  if (ordersOf(state).length) return pendingOrders({ ...state, misses: 0 });
+  // G-MC1-route: a customer with orders who writes about an order gets the pending orders; other questions may go to the AI.
+  const hasOrders = ordersOf(state).length > 0;
+  if (hasOrders && orderText(event.text)) return pendingOrders({ ...state, misses: 0 });
   // G-MC1: text nothing above understood goes to the AI (flag on, no draft, under the daily cap); it only answers.
   const day = new Date(ctx.now).toISOString().slice(0, 10);
   const n = state.ai?.day === day ? state.ai.n : 0;
   if (ctx.aiEnabled && !state.course && n < AI_DAILY_CAP) return { state: { ...state, ai: { day, n: n + 1 } }, replies: [], action: { type: "ai", text: event.text } };
+  // No AI (flag off, draft, cap): as before G-MC1, past orders -> pending orders.
+  if (hasOrders) return pendingOrders({ ...state, misses: 0 });
   return freeTextFallback(state);
 }
 
@@ -211,7 +227,8 @@ export function freeTextFallback(state) {
 // Its price is never used: the price comes from the course record (AI-I4).
 const SELF_HELP_IDS = ["faq-login", "faq-video", "faq-wrong-account"];
 export function aiReply(state, ai, ctx) {
-  if (!ai || ai.route === "clarify") return freeTextFallback(state);
+  // No usable answer: the pre-AI behaviour (past orders -> pending orders, else ask once more / ticket).
+  if (!ai || ai.route === "clarify") return ordersOf(state).length ? pendingOrders({ ...state, misses: 0 }) : freeTextFallback(state);
   if (ai.route === "ticket") return ticket(state, "unclear");
   if (ai.route === "self_help") {
     const f = approvedFaq(ctx).find((x) => SELF_HELP_IDS.includes(x.id) && (ai.sources || []).includes(x.id) && x.answer);

@@ -128,12 +128,12 @@ test("AI-7 cap of 20 per UTC day; a new day counts from 0", () => {
   assert.deepEqual(next.state.ai, { day: "2026-11-11", n: 1 });
 });
 
-test("AI-8 no AI call for: draft, open ticket, pending order, greeting, FAQ hit, course name, fuzzy match", () => {
+test("AI-8 no AI call for: draft, open ticket, order text with orders, greeting, FAQ hit, course name, fuzzy match", () => {
   const cases = [
     [{ ...greeted(), course: "khoa-test", gmail: null }, UNCLEAR, ctx()],
     [{ ...greeted(), course: "khoa-test", gmail: null, draftMisses: 1 }, UNCLEAR, ctx()], // reaches freeText with a draft
     [greeted(), UNCLEAR, ctx({ activeTicket: { id: "t" } })],
-    [{ ...greeted(), orders: [{ id: "o1", slug: "khac" }] }, UNCLEAR, ctx()],
+    [{ ...greeted(), orders: [{ id: "o1", slug: "khac" }] }, "đơn của mình duyệt chưa", ctx()], // G-MC1-route: order text -> orders
     [greeted(), "xin chào", ctx()],
     [greeted(), "mình muốn biết vào học ở đâu", ctx()],
     [greeted(), "cho hỏi khoá test", ctx()],
@@ -223,3 +223,81 @@ test("AI-14 DO: no event meanwhile, the AI answer is sent and misses reset", asy
   assert.ok(sent.some((m) => m.text === "Khoá dạy làm bánh."));
   assert.equal((await store.get("s")).state.misses, 0);
 });
+
+// G-MC1-route: customers with orders may ask the AI; order questions still show the pending orders.
+const withOrders = () => ({ ...greeted(), orders: [{ id: "o1", slug: "khoa-test" }] });
+test("ROUTE-1 with orders: a course question goes to the AI", () => {
+  for (const t of ["khoá chay học những gì", "cho hỏi học online hay offline", "có chứng chỉ không"]) {
+    assert.equal(stepRaw(withOrders(), TXT(t), ctx()).action?.type, "ai", t);
+  }
+});
+test("ROUTE-2 with orders: order text shows the pending orders, no AI", () => {
+  for (const t of ["đơn của mình duyệt chưa", "don minh duyet chua", "mình chuyển khoản rồi", "ck xong roi", "gửi bill rồi đó", "khi nào kích hoạt", "cấp quyền giúp mình", "Đơn A sao rồi", "mình đã chuyển khoản", "da ck nha", "thanh toán rồi", "chuyển tiền xong rồi", "đơn".normalize("NFD") + " mình sao rồi"]) {
+    assert.equal(stepRaw(withOrders(), TXT(t), ctx()).action?.type, "pendingOrders", t);
+  }
+});
+test("ROUTE-3 order words do not match by mistake", () => {
+  for (const t of ["mình muốn đi đón con", "khoá có đơn giản không", "don gian khong ban", "thực đơn tuần này", "đơn vị gram", "thuc don chay", "kích hoạt men thế nào"]) {
+    assert.equal(stepRaw(withOrders(), TXT(t), ctx()).action?.type, "ai", t);
+  }
+});
+test("ROUTE-4 with orders, no usable AI answer: pending orders as before G-MC1", () => {
+  for (const ai of [null, { route: "clarify", answer: null, course_slug: null, sources: [] }]) {
+    assert.equal(aiReply(withOrders(), ai, ctx()).action?.type, "pendingOrders");
+  }
+  assert.equal(aiReply(withOrders(), { route: "ticket", answer: null, course_slug: null, sources: [] }, ctx()).action.reason, "unclear");
+  assert.deepEqual(aiReply(greeted(), null, ctx()), freeTextFallback(greeted()), "no orders: unchanged");
+});
+test("ROUTE-5 with orders, flag off or cap reached: pending orders, no AI (same as before)", () => {
+  assert.equal(stepRaw(withOrders(), TXT(UNCLEAR), ctx({ aiEnabled: false })).action?.type, "pendingOrders");
+  assert.equal(stepRaw({ ...withOrders(), ai: { day: "2026-11-10", n: AI_DAILY_CAP } }, TXT(UNCLEAR), ctx()).action?.type, "pendingOrders");
+});
+test("ROUTE-6 with orders: open ticket, pendingAdmin, draft (draftMisses 0/1) keep their flow", () => {
+  assert.equal(stepRaw(withOrders(), TXT(UNCLEAR), ctx({ activeTicket: { id: "t" } })).action?.type, "touchTicket");
+  assert.equal(stepRaw({ ...withOrders(), pendingAdmin: "support" }, TXT(UNCLEAR), ctx()).action?.type, "openTicket");
+  for (const draftMisses of [0, 1]) {
+    const out = stepRaw({ ...withOrders(), course: "khoa-test", gmail: null, draftMisses }, TXT(UNCLEAR), ctx());
+    assert.notEqual(out.action?.type, "ai", `draftMisses ${draftMisses}`);
+    assert.equal(out.state.course, "khoa-test", "draft kept");
+  }
+});
+test("ROUTE-7 DO: customer with orders asks a course question and gets the AI answer", async () => {
+  let t = Date.UTC(2026, 10, 10, 5);
+  const { c, sent, store } = convo({ deps: { now: () => (t += 1000), runAi: async () => ({ route: "bot_answer", answer: "Khoá dạy làm bánh.", course_slug: "khoa-test", sources: [] }) } });
+  const s0 = { ...withOrders(), lastInboundAt: 0 };
+  await c.storage.put("s", { state: s0, mids: [], hits: [] });
+  await c.handle(PSID, ev("khoá này học gì vậy"));
+  assert.ok(sent.some((m) => m.text === "Khoá dạy làm bánh."));
+  assert.equal(ordersOf((await store.get("s")).state).length, 1, "orders untouched");
+});
+test("ROUTE-8 DO: AI fails for a customer with orders -> pending orders lookup runs", async () => {
+  let t = Date.UTC(2026, 10, 10, 5);
+  let looked = 0;
+  const { c } = convo({ deps: { now: () => (t += 1000), runAi: async () => null, loadPendingOrders: async () => { looked++; return []; } } });
+  await c.storage.put("s", { state: withOrders(), mids: [], hits: [] });
+  await c.handle(PSID, ev("khoá này học gì vậy"));
+  assert.ok(looked >= 1);
+});
+test("ROUTE-9 DO: stale AI answer for a customer with orders runs no pending-orders lookup", async () => {
+  let release;
+  const pending = new Promise((r) => { release = r; });
+  let t = Date.UTC(2026, 10, 10, 5);
+  let looked = 0;
+  const { c } = convo({ deps: { now: () => (t += 1000), runAi: () => pending, loadPendingOrders: async () => { looked++; return []; } } });
+  await c.storage.put("s", { state: withOrders(), mids: [], hits: [] });
+  const first = c.handle(PSID, ev("khoá này học gì vậy"));
+  await new Promise((r) => setTimeout(r, 10));
+  await c.handle(PSID, ev("xin chào"));
+  const before = looked;
+  release(null);
+  await first;
+  assert.equal(looked, before, "no lookup for the stale AI turn");
+});
+test("ROUTE-10 with orders: U8 after a long gap with a draft still asks to resume (no AI)", () => {
+  const now = Date.UTC(2026, 10, 10, 5);
+  const s = { ...withOrders(), course: "khoa-test", lastInboundAt: now - 13 * 3600 * 1000 };
+  const out = stepRaw(s, TXT(UNCLEAR), ctx({ now, resumeGapMs: 12 * 3600 * 1000 }));
+  assert.notEqual(out.action?.type, "ai");
+  assert.ok(out.replies.some((r) => r.menu?.resume), "U8 resume question");
+});
+
