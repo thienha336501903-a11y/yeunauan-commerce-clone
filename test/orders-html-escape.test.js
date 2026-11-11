@@ -34,6 +34,10 @@ test("ESC-3 safeBillUrl keeps https links only", () => {
 test("ESC-4 orders.html: bill, course slug and sync status are escaped everywhere they are rendered", () => {
   assert.equal(html.match(/const bill = safeBillUrl\(order\.billLink\);/g).length, 2);
   assert.doesNotMatch(html, /order\.billLink \|\| ""/);
+  // The single-approval dialog links to the bill too: every use of billLink goes through safeBillUrl.
+  assert.equal(html.match(/billLink/g).length, 3);
+  assert.equal(html.match(/safeBillUrl\(order\.billLink\)/g).length, 3);
+  assert.match(html, /<option value="\$\{escapeHtml\(c\.slug\)\}">\$\{escapeHtml\(c\.courseName \|\| c\.slug\)\}<\/option>/);
   assert.doesNotMatch(html, /\$\{bill\}/, "bill is never interpolated raw");
   assert.doesNotMatch(html, /\$\{courseSlug\}[^`]*<\/p>|\('\$\{(bill|courseSlug)\}'\)/);
   assert.equal(html.match(/\$\{jsArg\(bill\)\}/g).length, 4);

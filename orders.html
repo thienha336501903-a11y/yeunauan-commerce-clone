@@ -710,7 +710,7 @@
     function populateCourseFilter(courses) {
       const select = document.getElementById("courseFilter");
       select.innerHTML = '<option value="">Tất cả khóa học</option>' + 
-        courses.map(c => `<option value="${c.slug}">${c.courseName || c.slug}</option>`).join('');
+        courses.map(c => `<option value="${escapeHtml(c.slug)}">${escapeHtml(c.courseName || c.slug)}</option>`).join('');
     }
 
     // 7. GET FILTERED DATA
@@ -1337,11 +1337,12 @@
       const body = document.createElement("div");
       body.className = "p-6 overflow-y-auto space-y-4 text-xs text-slate-600 leading-relaxed";
       
-      const billHtml = order.billLink 
+      const billUrl = safeBillUrl(order.billLink);
+      const billHtml = billUrl 
         ? `
           <div class="bg-slate-50 p-2.5 rounded-2xl border border-slate-100 flex items-center gap-3">
-            <a href="${escapeHtml(order.billLink)}" target="_blank" rel="noopener noreferrer" class="w-16 h-16 rounded-xl overflow-hidden bg-white hover:ring-2 hover:ring-pink-500 transition shadow shrink-0 border">
-              <img src="${escapeHtml(order.billLink)}" class="w-full h-full object-cover">
+            <a href="${escapeHtml(billUrl)}" target="_blank" rel="noopener noreferrer" class="w-16 h-16 rounded-xl overflow-hidden bg-white hover:ring-2 hover:ring-pink-500 transition shadow shrink-0 border">
+              <img src="${escapeHtml(billUrl)}" class="w-full h-full object-cover">
             </a>
             <div>
               <p class="font-extrabold text-slate-700">Hóa đơn chuyển khoản</p>
