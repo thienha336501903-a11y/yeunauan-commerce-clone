@@ -287,3 +287,51 @@ test("BILL-23 tickets off: voice gets the course list, sticker with a bill step 
   assert.equal(back.state().course, "b");
   assert.match(JSON.stringify(back.sent), /chưa hoàn tất/);
 });
+
+test("BILL-24 emoji-only text counts as a sticker; emoji with words, digits and punctuation stay text", () => {
+  for (const text of ["😍", "😍😍 ", "👍🏻", "❤️", "👨‍👩‍👧", "🇻🇳"]) assert.deepEqual(toEvent({ message: { text } }), { kind: "sticker" }, text);
+  for (const text of ["ok 😍", "😍 khoá bánh", "1", "12", "1️⃣", ":)", "...", " ", ""]) assert.equal(toEvent({ message: { text } }).kind, "text", JSON.stringify(text));
+});
+
+test("BILL-25 DO: emoji with no draft is silent, no AI, no order list; at the bill step it asks for the bill", async () => {
+  let ai = 0;
+  const w = world({ state: withOrder(), env: { MESSENGER_AI_ENABLED: "1", AI: { run: async () => ({}) } }, deps: { runAi: async () => { ai++; return null; }, loadPendingOrders: async () => PENDING } });
+  await send(w, { text: "😍" });
+  assert.equal(ai, 0);
+  assert.equal(w.sent.length, 0);
+  const bill = world();
+  await send(bill, { text: "👍" });
+  assert.equal(bill.created.length, 0);
+  assert.match(texts(bill), /gửi ảnh chụp bill/);
+});
+
+test("BILL-26 DO: AI 'clarify' for a customer with orders shows the menu, not the list; AI failure keeps the list", async () => {
+  const run = async (runAi) => {
+    let looked = 0;
+    const w = world({ state: withOrder(), env: { MESSENGER_AI_ENABLED: "1", AI: { run: async () => ({}) } }, deps: { runAi, loadPendingOrders: async () => { looked++; return PENDING; } } });
+    await send(w, { text: "hmm chắc vậy" });
+    return { w, looked };
+  };
+  const clarify = await run(async () => ({ route: "clarify", answer: null, course_slug: null, sources: [] }));
+  assert.ok(!/đang chờ duyệt\n/.test(texts(clarify.w)));
+  assert.ok(clarify.w.sent.length >= 1);
+  const failed = await run(async () => null);
+  assert.match(texts(failed.w), /gửi bill/);
+});
+
+test("BILL-27 text symbols and question marks are not emoji-only stickers", () => {
+  for (const text of ["\u2753", "\u2754", "\u00A9", "\u2122", "\u2753\u2753"]) assert.equal(toEvent({ message: { text } }).kind, "text", text);
+});
+
+test("BILL-28 sticker while the Admin question is open repeats its way out; first contact gets the greeting", async () => {
+  for (const state of [G({ pendingAdmin: "support" }), G({ pendingAdmin: "support", course: "b" })]) {
+    const w = world({ state });
+    await send(w, { text: "😍" });
+    assert.equal(w.state().pendingAdmin, "support");
+    assert.equal(w.tickets.length, 0);
+    assert.deepEqual(w.sent[0].quick_replies.map((q) => q.payload), ["ADMIN_SKIP"]);
+  }
+  const first = world({ state: emptyState() });
+  await send(first, { text: "👋" });
+  assert.match(first.sent[0].text, /^Chào bạn/);
+});

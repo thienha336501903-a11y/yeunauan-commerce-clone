@@ -242,9 +242,11 @@ test("ROUTE-3 order words do not match by mistake", () => {
   }
 });
 test("ROUTE-4 with orders, no usable AI answer: pending orders as before G-MC1", () => {
-  for (const ai of [null, { route: "clarify", answer: null, course_slug: null, sources: [] }]) {
-    assert.equal(aiReply(withOrders(), ai, ctx()).action?.type, "pendingOrders");
-  }
+  assert.equal(aiReply(withOrders(), null, ctx()).action?.type, "pendingOrders");
+  // Gate 1b: "clarify" means the AI answered; the customer did not ask about orders.
+  const clarify = aiReply(withOrders(), { route: "clarify", answer: null, course_slug: null, sources: [] }, ctx());
+  assert.equal(clarify.action, undefined);
+  assert.ok(clarify.replies[0].menu);
   assert.equal(aiReply(withOrders(), { route: "ticket", answer: null, course_slug: null, sources: [] }, ctx()).action.reason, "unclear");
   assert.deepEqual(aiReply(greeted(), null, ctx()), freeTextFallback(greeted()), "no orders: unchanged");
 });

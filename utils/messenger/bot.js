@@ -304,6 +304,8 @@ export function aiReply(state, ai, ctx, match) {
     // G-MC1-intent: the sentence mentioned a course: its card or "this course?", never the buy flow.
     const found = match && ctx.courses.find((c) => c.slug === match.slug);
     if (found) return courseFallback({ ...state, misses: 0 }, found, match.exact);
+    // Gate 1b: the AI read it and found it unclear ("ok"): a customer with orders did not ask about them, so the menu.
+    if (ai && ordersOf(state).length) return { state: { ...state, misses: 0 }, replies: mainMenu("", draftExtra(state)) };
     // No usable answer: the pre-AI behaviour (past orders -> pending orders, else ask once more / ticket).
     return ordersOf(state).length ? pendingOrders({ ...state, misses: 0 }) : freeTextFallback(state);
   }
@@ -438,7 +440,10 @@ const UNREADABLE = "Mình chưa đọc được loại tin này";
 function attachmentReply(state, event, ctx) {
   const T = Boolean(ctx.ticketsEnabled);
   const billStep = Boolean(state.course && state.gmail && state.gmailOk);
+  // Gate 1b: the Admin question is still open; repeat its way out, or the next typed text (a Gmail too) becomes the ticket.
+  if (state.pendingAdmin) return { state, replies: [text("Bạn nhắn bằng chữ giúp mình nhé, hoặc bấm bên dưới để gặp Admin.", [["Bỏ qua, gặp Admin", "ADMIN_SKIP"]])] };
   if (event.kind === "sticker") {
+    if (!state.course && !state.greeted) return { state, replies: T ? mainMenu("") : listReply(ctx, "") }; // first contact still gets the greeting
     if (!state.course) return { state, replies: [] };
     return { state, replies: billStep ? [text("Khi chuyển khoản xong, bạn gửi ảnh chụp bill vào đây giúp mình nhé.", exits(T))] : nextPrompt(state, ctx) };
   }

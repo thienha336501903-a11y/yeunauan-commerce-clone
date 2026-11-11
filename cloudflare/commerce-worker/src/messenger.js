@@ -61,6 +61,9 @@ export async function messengerWebhook(request, env, ctx) {
   return new Response("EVENT_RECEIVED", { status: 200 });
 }
 
+// Keycap digits are not matched: the digit is not in this class. Text symbols (© ™) and question marks stay text (the check in toEvent).
+const EMOJI_ONLY = /^(?:\p{Extended_Pictographic}|\p{Regional_Indicator}|[\u{1F3FB}-\u{1F3FF}]|\uFE0F|\u200D|\s)+$/u;
+
 // Meta messaging object -> bot event (null = ignore: delivery/read receipts, ...).
 export function toEvent(ev, appId) {
   const m = ev?.message;
@@ -76,6 +79,8 @@ export function toEvent(ev, appId) {
   if (m?.sticker_id || attachments.some((a) => a?.type === "sticker" || a?.payload?.sticker_id)) return { kind: "sticker" };
   const images = attachments.filter((a) => a?.type === "image" && a?.payload?.url);
   if (images.length) return { kind: "image", url: String(images[0].payload.url), ...(images.length > 1 ? { imageCount: images.length } : {}) };
+  // Gate 1b: a message of emoji only says as much as a sticker: no AI call, no order list.
+  if (typeof m?.text === "string" && EMOJI_ONLY.test(m.text) && /\p{Emoji_Presentation}|️|\p{Regional_Indicator}/u.test(m.text) && !/[❓❔]/u.test(m.text)) return { kind: "sticker" };
   if (typeof m?.text === "string") return { kind: "text", text: m.text.slice(0, 1000) };
   if (attachments.length || m?.is_unsupported) return { kind: "unsupported", type: String(attachments[0]?.type || "unknown").slice(0, 20) };
   if (ev?.postback?.payload) {
