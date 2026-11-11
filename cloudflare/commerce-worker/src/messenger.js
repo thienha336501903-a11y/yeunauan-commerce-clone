@@ -147,7 +147,7 @@ export async function loadCourses(env, db = supabase) {
     featuredSeen ||= featured;
     return {
       slug: c.slug, title: c.title, subtitle: c.subtitle || "", description: c.description || "", sortOrder: c.sort_order ?? null,
-      price: c.price || "", featured, imageUrl: c.image_url || "",
+      price: c.price || "", featured, imageUrl: c.image_url || "", contentApproved: c.raw_data?.messengerContentApproved === true,
       bankName: c.raw_data?.bankName || "", bankAccount: c.raw_data?.bankAccount || "", bankOwner: c.raw_data?.bankOwner || "",
       transferNote: c.raw_data?.transferNote || "", qrImageUrl: c.raw_data?.qrImageUrl || ""
     };
@@ -426,7 +426,7 @@ export class MessengerConversation {
       if (out.action?.type === "touchTicket" && ticket) await deps.touchTicket(ticket.id);
       if (out.action?.type === "openTicket") replies.push(...await this.openTicketReplies(psid, out.action, event));
       if (out.action?.type === "ai") {
-        const r = aiReply(finalState, await this.runAi(out.action.text, ctx), ctx);
+        const r = aiReply(finalState, await this.runAi(out.action.text, ctx), ctx, out.action.match);
         // Re-read after the AI wait (up to 8 s). Another customer event or an Admin reply meanwhile makes this answer
         // stale: send nothing and open no ticket, so a draft, an Admin request or an Admin chat is never overridden.
         // The daily AI count was already saved before the call; only `misses` is written here.

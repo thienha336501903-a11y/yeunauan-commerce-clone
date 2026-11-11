@@ -24,6 +24,22 @@ const PENDING_TEXT = /^(don cua toi|don hang|kiem tra don|xem don)$/;
 // "đơn" is matched with its accent when the text has accents, so "đón" or "đơn giản" never count; unaccented typing uses "don".
 // Cooking words ("thực đơn", "đơn vị", "kích hoạt men") are not orders.
 const ORDER_WORDS = /\b(bill|duyet|kich hoat(?! men)|cap quyen|(chuyen khoan|ck|chuyen tien|thanh toan) (roi|xong)|da (chuyen khoan|ck|chuyen tien|thanh toan)|vao hoc (chua|duoc chua))\b/;
+// G-MC1-intent: matched against clean(text). "gia vi", "gia dinh" are not prices.
+const PRICE_TEXT = /\b(hoc phi|bao nhieu tien|bn tien|(?<!(tham|chuyen|quoc|giam) )gia(?! (vi|dinh|su|truyen|han|nhiet|cong)\b))\b/;
+const LESSONS_TEXT = /\b(nhung bai|bao nhieu bai|may bai|bai hoc|so bai|danh sach bai)\b/;
+const CONTENT_TEXT = /\b((hoc|day)( duoc)?( nhung| cai)?( mon)? gi|mon nao|gom nhung gi|noi dung|chuong trinh(?! (khuyen mai|uu dai)\b)|giao trinh)\b/;
+const BARE_FILLER = new Set(["a", "nay", "nhe", "oi", "day"]);
+// Clear wish to register. A question about how, or any negative ("chưa muốn mua", "đăng ký được không"), is not one.
+// "mua" must be typed without accents: "mùa", "mưa" are other words.
+const buyText = (raw) => {
+  const t = String(raw || "").normalize("NFC").toLowerCase();
+  const c = clean(t);
+  if (/\b(the nao|nhu nao|ra sao|o dau|lam sao|khong|ko|chua|cach|huong dan|khi nao|bao gio|roi|la gi|(huy|bo|thoi) (dang ky|dang ki|dk|mua))\b/.test(c)) return false;
+  // On the accented text: clean() would turn "dạ đăng ký" into "da dang ky".
+  if (/đã (đăng k|đk|mua)|đừng/.test(t)) return false;
+  const accented = norm(t) !== t.replace(/đ/g, "d");
+  return /\b(dang ky|dang ki|dangky|dk|dat mua)\b/.test(c) || (accented ? /(^|[^\p{L}])mua([^\p{L}]|$)/u.test(t) : /\bmua\b/.test(c));
+};
 const orderText = (raw) => {
   const t = String(raw || "").normalize("NFC").toLowerCase();
   const accented = norm(t) !== t.replace(/đ/g, "d");
@@ -201,21 +217,78 @@ function freeText(state, event, ctx) {
   if (GREET.test(clean(event.text))) return { state: { ...state, misses: 0 }, replies: mainMenu("") };
   const hit = approvedFaq(ctx).find((f) => (f.keywords || []).some((k) => k && q.includes(k)));
   if (hit) return hit.answer ? { state: { ...state, misses: 0 }, replies: [faqAnswer(hit)] } : ticket(state, "unclear");
+  const hasOrders = ordersOf(state).length > 0;
+  // G-MC1-intent: without a draft, a question about an order comes before any course match in the same sentence.
+  if (!state.course && hasOrders && orderText(event.text)) return pendingOrders({ ...state, misses: 0 });
   const course = courseNamed(ctx, q);
+  const close = course ? [] : fuzzyCourses(event.text, ctx.courses);
+  // G-MC1-intent: without a draft, naming a course is not asking to buy it (Gmail only on a clear wish to register).
+  if (!state.course && (course || close.length === 1)) return courseQuestion({ ...state, misses: 0 }, event, ctx, course || close[0], Boolean(course));
   if (course) return buy({ ...state, misses: 0 }, ctx, course.slug);
-  const close = fuzzyCourses(event.text, ctx.courses);
-  if (close.length === 1) return { state: { ...state, misses: 0 }, replies: [text(`Bạn muốn hỏi khóa ${close[0].title || close[0].slug}?`, [["Đúng", `BUY:${close[0].slug}`], ["Không", "LIST"]])] };
+  if (close.length === 1) return { state: { ...state, misses: 0 }, replies: askCourse(close[0], `BUY:${close[0].slug}`) };
   if (close.length > 1) return { state: { ...state, misses: 0 }, replies: listReply(ctx, "") };
   // G-MC1-route: a customer with orders who writes about an order gets the pending orders; other questions may go to the AI.
-  const hasOrders = ordersOf(state).length > 0;
   if (hasOrders && orderText(event.text)) return pendingOrders({ ...state, misses: 0 });
   // G-MC1: text nothing above understood goes to the AI (flag on, no draft, under the daily cap); it only answers.
-  const day = new Date(ctx.now).toISOString().slice(0, 10);
-  const n = state.ai?.day === day ? state.ai.n : 0;
-  if (ctx.aiEnabled && !state.course && n < AI_DAILY_CAP) return { state: { ...state, ai: { day, n: n + 1 } }, replies: [], action: { type: "ai", text: event.text } };
+  const ai = aiTurn(state, event, ctx);
+  if (ai) return ai;
   // No AI (flag off, draft, cap): as before G-MC1, past orders -> pending orders.
   if (hasOrders) return pendingOrders({ ...state, misses: 0 });
   return freeTextFallback(state);
+}
+
+function aiTurn(state, event, ctx, match) {
+  const day = new Date(ctx.now).toISOString().slice(0, 10);
+  const n = state.ai?.day === day ? state.ai.n : 0;
+  if (!ctx.aiEnabled || state.course || n >= AI_DAILY_CAP) return null;
+  return { state: { ...state, ai: { day, n: n + 1 } }, replies: [], action: { type: "ai", text: event.text, ...(match ? { match } : {}) } };
+}
+
+const askCourse = (c, yesPayload) => [text(`Bạn muốn hỏi khóa ${c.title || c.slug}?`, [["Đúng", yesPayload], ["Không", "LIST"]])];
+// A course was found but the customer asked nothing the code can answer: its card (exact name) or "this course?" (typo, U5: never assign).
+const courseFallback = (state, c, exact) => ({ state, replies: exact ? detailReplies(c) : askCourse(c, `INFO:${c.slug}:general`) });
+
+// G-MC1-intent: what a sentence that mentions a course asks for. A question wins over "đăng ký" so Gmail is never asked by mistake.
+function courseIntent(raw) {
+  const c = clean(raw);
+  if (PRICE_TEXT.test(c)) return "price";
+  if (LESSONS_TEXT.test(c)) return "lessons";
+  if (CONTENT_TEXT.test(c)) return "content";
+  return buyText(raw) ? "buy" : "other";
+}
+
+// Only the course name (and filler words) in the sentence.
+const bareName = (raw, c) => {
+  const title = clean(c.title || c.slug).split(" ");
+  return clean(raw).split(" ").filter(Boolean).every((w) => STOP.has(w) || BARE_FILLER.has(w) || title.some((t) => t === w || (w.length >= 4 && near(w, t))));
+};
+
+// The sentence without the exact course name, so a title like "Bánh không đường" cannot change the intent.
+// NFC Vietnamese maps 1:1 onto norm(), so the index found in norm() is valid in the text.
+const withoutTitle = (raw, c) => {
+  const t = String(raw || "").normalize("NFC").replace(/\p{M}/gu, ""); // combining marks left after NFC (emoji variation selectors) would shift the index
+  const name = norm(c.title);
+  const i = name ? norm(t).indexOf(name) : -1;
+  return i < 0 ? t : `${t.slice(0, i)} ${t.slice(i + name.length)}`;
+};
+
+function courseQuestion(state, event, ctx, c, exact) {
+  const intent = courseIntent(exact ? withoutTitle(event.text, c) : event.text);
+  if (intent === "buy") return exact ? buy(state, ctx, c.slug) : { state, replies: askCourse(c, `BUY:${c.slug}`) };
+  if (intent !== "other") return exact ? { state, replies: infoReply(c, intent) } : { state, replies: askCourse(c, `INFO:${c.slug}:${intent}`) };
+  const ai = bareName(event.text, c) ? null : aiTurn(state, event, ctx, { slug: c.slug, exact });
+  return ai || courseFallback(state, c, exact);
+}
+
+// Read-only answer about one course: no draft, no Gmail, no DB, no AI. The price is the course record's; content needs Owner approval.
+function infoReply(c, topic) {
+  const name = plain(c.title) || c.slug;
+  const buttons = [["Xem chi tiết", `DETAIL:${c.slug}`], ["Đăng ký", `BUY:${c.slug}`], adminBtn(true)];
+  if (topic === "price") return [text(`Học phí ${name}: ${cut(plain(c.price), 100)}.`, buttons)];
+  if (topic !== "content" && topic !== "lessons") return detailReplies(c);
+  const desc = topic === "content" && c.contentApproved ? plain(c.description) : "";
+  if (desc) return [text(`${name}\n\n${cut(desc, 600)}`, buttons)];
+  return [text(`Hiện mình chưa có đủ thông tin chi tiết về nội dung khóa ${name}. Bạn chat với Admin để được tư vấn thêm nhé.`, [adminBtn(true), ["Đăng ký", `BUY:${c.slug}`], ["Xem các khóa học", "LIST"]])];
 }
 
 export function freeTextFallback(state) {
@@ -226,9 +299,14 @@ export function freeTextFallback(state) {
 // AI result -> reply. Pure. The AI never produces BUY, an order, a payment check or a Gmail: only text and fixed buttons.
 // Its price is never used: the price comes from the course record (AI-I4).
 const SELF_HELP_IDS = ["faq-login", "faq-video", "faq-wrong-account"];
-export function aiReply(state, ai, ctx) {
-  // No usable answer: the pre-AI behaviour (past orders -> pending orders, else ask once more / ticket).
-  if (!ai || ai.route === "clarify") return ordersOf(state).length ? pendingOrders({ ...state, misses: 0 }) : freeTextFallback(state);
+export function aiReply(state, ai, ctx, match) {
+  if (!ai || ai.route === "clarify") {
+    // G-MC1-intent: the sentence mentioned a course: its card or "this course?", never the buy flow.
+    const found = match && ctx.courses.find((c) => c.slug === match.slug);
+    if (found) return courseFallback({ ...state, misses: 0 }, found, match.exact);
+    // No usable answer: the pre-AI behaviour (past orders -> pending orders, else ask once more / ticket).
+    return ordersOf(state).length ? pendingOrders({ ...state, misses: 0 }) : freeTextFallback(state);
+  }
   if (ai.route === "ticket") return ticket(state, "unclear");
   if (ai.route === "self_help") {
     const f = approvedFaq(ctx).find((x) => SELF_HELP_IDS.includes(x.id) && (ai.sources || []).includes(x.id) && x.answer);
@@ -349,7 +427,7 @@ export function stepRaw(prev, event, ctx) {
 
 // U8 exceptions: the customer chose clearly (these buttons, a campaign link), or a bill with a complete draft
 // (they may have paid already; blocking it would make them send it again).
-const RESUME_PAYLOAD = /^(CONTINUE_DRAFT|LIST|LIST:.*|LIST_OTHER(:.*)?|MENU_COURSES|ADMIN.*|CANCEL_DRAFT|CHANGE_COURSE|BUY.*|COURSE:.*|SWITCH:.*|PENDING_ORDERS|MENU|RESTART|HUMAN|DETAIL:.*)$/;
+const RESUME_PAYLOAD = /^(CONTINUE_DRAFT|LIST|LIST:.*|LIST_OTHER(:.*)?|MENU_COURSES|ADMIN.*|CANCEL_DRAFT|CHANGE_COURSE|BUY.*|COURSE:.*|SWITCH:.*|PENDING_ORDERS|MENU|RESTART|HUMAN|DETAIL:.*|INFO:.*)$/;
 // Typed requests for a person or a restart are explicit too: they must not need two more taps after a break.
 const skipsResume = (state, event, payload) => Boolean(event.ref) || RESUME_PAYLOAD.test(payload)
   || (event.kind === "text" && !payload && (HUMAN.test(event.text || "") || RESTART.test((event.text || "").trim())))
@@ -434,6 +512,12 @@ function stepInner(prev, event, ctx) {
     return buy(state, ctx, slug, { confirmed: true, ref: sr?.slug === slug && refCourse(sr.ref, ctx)?.slug === slug ? sr.ref : undefined });
   }
   // P1-5: course details inside Messenger (tickets on).
+  // G-MC1-intent: "Đúng" after a typo keeps what the customer asked (read-only; no draft, no Gmail).
+  if (T && payload.startsWith("INFO:")) {
+    const [, slug, topic] = payload.split(":");
+    const course = ctx.courses.find((c) => c.slug === slug);
+    return { state, replies: course ? infoReply(course, topic) : listReply(ctx, "Khóa này hiện chưa mở đăng ký. ") };
+  }
   if (T && payload.startsWith("DETAIL:")) {
     const course = ctx.courses.find((c) => c.slug === payload.slice(7));
     return { state, replies: course ? detailReplies(course) : listReply(ctx, "Khóa này hiện chưa mở đăng ký. ") };

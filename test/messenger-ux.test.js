@@ -211,7 +211,7 @@ test("UX-09 typo 'khoa bnah': one close course asks, two list; nothing is assign
   const banhBao = { ...A, slug: "banh-bao", title: "Làm Bánh Bao" };
   const one = step(G, txt("khoa bnah"), ctx({ courses: [banhMi, { ...B, title: "Pha chế" }] }));
   assert.equal(one.replies[0].text, "Bạn muốn hỏi khóa Làm Bánh Mì?");
-  assert.deepEqual(one.replies[0].quick_replies.map((q) => [q.title, q.payload]), [["Đúng", "BUY:banh-mi"], ["Không", "LIST"]]);
+  assert.deepEqual(one.replies[0].quick_replies.map((q) => [q.title, q.payload]), [["Đúng", "INFO:banh-mi:general"], ["Không", "LIST"]]);
   assert.equal(one.state.course, null);
   const two = step(G, txt("khoa bnah"), ctx({ courses: [banhMi, banhBao] }));
   assert.equal(two.state.course, null);

@@ -38,7 +38,8 @@ const plain = (t) => String(t || "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/gi
 // No price, raw_data, bank account, PSID, Gmail, order or ticket goes in.
 export const buildAiPack = (courses, faq) => ({
   courses_on_sale: (courses || []).map((c) => ({
-    slug: c.slug, title: c.title || c.slug, subtitle: plain(c.subtitle), description: plain(c.description).slice(0, 600),
+    // G-MC1-intent: course text reaches the model only after Owner approval (raw_data.messengerContentApproved).
+    slug: c.slug, title: c.title || c.slug, subtitle: c.contentApproved ? plain(c.subtitle) : "", description: c.contentApproved ? plain(c.description).slice(0, 600) : "",
     featured: Boolean(c.featured), has_price: Boolean(c.price), has_bank: true,
   })),
   faq_approved: (faq || []).map((f) => ({ id: f.id, q: f.question ?? f.q ?? "", a: f.answer ?? f.a ?? "" })),
