@@ -7,7 +7,8 @@ const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'ut
 test('pending course cards expose a course-scoped bulk approve action', () => {
   const ordersPage = read('orders.html');
   assert.match(ordersPage, /function renderPendingGrouped\(\)/);
-  assert.match(ordersPage, /onclick="approveGroupAll\('\$\{courseSlug\}'\)"/);
+  // C2-2: the slug reaches the inline handler as an escaped JS string literal, not between raw quotes.
+  assert.match(ordersPage, /onclick="approveGroupAll\(\$\{jsArg\(courseSlug\)\}\)"/);
   assert.match(ordersPage, /Duyệt Nhanh Lớp này/);
   assert.match(ordersPage, /o\.course === courseSlug && o\.status === "Chờ duyệt"/);
 });
