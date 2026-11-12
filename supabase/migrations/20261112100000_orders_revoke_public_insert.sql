@@ -12,7 +12,8 @@ revoke all on table public.orders from public, anon, authenticated;
 -- Stop (and roll the transaction back) unless the result is exactly: no public write path, server access intact.
 do $$
 begin
-  if has_table_privilege('anon', 'public.orders', 'INSERT') or has_table_privilege('authenticated', 'public.orders', 'INSERT') then
+  if has_table_privilege('anon', 'public.orders', 'INSERT') or has_table_privilege('authenticated', 'public.orders', 'INSERT')
+     or has_any_column_privilege('anon', 'public.orders', 'INSERT') or has_any_column_privilege('authenticated', 'public.orders', 'INSERT') then
     raise exception 'C2-2: anon or authenticated can still insert into public.orders';
   end if;
   if exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'orders'

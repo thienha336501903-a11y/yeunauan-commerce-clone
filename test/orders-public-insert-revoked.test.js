@@ -15,13 +15,14 @@ test("RLS-1 the migration drops the public insert policy, revokes the grants and
 
 test("RLS-2 the migration aborts unless anon/authenticated are locked out and service_role keeps full access", () => {
   assert.match(statements, /has_table_privilege\('anon', 'public\.orders', 'INSERT'\) or has_table_privilege\('authenticated', 'public\.orders', 'INSERT'\)[\s\S]*?raise exception/);
+  for (const role of ["anon", "authenticated"]) assert.ok(statements.includes(`has_any_column_privilege('${role}', 'public.orders', 'INSERT')`), role);
   assert.match(statements, /roles && array\['public', 'anon', 'authenticated'\]::name\[\][\s\S]*?raise exception/);
   for (const privilege of ["SELECT", "INSERT", "UPDATE", "DELETE"]) assert.ok(statements.includes(`has_table_privilege('service_role', 'public.orders', '${privilege}')`), privilege);
 });
 
-test("RLS-3 it is the newest migration and the app's only order insert goes through the service-role client", () => {
-  const files = readdirSync(new URL("../supabase/migrations/", import.meta.url)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(files.at(-1), "20261112100000_orders_revoke_public_insert.sql");
+test("RLS-3 no later migration grants it back, and the app's only order insert goes through the service-role client", () => {
+  const later = readdirSync(new URL("../supabase/migrations/", import.meta.url)).filter((name) => name.endsWith(".sql") && name > "20261112100000_orders_revoke_public_insert.sql");
+  for (const name of later) assert.doesNotMatch(read("supabase/migrations/" + name), /on (table )?public\.orders[^;]*\bto\b[^;]*\b(anon|authenticated|public)\b/i, name);
   assert.match(read("utils/supabase.js"), /export const supabase = supabaseServiceRole;/);
   const billOrder = read("utils/bill-order.js");
   assert.match(billOrder, /supabase\.from\('orders'\)\.insert\(orderPayload\)/);
