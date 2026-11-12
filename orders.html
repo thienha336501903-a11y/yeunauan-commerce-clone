@@ -865,7 +865,7 @@
                           <button onclick="syncEnrollmentManual('${order.id}')" class="bg-slate-100 hover:bg-pink-50 text-pink-600 hover:text-pink-700 text-[10px] px-2 py-0.5 rounded border border-slate-200 transition font-bold" title="Click để đồng bộ lại học viên này">Re-sync</button>
                         </div>
                         <div class="mt-1.5 text-[9px] text-slate-400 font-bold leading-normal max-w-[200px]">
-                          ℹ️ Đơn đã duyệt. Muốn đổi Gmail cần dùng chức năng cấp lại riêng bên LMS Admin.
+                          ℹ️ Đơn đã duyệt. Muốn đổi Gmail: chuyển đơn về "Chờ duyệt" (thu hồi quyền học), rồi bấm duyệt lại và sửa Gmail trong hộp xác nhận. Không đổi Gmail khoá V5 bên LMS Admin.
                         </div>
                       </div>
                       ${order.sync_error ? `<div class="text-[9px] text-rose-500 mt-1 max-w-[200px] break-words" title="${escapeHtml(order.sync_error)}">Lỗi: ${escapeHtml(order.sync_error)}</div>` : ''}

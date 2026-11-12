@@ -5,7 +5,7 @@
 import { createBillOrder } from "../../../utils/bill-order.js";
 import { supabase } from "../../../utils/supabase.js";
 import { AI_MODEL_DEFAULT, AI_SCHEMA, AI_TIMEOUT_MS, aiMessages, parseAiResult } from "../../../utils/messenger/ai.js";
-import { PAUSE_MS, addOrder, aiReply, billRefusedReply, busyAdminReplies, busyReplies, buyDuplicateReplies, clearDraft, dupBillReplies, emptyState, extraImageReply, hasPlaceholder, normalizeState, openCourse, orderCreatedReply, orderFailedReply, orderSystemFailedReply, ordersOf, ordersSummaryReplies, paymentInfo, pendingOrdersReplies, refCourse, renderReplies, stepRaw, switchAsk, ticketReply } from "../../../utils/messenger/bot.js";
+import { PAUSE_MS, addOrder, aiReply, billRefusedReply, billSlowReply, busyAdminReplies, busyReplies, buyDuplicateReplies, clearDraft, dupBillReplies, emptyState, extraImageReply, hasPlaceholder, normalizeState, openCourse, orderCreatedReply, orderFailedReply, orderSystemFailedReply, ordersOf, ordersSummaryReplies, paymentInfo, pendingOrdersReplies, refCourse, renderReplies, stepRaw, switchAsk, ticketReply } from "../../../utils/messenger/bot.js";
 import faqData from "../../../utils/messenger/faq.json" with { type: "json" };
 import { activeTicket, openTicket, redactSummary, touchTicket } from "../../../utils/messenger/tickets.js";
 import { cloneConfig } from "../../../utils/clone-config.js";
@@ -14,6 +14,10 @@ import { downloadBill, sendMessage, sendTyping, verifySignature } from "../../..
 const MAX_WEBHOOK_BYTES = 256 * 1024;
 const SEEN_MIDS = 200;
 const RATE_PER_MINUTE = 20;
+// C4-2: download (15 s of its own) + upload + order insert. Under the ~30 s the webhook's waitUntil is given.
+const BILL_TIMEOUT_MS = 20000;
+// C3-2: one JSON line per failure for `wrangler tail`. Fixed event names and Meta's numbers only: never a PSID, a Gmail or message text.
+const logEvent = (evt, extra = {}) => console.error(JSON.stringify({ evt, ...extra }));
 const enabled = (env) => String(env.MESSENGER_BOT_ENABLED || "").trim() === "1";
 const ticketsEnabled = (env) => String(env.MESSENGER_TICKETS_ENABLED || "").trim() === "1";
 // G-MC1: AI answers free text only when the flag is "1" and the Workers AI binding exists.
@@ -55,7 +59,8 @@ export async function messengerWebhook(request, env, ctx) {
       const stub = env.MESSENGER_CONVERSATIONS.get(env.MESSENGER_CONVERSATIONS.idFromName(psid));
       const work = stub.fetch("https://messenger.internal/event", { method: "POST", body: JSON.stringify({ psid, ev }) });
       // Meta wants 200 within seconds; the bill upload can take longer, so it finishes after the response.
-      if (ctx?.waitUntil) ctx.waitUntil(work.catch(() => {})); else await work;
+      // C3-2: an event that failed inside the Durable Object used to vanish. The log carries no PSID and no text.
+      if (ctx?.waitUntil) ctx.waitUntil(work.then((res) => { if (res && res.ok === false) logEvent("messenger_event_failed", { status: res.status }); }, (err) => { logEvent("messenger_event_failed", { error: String(err?.name || "Error").slice(0, 40) }); })); else await work;
     }
   }
   return new Response("EVENT_RECEIVED", { status: 200 });
@@ -185,9 +190,9 @@ export class MessengerConversation {
   }
 
   // Run a lookup with a timeout (deps.lookupMs for tests); rejects on error or timeout.
-  timed(fn) {
+  timed(fn, ms = this.deps.lookupMs ?? 5000) {
     let timer;
-    const limit = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("timeout")), this.deps.lookupMs ?? 5000); });
+    const limit = new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error("timeout"), { timedOut: true })), ms); });
     return Promise.race([(async () => fn())(), limit]).finally(() => clearTimeout(timer));
   }
 
@@ -377,7 +382,11 @@ export class MessengerConversation {
     if (!event) return;
     // Outbound I/O before the state read: between storage.get and storage.put nothing may await the network,
     // or another event of this sender could interleave and be overwritten.
-    const courses = event.kind === "echo" ? [] : await deps.loadCourses(env);
+    // C1-3: a DB error or a 5 s timeout here used to end the event with no answer at all. It is now handled like an
+    // unknown ticket below (P0-2): no order, the draft stays, one busy message with the Admin button per 10 minutes.
+    let coursesFailed = false;
+    const courses = event.kind === "echo" ? [] : await this.timed(() => deps.loadCourses(env)).catch(() => { coursesFailed = true; return []; });
+    if (coursesFailed) logEvent("messenger_courses_failed");
     // Tickets on: is there an open ticket for this sender? Read before storage.get like the other network calls.
     // A DB error counts as "no ticket": the sales flow keeps working, and a new ticket would report its own failure
     // honestly. Staying silent instead could leave a customer unanswered while no Admin is handling them.
@@ -386,6 +395,11 @@ export class MessengerConversation {
     let ticket = null;
     let ticketUnknown = false;
     if (tickets && event.kind !== "echo") ticket = await this.timed(() => deps.activeTicket({ pageId: env.META_PAGE_ID, psid })).catch(() => { ticketUnknown = true; return null; });
+    if (coursesFailed) {
+      // Tickets off has no P0-2 path: say the system is busy rather than nothing (state untouched).
+      if (!tickets) { await this.sendAll(psid, busyAdminReplies(false)); return; }
+      ticketUnknown = true;
+    }
     const now = deps.now();
     const saved = (await this.storage.get("s")) || { state: emptyState(), mids: [], hits: [] };
     const mid = eventId(ev);
@@ -473,7 +487,9 @@ export class MessengerConversation {
       }
     }
     for (const message of await this.finish(psid, replies, finalState, ctx, tickets)) {
-      await sendMessage(psid, message, { token: env.META_PAGE_ACCESS_TOKEN, fetchImpl: deps.fetchImpl });
+      const res = await sendMessage(psid, message, { token: env.META_PAGE_ACCESS_TOKEN, fetchImpl: deps.fetchImpl });
+      // C3-2: a reply Meta did not take (token revoked, window, timeout) was invisible. Meta's numbers only.
+      if (!res?.ok) logEvent("messenger_send_failed", { error: String(res?.error || "").slice(0, 60) });
     }
   }
 
@@ -509,6 +525,15 @@ export class MessengerConversation {
     return ai;
   }
 
+  // C4-2: the order may or may not exist by now (the upload keeps running). The customer is told an Admin will check
+  // and not to pay again; a bill sent again later meets the duplicate check in createOrder (no second order).
+  async billTimedOut(psid, state, T) {
+    logEvent("messenger_bill_timeout");
+    if (!T) return { ok: false, handled: true, replies: [billSlowReply(false)] };
+    const opened = await this.timed(() => this.deps.openTicket({ pageId: this.env.META_PAGE_ID, psid, reason: "support", summary: `Tạo đơn quá thời gian cho khóa ${state.course}; khách có thể đã chuyển khoản. Kiểm tra đơn và ảnh bill trong Hộp thư Trang.` })).catch(() => ({ ok: false }));
+    return { ok: false, handled: true, replies: [billSlowReply(Boolean(opened?.ok))] };
+  }
+
   async createOrder(psid, state, url, mid, courses = []) {
     // P0-1 layer (b), before anything is uploaded or created (also with tickets off): a course that already has an order
     // gets no second one; the Admin checks the bill instead. A failed read (or no Page ID) creates nothing either.
@@ -521,17 +546,24 @@ export class MessengerConversation {
     }
     let result;
     try {
-      const bill = await downloadBill(url, { fetchImpl: this.deps.fetchImpl });
-      if (bill.error === "download_failed") return { ok: false, handled: true, replies: [orderSystemFailedReply()] }; // Meta CDN, not the customer's image
-      if (!bill.ok) return { ok: false, error: bill.error };
-      result = await this.deps.createBillOrder({
-        gmail: state.gmail,
-        course: state.course,
-        billName: `messenger-${mid}`.slice(0, 120),
-        billType: bill.type,
-        billData: Buffer.from(bill.bytes).toString("base64")
-      }, { rawExtra: { channel: "facebook", psid, ...(String(this.env.META_PAGE_ID || "").trim() ? { pageId: String(this.env.META_PAGE_ID).trim() } : {}), ...(state.ref && refCourse(state.ref, { courses })?.slug === state.course ? { ref: state.ref } : {}) } });
-    } catch {
+      // C4-2: the image upload and the DB writes have no timeout of their own. A hang used to leave a customer who
+      // may already have paid with no answer, no ticket and no log.
+      const done = await this.timed(async () => {
+        const bill = await downloadBill(url, { fetchImpl: this.deps.fetchImpl });
+        if (bill.error === "download_failed") return { early: { ok: false, handled: true, replies: [orderSystemFailedReply()] } }; // Meta CDN, not the customer's image
+        if (!bill.ok) return { early: { ok: false, error: bill.error } };
+        return { result: await this.deps.createBillOrder({
+          gmail: state.gmail,
+          course: state.course,
+          billName: `messenger-${mid}`.slice(0, 120),
+          billType: bill.type,
+          billData: Buffer.from(bill.bytes).toString("base64")
+        }, { rawExtra: { channel: "facebook", psid, ...(String(this.env.META_PAGE_ID || "").trim() ? { pageId: String(this.env.META_PAGE_ID).trim() } : {}), ...(state.ref && refCourse(state.ref, { courses })?.slug === state.course ? { ref: state.ref } : {}) } }) };
+      }, this.deps.billMs ?? BILL_TIMEOUT_MS);
+      if (done.early) return done.early;
+      result = done.result;
+    } catch (err) {
+      if (err?.timedOut) return this.billTimedOut(psid, state, T);
       return { ok: false, handled: true, replies: [orderSystemFailedReply()] }; // the caller releases creatingAt; the draft stays for a retry
     }
     if (result.status === 200 && result.body?.orderId) return { ok: true, orderId: result.body.orderId };

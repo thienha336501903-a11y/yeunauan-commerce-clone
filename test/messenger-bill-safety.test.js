@@ -335,3 +335,95 @@ test("BILL-28 sticker while the Admin question is open repeats its way out; firs
   await send(first, { text: "👋" });
   assert.match(first.sent[0].text, /^Chào bạn/);
 });
+
+// G-LIVE-prep (C4-2, C1-3, C3-2): a hang or a DB error never leaves the customer with silence, and failures leave a log line.
+const quiet = async (fn) => {
+  const lines = [];
+  const original = console.error;
+  console.error = (line) => lines.push(String(line));
+  try { await fn(); } finally { console.error = original; }
+  return lines;
+};
+
+test("PREP-1 a bill upload that hangs: the customer is told, a ticket is opened, no second payment is asked, the draft stays", async () => {
+  const w = world({ deps: { billMs: 30, createBillOrder: () => new Promise(() => {}) } });
+  const lines = await quiet(() => send(w, { attachments: [image] }));
+  assert.match(texts(w), /hệ thống đang xử lý chậm[\s\S]*chuyển Admin kiểm tra[\s\S]*chưa cần chuyển khoản lại/);
+  assert.doesNotMatch(texts(w), /gửi lại ảnh/);
+  assert.equal(w.tickets.length, 1);
+  assert.match(w.tickets[0].summary, /^Tạo đơn quá thời gian cho khóa b;/);
+  assert.equal(w.state().course, "b");
+  assert.equal((w.state().orders || []).length, 0);
+  assert.equal(w.store.get("s").creatingAt, 0, "the lock is released for a retry");
+  assert.deepEqual(lines, ['{"evt":"messenger_bill_timeout"}']);
+});
+
+test("PREP-2 a hang with a ticket that cannot be opened, or with tickets off, still answers honestly", async () => {
+  const noTicket = world({ deps: { billMs: 30, lookupMs: 30, createBillOrder: () => new Promise(() => {}), openTicket: () => new Promise(() => {}) } });
+  await quiet(() => send(noTicket, { attachments: [image] }));
+  assert.match(texts(noTicket), /xử lý chậm[\s\S]*nhắn "gặp người"[\s\S]*chưa cần chuyển khoản lại/);
+  const off = world({ env: { MESSENGER_TICKETS_ENABLED: "0" }, deps: { billMs: 30, createBillOrder: () => new Promise(() => {}) } });
+  await quiet(() => send(off, { attachments: [image] }));
+  assert.match(texts(off), /xử lý chậm[\s\S]*chưa cần chuyển khoản lại/);
+  assert.equal(off.tickets.length, 0);
+});
+
+test("PREP-3 an upload that throws or finishes in time behaves as before", async () => {
+  const boom = world({ deps: { billMs: 500, createBillOrder: async () => { throw new Error("cloudinary"); } } });
+  await send(boom, { attachments: [image] });
+  assert.match(texts(boom), /Hệ thống chưa tạo được đơn/);
+  assert.equal(boom.tickets.length, 0);
+  const fine = world({ deps: { billMs: 500 } });
+  await send(fine, { attachments: [image] });
+  assert.equal(fine.created.length, 1);
+  assert.equal(fine.state().orders.length, 1);
+});
+
+test("PREP-4 the course list cannot be read (error or timeout): one busy message with the Admin button, no order, the draft stays", async () => {
+  for (const loadCourses of [async () => { throw new Error("db down"); }, () => new Promise(() => {})]) {
+    const w = world({ deps: { lookupMs: 30, loadCourses } });
+    const lines = await quiet(() => send(w, { attachments: [image] }));
+    assert.match(texts(w), /Hệ thống đang bận/);
+    assert.equal(w.created.length, 0);
+    assert.equal(w.tickets.length, 0);
+    assert.equal(w.state().course, "b");
+    assert.deepEqual(lines, ['{"evt":"messenger_courses_failed"}']);
+    w.sent.length = 0;
+    await quiet(() => send(w, { text: "alo" }));
+    assert.equal(w.sent.length, 0, "at most one busy message per 10 minutes");
+  }
+});
+
+test("PREP-5 the course list fails with tickets off: a busy answer instead of silence, state untouched", async () => {
+  const w = world({ env: { MESSENGER_TICKETS_ENABLED: "0" }, deps: { loadCourses: async () => { throw new Error("db down"); } } });
+  const before = structuredClone(w.store.get("s"));
+  await quiet(() => send(w, { text: "alo" }));
+  assert.match(texts(w), /Hệ thống đang bận/);
+  assert.deepEqual(w.store.get("s"), before);
+});
+
+test("PREP-6 a reply Meta refuses is logged with Meta's numbers only", async () => {
+  const w = world({ state: G(), deps: { fetchImpl: async () => new Response(JSON.stringify({ error: { code: 190, error_subcode: 460, message: "token SECRET-TEXT" } }), { status: 400 }) } });
+  const lines = await quiet(() => send(w, { text: "chào" }));
+  assert.ok(lines.length >= 1);
+  for (const line of lines) {
+    assert.deepEqual(Object.keys(JSON.parse(line)), ["evt", "error"]);
+    assert.equal(JSON.parse(line).evt, "messenger_send_failed");
+    assert.equal(JSON.parse(line).error, "graph_400_190_460");
+    assert.ok(!line.includes(PSID) && !line.includes("SECRET-TEXT"));
+  }
+});
+
+test("PREP-7 the webhook logs an event the Durable Object failed on, without the sender id", async () => {
+  const src = (await import("node:fs")).readFileSync(new URL("../cloudflare/commerce-worker/src/messenger.js", import.meta.url), "utf8");
+  assert.doesNotMatch(src, /work\.catch\(\(\) => \{\}\)/);
+  assert.match(src, /ctx\.waitUntil\(work\.then\([\s\S]{0,160}logEvent\("messenger_event_failed"/);
+  assert.doesNotMatch(src, /logEvent\([^)]*psid/i);
+  assert.match(src, /const BILL_TIMEOUT_MS = 20000;/);
+});
+
+test("PREP-8 orders.html tells the Admin the working way to change the Gmail of an approved V5 order", async () => {
+  const html = (await import("node:fs")).readFileSync(new URL("../orders.html", import.meta.url), "utf8");
+  assert.match(html, /Muốn đổi Gmail: chuyển đơn về "Chờ duyệt" \(thu hồi quyền học\), rồi bấm duyệt lại và sửa Gmail trong hộp xác nhận\. Không đổi Gmail khoá V5 bên LMS Admin\./);
+  assert.doesNotMatch(html, /cấp lại riêng bên LMS Admin/);
+});

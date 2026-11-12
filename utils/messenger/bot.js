@@ -620,6 +620,8 @@ export const orderFailedReply = () => text("Mình chưa ghi nhận được bill
 // Gate 1: failures that are not about the image must not ask for another image.
 export const orderSystemFailedReply = () => text("Hệ thống chưa tạo được đơn. Bạn thử gửi lại ảnh bill sau ít phút, hoặc nhắn \"gặp người\" để Admin hỗ trợ.");
 export const billRefusedReply = (ticketOpened) => text(`Mình đã nhận ảnh bill, nhưng khóa này hiện chưa nhận đăng ký nên chưa tạo được đơn. ${ticketOpened ? "Mình đã chuyển Admin kiểm tra giúp bạn." : "Bạn nhắn \"gặp người\" để Admin kiểm tra giúp nhé."} Bạn chưa cần chuyển khoản thêm.`);
+// C4-2: the order could not be confirmed in time; it may still appear. Never ask for a second payment.
+export const billSlowReply = (ticketOpened) => text(`Mình đã nhận ảnh bill nhưng hệ thống đang xử lý chậm nên chưa xác nhận được đơn. ${ticketOpened ? "Mình đã chuyển Admin kiểm tra giúp bạn." : "Bạn nhắn \"gặp người\" để Admin kiểm tra giúp nhé."} Bạn chưa cần chuyển khoản lại.`);
 export const extraImageReply = () => text("Mình đã nhận thêm ảnh của bạn và chuyển Admin kiểm tra.");
 export const approvedMessage = ({ courseTitle, gmail, lmsUrl }) =>
   `Đơn khoá "${courseTitle}" đã được duyệt. Bạn vào ${lmsUrl.replace(/\/$/, "")}/my-courses.html, đăng nhập Google bằng ${gmail} để học nhé.`;
