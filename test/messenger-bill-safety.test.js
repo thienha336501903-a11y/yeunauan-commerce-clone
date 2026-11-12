@@ -354,7 +354,7 @@ test("PREP-1 a bill upload that hangs: the customer is told, a ticket is opened,
   assert.match(w.tickets[0].summary, /^Tạo đơn quá thời gian cho khóa b;/);
   assert.equal(w.state().course, "b");
   assert.equal((w.state().orders || []).length, 0);
-  assert.equal(w.store.get("s").creatingAt, 0, "the lock is released for a retry");
+  assert.ok(w.store.get("s").creatingAt > 0, "the lock stays: the upload may still insert the order");
   assert.deepEqual(lines, ['{"evt":"messenger_bill_timeout"}']);
 });
 
@@ -419,11 +419,45 @@ test("PREP-7 the webhook logs an event the Durable Object failed on, without the
   assert.doesNotMatch(src, /work\.catch\(\(\) => \{\}\)/);
   assert.match(src, /ctx\.waitUntil\(work\.then\([\s\S]{0,160}logEvent\("messenger_event_failed"/);
   assert.doesNotMatch(src, /logEvent\([^)]*psid/i);
-  assert.match(src, /const BILL_TIMEOUT_MS = 20000;/);
+  assert.match(src, /const BILL_TIMEOUT_MS = 15000;/);
 });
 
 test("PREP-8 orders.html tells the Admin the working way to change the Gmail of an approved V5 order", async () => {
   const html = (await import("node:fs")).readFileSync(new URL("../orders.html", import.meta.url), "utf8");
+  assert.ok(/toLowerCase\(\) === 'v5'\s*\? 'ℹ️ Đơn đã duyệt\. Muốn đổi Gmail: chuyển đơn về/.test(html), "only V5 orders get the V5 instruction");
+  assert.ok(/: 'ℹ️ Đơn đã duyệt\. Muốn đổi Gmail cần dùng chức năng cấp lại riêng bên LMS Admin\.'\}/.test(html), "other delivery modes keep the old instruction");
   assert.match(html, /Muốn đổi Gmail: chuyển đơn về "Chờ duyệt" \(thu hồi quyền học\), rồi bấm duyệt lại và sửa Gmail trong hộp xác nhận\. Không đổi Gmail khoá V5 bên LMS Admin\./);
-  assert.doesNotMatch(html, /cấp lại riêng bên LMS Admin/);
+});
+
+test("PREP-9 the upload finishes after the timeout while the customer sends the bill again: one order attempt only", async () => {
+  let finish;
+  const w = world({ deps: { billMs: 30, createBillOrder: (x) => { w.created.push(x); return new Promise((resolve) => { finish = resolve; }); } } });
+  await quiet(() => send(w, { attachments: [image] }));
+  w.sent.length = 0;
+  await quiet(() => send(w, { attachments: [image] }));
+  assert.equal(w.created.length, 1, "the second image starts no second upload");
+  assert.match(texts(w), /Mình đang xử lý bill bạn vừa gửi/);
+  finish({ status: 200, body: { orderId: "late" } });
+});
+
+test("PREP-10 the webhook answers 200 and logs when the Durable Object rejects or answers not-ok", async () => {
+  const { messengerWebhook } = await import("../cloudflare/commerce-worker/src/messenger.js");
+  const { createHmac } = await import("node:crypto");
+  const body = JSON.stringify({ object: "page", entry: [{ id: PAGE, messaging: [{ sender: { id: PSID }, recipient: { id: PAGE }, timestamp: 1, message: { mid: "w1", text: "hi" } }] }] });
+  const request = () => new Request("https://yeubep.shop/api/messenger-webhook", { method: "POST", body, headers: { "x-hub-signature-256": "sha256=" + createHmac("sha256", "s").update(body).digest("hex") } });
+  for (const [stubFetch, want] of [
+    [async () => { throw new TypeError("do broke"); }, { evt: "messenger_event_failed", error: "TypeError" }],
+    [async () => new Response("no", { status: 500 }), { evt: "messenger_event_failed", status: 500 }],
+  ]) {
+    const waits = [];
+    const env = { META_APP_SECRET: "s", MESSENGER_BOT_ENABLED: "1", META_PAGE_ID: PAGE, MESSENGER_CONVERSATIONS: { idFromName: (name) => name, get: () => ({ fetch: stubFetch }) } };
+    let status;
+    const lines = await quiet(async () => {
+      status = (await messengerWebhook(request(), env, { waitUntil: (p) => waits.push(p) })).status;
+      await Promise.all(waits);
+    });
+    assert.equal(status, 200);
+    assert.deepEqual(lines.map((line) => JSON.parse(line)), [want]);
+    assert.ok(!lines.join("").includes(PSID));
+  }
 });

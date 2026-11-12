@@ -14,8 +14,9 @@ import { downloadBill, sendMessage, sendTyping, verifySignature } from "../../..
 const MAX_WEBHOOK_BYTES = 256 * 1024;
 const SEEN_MIDS = 200;
 const RATE_PER_MINUTE = 20;
-// C4-2: download (15 s of its own) + upload + order insert. Under the ~30 s the webhook's waitUntil is given.
-const BILL_TIMEOUT_MS = 20000;
+// C4-2: one limit for download + upload + order insert. The lookups before it (up to 5 s each), the ticket (5 s) and
+// the reply (8 s) come on top, so this stays well under the ~30 s the webhook's waitUntil is given in the usual case.
+const BILL_TIMEOUT_MS = 15000;
 // C3-2: one JSON line per failure for `wrangler tail`. Fixed event names and Meta's numbers only: never a PSID, a Gmail or message text.
 const logEvent = (evt, extra = {}) => console.error(JSON.stringify({ evt, ...extra }));
 const enabled = (env) => String(env.MESSENGER_BOT_ENABLED || "").trim() === "1";
@@ -429,7 +430,9 @@ export class MessengerConversation {
       const result = await this.createOrder(psid, out.state, out.action.url, mid, courses);
       // Re-read: events handled during the upload (e.g. "gặp người") must not be lost.
       const latest = (await this.storage.get("s")) || saved;
-      latest.creatingAt = 0;
+      // After a timeout the upload may still finish and insert the order: the lock stays (it expires 120 s after it
+      // was set), so an image sent again meanwhile cannot start a second order.
+      if (!result.keepLock) latest.creatingAt = 0;
       if (result.ok) {
         const slug = out.state.course;
         let next = addOrder(normalizeState(latest.state), result.orderId, slug);
@@ -529,9 +532,9 @@ export class MessengerConversation {
   // and not to pay again; a bill sent again later meets the duplicate check in createOrder (no second order).
   async billTimedOut(psid, state, T) {
     logEvent("messenger_bill_timeout");
-    if (!T) return { ok: false, handled: true, replies: [billSlowReply(false)] };
+    if (!T) return { ok: false, handled: true, keepLock: true, replies: [billSlowReply(false)] };
     const opened = await this.timed(() => this.deps.openTicket({ pageId: this.env.META_PAGE_ID, psid, reason: "support", summary: `Tạo đơn quá thời gian cho khóa ${state.course}; khách có thể đã chuyển khoản. Kiểm tra đơn và ảnh bill trong Hộp thư Trang.` })).catch(() => ({ ok: false }));
-    return { ok: false, handled: true, replies: [billSlowReply(Boolean(opened?.ok))] };
+    return { ok: false, handled: true, keepLock: true, replies: [billSlowReply(Boolean(opened?.ok))] };
   }
 
   async createOrder(psid, state, url, mid, courses = []) {
