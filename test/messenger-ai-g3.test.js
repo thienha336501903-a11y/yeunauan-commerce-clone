@@ -12,7 +12,8 @@ const A = course("a", "1.000.000đ"), B = course("b", "500.000đ"), C = course("
 const ctx = (extra = {}) => ({ now: NOW, courses: [A, B, C], ticketsEnabled: true, faq: [], activeTicket: null, aiEnabled: true, ...extra });
 const G = (extra = {}) => ({ ...emptyState(), greeted: true, lastInboundAt: NOW - 1000, ...extra });
 const ai = (route, intent = "other", answer = null, course_slug = null) => ({ route, intent, answer, course_slug, sources: [] });
-const payloads = (r) => (r.quick_replies || []).map((q) => q.payload);
+const payloads = (m) => [...(m.attachment?.payload?.buttons || []), ...(m.quick_replies || [])].map((q) => q.payload);
+const textOf = (m) => m.text ?? m.attachment?.payload?.text;
 const OFFER = /muốn Admin hỗ trợ thêm/;
 
 test("G3-1 offer_admin asks first: no ticket, the customer decides", () => {

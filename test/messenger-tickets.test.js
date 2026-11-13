@@ -9,6 +9,7 @@ import { createHandler } from "../cloudflare/commerce-worker/src/messenger-ticke
 import { runCompatHandler } from "../cloudflare/commerce-worker/src/http-compat.js";
 import worker from "../cloudflare/commerce-worker/src/index.js";
 
+const textOf = (m) => m.text ?? m.attachment?.payload?.text;
 const PSID = "1234567890123";
 const PAGE = "555";
 const COURSES = [{ slug: "khoa-test", title: "Khoá TEST", price: "100.000đ", bankName: "VCB", bankAccount: "0123", bankOwner: "A", transferNote: "TEST", qrImageUrl: "" }];
@@ -17,6 +18,7 @@ const FAQ = [
   { id: "faq-video", question: "Video không chạy?", keywords: ["video"], answer: "Mở bằng Chrome.", status: "draft" },
   { id: "faq-refund", question: "Hoàn tiền?", keywords: ["hoan tien"], answer: "", status: "approved" }
 ];
+const optionsOf = (m) => [...(m.attachment?.payload?.buttons || []), ...(m.quick_replies || [])].map((q) => q.payload);
 const UUID = "123e4567-e89b-42d3-a456-426614174000";
 
 // In-memory stand-in for the supabase query builder, enough for tickets.js. Mimics the partial unique index (23505).
@@ -95,9 +97,9 @@ const MENU_PAYLOADS = ["BUY", "LIST", "ADMIN"];
 
 test("flag on: GET_STARTED and unclear text show the 4-button menu; second miss opens an 'unclear' ticket", () => {
   let out = step(emptyState(), { kind: "postback", payload: "GET_STARTED" }, tctx());
-  assert.deepEqual(out.replies.at(-1).quick_replies.map((q) => q.payload), MENU_PAYLOADS);
+  assert.deepEqual(optionsOf(out.replies.at(-1)), MENU_PAYLOADS);
   out = step(emptyState(), { kind: "text", text: "asdf qwer" }, tctx());
-  assert.deepEqual(out.replies.at(-1).quick_replies.map((q) => q.payload), MENU_PAYLOADS);
+  assert.deepEqual(optionsOf(out.replies.at(-1)), MENU_PAYLOADS);
   assert.equal(out.state.misses, 1);
   assert.equal(out.action, undefined);
   out = step(out.state, { kind: "text", text: "zzz" }, tctx());
@@ -112,8 +114,8 @@ test("flag on: greetings show the menu and never count as a miss; real misses st
     const out = step({ ...emptyState(), greeted: true, misses: 1 }, { kind: "text", text: t }, tctx());
     assert.equal(out.action, undefined, t);
     assert.equal(out.state.misses, 0, t);
-    assert.deepEqual(out.replies.at(-1).quick_replies.map((q) => q.payload), MENU_PAYLOADS, t);
-    assert.doesNotMatch(out.replies.at(-1).text, /chưa hiểu/, t);
+    assert.deepEqual(optionsOf(out.replies.at(-1)), MENU_PAYLOADS, t);
+    assert.doesNotMatch(textOf(out.replies.at(-1)), /chưa hiểu/, t);
   }
   let out = step(emptyState(), { kind: "text", text: "hi" }, tctx());
   assert.match(out.replies[0].text, /trợ lý tự động/, "first greeting still says automated");
@@ -205,7 +207,7 @@ test("DO: 'gặp admin' writes one ticket and says so; 10 spams still one ticket
   db.rows[0].status = "done";
   await convo.handle(PSID, msg("m20", { text: "hi" }));
   assert.ok(sent.length > before, "bot answers again once the ticket is done");
-  assert.ok(sent.at(-1).quick_replies.some((q) => q.payload === "ADMIN"));
+  assert.ok(optionsOf(sent.at(-1)).includes("ADMIN"));
 });
 
 test("DO: a first message that opens a ticket still starts with the automated-assistant greeting", async () => {

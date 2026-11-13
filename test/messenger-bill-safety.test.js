@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { MessengerConversation, toEvent } from "../cloudflare/commerce-worker/src/messenger.js";
 import { emptyState } from "../utils/messenger/bot.js";
 
+const textOf = (m) => m.text ?? m.attachment?.payload?.text;
 const PSID = "1234567890123";
 const PAGE = "555";
 const NOW = Date.UTC(2026, 10, 11, 5);
@@ -98,7 +99,7 @@ test("BILL-7 voice with no draft answers with the menu; open ticket stays silent
   const none = world({ state: G() });
   await send(none, { attachments: [att("audio")] });
   assert.equal(none.sent.length, 1);
-  assert.match(none.sent[0].text, /chưa đọc được loại tin này/);
+  assert.match(textOf(none.sent[0]), /chưa đọc được loại tin này/);
 
   const ticket = world({ deps: { activeTicket: async () => ({ id: "t" }) } });
   await send(ticket, { attachments: [att("audio")] });

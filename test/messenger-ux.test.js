@@ -18,7 +18,8 @@ const ctx = (extra = {}) => ({ now: 1_000_000, courses: COURSES, ticketsEnabled:
 const txt = (text, payload) => ({ kind: "text", text, ...(payload ? { payload } : {}) });
 const pb = (payload) => ({ kind: "postback", payload });
 const G = { ...emptyState(), greeted: true };
-const payloads = (m) => (m.quick_replies || []).map((q) => q.payload);
+const payloads = (m) => [...(m.attachment?.payload?.buttons || []), ...(m.quick_replies || [])].map((q) => q.payload);
+const textOf = (m) => m.text ?? m.attachment?.payload?.text;
 const elements = (m) => m.attachment.payload.elements;
 const manyCourses = (n) => Array.from({ length: n }, (_, i) => ({ ...A, slug: `c${i}`, title: `Khóa số ${i}` }));
 const show = { pendingMenu: "show", pendingSlugs: new Set(), doOrderIds: [] };
@@ -97,7 +98,12 @@ function checkLimits(m) {
     assert.ok(m.quick_replies.length <= 13, "quick replies <= 13");
     for (const q of m.quick_replies) if (q.content_type === "text") assert.ok(q.title.length <= 20, q.title);
   }
-  if (m.attachment) {
+  if (m.attachment?.payload?.template_type === "button") {
+    const { text, buttons } = m.attachment.payload;
+    assert.ok(buttons.length >= 1 && buttons.length <= 3, "button template: 1-3 buttons");
+    assert.ok(text.length <= 640, "button template text <= 640");
+    for (const b of buttons) assert.ok(b.type === "postback" && b.title.length <= 20, b.title);
+  } else if (m.attachment) {
     const els = elements(m);
     assert.ok(els.length <= 10, "elements <= 10");
     for (const e of els) {
@@ -186,7 +192,7 @@ test("UX-07 CANCEL_DRAFT clears the draft, keeps orders, writes nothing to the D
   const orders = [{ id: "oA", slug: "khoa-a" }];
   await h.seed({ orders, orderId: "oA", course: "khoa_b", gmail: "b@gmail.com", gmailOk: true, pendingAdmin: "support", ref: "c__khoa_b" });
   const m = lastOf(await h.press("CANCEL_DRAFT"));
-  assert.match(m.text, /^Đã hủy đăng ký dở\. /);
+  assert.match(textOf(m), /^Đã hủy đăng ký dở\. /);
   const s = await h.state();
   assert.deepEqual([s.course, s.gmail, s.gmailOk, s.pendingAdmin, s.ref], [null, null, false, null, null]);
   assert.deepEqual(s.orders, orders);
@@ -200,7 +206,7 @@ test("UX-08 draft B: first stray text repeats Gmail with exit buttons, second ru
   assert.deepEqual(one.replies[0].quick_replies.map((q) => q.payload ?? q.content_type), ["user_email", "CHANGE_COURSE", "CANCEL_DRAFT", "ADMIN"]); // U9 adds "Đổi khóa học"
   assert.equal(one.state.draftMisses, 1);
   const two = step(one.state, txt("blah blah"), ctx());
-  assert.match(two.replies[0].text, /^Mình chưa hiểu ý bạn\./);
+  assert.match(textOf(two.replies[0]), /^Mình chưa hiểu ý bạn\./);
   assert.equal(two.state.course, "khoa_b");
   assert.equal(step(one.state, txt("a@gmail.com"), ctx()).state.draftMisses, 0, "valid e-mail resets");
   assert.equal(step(one.state, pb("ADMIN"), ctx()).state.draftMisses, 0, "any button resets");

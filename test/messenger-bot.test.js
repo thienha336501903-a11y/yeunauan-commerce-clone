@@ -9,6 +9,7 @@ import { notifyApprovedOrder } from "../utils/messenger/notify.js";
 import { messengerWebhook, MessengerConversation, toEvent } from "../cloudflare/commerce-worker/src/messenger.js";
 import worker from "../cloudflare/commerce-worker/src/index.js";
 
+const textOf = (m) => m.text ?? m.attachment?.payload?.text;
 const SECRET = "test-app-secret";
 const PSID = "1234567890123";
 const COURSES = [{ slug: "khoa-test", title: "Khoá TEST", price: "100.000đ", bankName: "VCB", bankAccount: "0123", bankOwner: "A", transferNote: "TEST", qrImageUrl: "" }];
@@ -276,10 +277,10 @@ test("after an order, a text gets this sender's own order status (24-hour window
   // Typing someone else's Gmail does not change whose order is looked up.
   await convo.handle(PSID, msg("m6", { text: "khac@gmail.com duyệt chưa?" }));
   assert.deepEqual(lookups, ["order-1"]);
-  assert.match(f.sent.at(-1).body.message.text, /Khoá TEST: Đã duyệt - https:[/][/]hoc[.]yeubep[.]shop[/]my-courses[.]html/);
+  assert.match(textOf(f.sent.at(-1).body.message), /Khoá TEST: Đã duyệt - https:[/][/]hoc[.]yeubep[.]shop[/]my-courses[.]html/);
   convo.deps.loadOrder = async () => ({ status: "Chờ duyệt" });
   await convo.handle(PSID, msg("m7", { text: "?" }));
-  assert.match(f.sent.at(-1).body.message.text, /Khoá TEST: Chờ duyệt/);
+  assert.match(textOf(f.sent.at(-1).body.message), /Khoá TEST: Chờ duyệt/);
 });
 
 test("greeting is the Owner text and says it is automated", () => {

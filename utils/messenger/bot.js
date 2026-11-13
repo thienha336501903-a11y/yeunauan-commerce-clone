@@ -737,12 +737,23 @@ function courseList({ page, intro = "", exclude = [], other = false }, view, ctx
   return [...(lead ? [text(lead)] : []), { attachment: { type: "template", payload: { template_type: "generic", elements } }, quick_replies: quick }];
 }
 
+// Main menu as a button template: phones show quick replies as one row to swipe, template buttons stack vertically.
+// Meta allows 3 buttons; a 4th and later option stays a quick reply. Postback payloads are handled like quick reply ones.
+export function menuMessage(t, options) {
+  const buttons = options.slice(0, 3).map(([title, payload]) => ({ type: "postback", title, payload }));
+  const msg = { attachment: { type: "template", payload: { template_type: "button", text: cut(t, 640), buttons } } };
+  return options.length > 3 ? { ...msg, quick_replies: quickOf(options.slice(3)) } : msg;
+}
+
 // view = { pendingMenu: "show" | "hide" | "unknown", pendingSlugs: Set, doOrderIds: [id] }
 export function renderReplies(replies, view, ctx) {
   return replies.flatMap((r) => {
     if (r.menu) {
       const { intro, extra = [], ask = true, resume = false } = r.menu;
-      return [text(`${intro}${ask ? "Bạn cần mình giúp gì?" : ""}`, menuButtons(view.pendingMenu, (view.doOrderIds || []).length > 0, extra, resume))];
+      const options = menuButtons(view.pendingMenu, (view.doOrderIds || []).length > 0, extra, resume);
+      const t = `${intro}${ask ? "Bạn cần mình giúp gì?" : ""}`;
+      // A template text holds 640 characters (a long order summary does not): send the intro as plain text first.
+      return t.length <= 640 ? [menuMessage(t, options)] : [text(intro), menuMessage("Bạn cần mình giúp gì?", options)];
     }
     if (r.courses) return courseList(r.courses, view, ctx);
     return [r];

@@ -5,6 +5,7 @@ import { step, stepRaw, emptyState, aiReply, freeTextFallback, ordersOf } from "
 import { badAnswer, aiMessages, parseAiResult, redact, AI_DAILY_CAP, AI_ROUTES } from "../utils/messenger/ai.js";
 import { MessengerConversation } from "../cloudflare/commerce-worker/src/messenger.js";
 
+const textOf = (m) => m.text ?? m.attachment?.payload?.text;
 const PSID = "1234567890123";
 const COURSES = [{ slug: "khoa-test", title: "Khoá TEST", price: "100.000đ", subtitle: "Phụ đề", description: "<p>Mô tả</p>", featured: true, bankAccount: "9704-SECRET-ACC", bankName: "VCB", bankOwner: "A", transferNote: "N" }];
 const FAQ = [
@@ -169,7 +170,7 @@ test("AI-11 first message of a new customer on the AI path keeps the greeting", 
   const { c, sent } = convo({ deps: { runAi: async () => ({ route: "bot_answer", answer: "Mình là trợ lý tự động.", course_slug: null, sources: [] }) } });
   await c.handle(PSID, ev(UNCLEAR));
   assert.match(sent[0].text, /^Chào bạn/);
-  assert.match(sent[1].text, /Mình là trợ lý tự động/);
+  assert.match(textOf(sent[1]), /Mình là trợ lý tự động/);
   assert.equal(step(emptyState(), TXT("xin chào"), ctx()).action, undefined);
 });
 

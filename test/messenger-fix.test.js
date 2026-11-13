@@ -16,7 +16,8 @@ const B = { slug: "khoa_b", title: "Khóa B", price: "200.000đ", subtitle: "Ph�
 const COURSES = [B, A];
 const ctx = (extra = {}) => ({ now: T0, courses: COURSES, ticketsEnabled: true, faq: [], activeTicket: null, commerceUrl: "https://shop.example", ...extra });
 const G = { ...emptyState(), greeted: true };
-const payloads = (m) => (m.quick_replies || []).map((q) => q.payload);
+const payloads = (m) => [...(m.attachment?.payload?.buttons || []), ...(m.quick_replies || [])].map((q) => q.payload);
+const textOf = (m) => m.text ?? m.attachment?.payload?.text;
 const last = (msgs) => msgs.at(-1);
 const DUP_PENDING = "Bạn đã có đơn khóa này đang chờ Admin xác nhận.";
 const BUSY = "Hệ thống đang bận, bạn thử lại sau ít phút nhé.";
@@ -310,7 +311,7 @@ test("FIX-91 loadOrder that hangs past the timeout: busy message, no draft, the 
   const h = harness({ deps: { loadOrder: (id) => loadOrder(id, db, 30) } });
   await h.seed({ orders: [{ id: "oA", slug: "khoa-a" }], orderId: "oA" });
   const out = await h.press("BUY:khoa-a");
-  assert.equal(last(out).text, BUSY);
+  assert.equal(textOf(last(out)), BUSY);
   assert.equal((await h.state()).course, null);
 });
 

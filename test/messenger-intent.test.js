@@ -14,7 +14,8 @@ const G = () => ({ ...emptyState(), greeted: true, lastInboundAt: NOW - 1000 });
 const withOrder = () => ({ ...G(), orders: [{ id: "o1", slug: "stg-khoa-a" }] });
 const txt = (text) => ({ kind: "text", text });
 const qr = (payload) => ({ kind: "text", text: "Đúng", payload });
-const payloads = (r) => (r.quick_replies || []).map((q) => q.payload);
+const payloads = (m) => [...(m.attachment?.payload?.buttons || []), ...(m.quick_replies || [])].map((q) => q.payload);
+const textOf = (m) => m.text ?? m.attachment?.payload?.text;
 const NO_INFO = /chưa có đủ thông tin chi tiết về nội dung khóa STAGING Khóa B/;
 const EXACT = "STAGING Khóa B – Làm bánh";
 const noBuyFlow = (out, msg) => {

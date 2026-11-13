@@ -28,14 +28,15 @@ const settle = (out, c = ctx()) => {
   const r = openCourse(a.ref ? { ...out.state, ref: a.ref } : out.state, course, c);
   return { ...out, state: r.state, replies: [...out.replies, ...r.replies] };
 };
-const payloads = (r) => r.quick_replies.map((q) => q.payload);
+const payloads = (m) => [...(m.attachment?.payload?.buttons || []), ...(m.quick_replies || [])].map((q) => q.payload);
+const textOf = (m) => m.text ?? m.attachment?.payload?.text;
 
 // ---- 1-2 menu and greeting ----
 test("menu: exactly 3 buttons, exact titles and payloads, titles <= 20", () => {
   assert.deepEqual(MENU3, [["Đăng ký khóa học", "BUY"], ["Xem khóa đang mở bán", "LIST"], ["Chat với Admin", "ADMIN"]]);
   const out = step(G, txt("hi"), ctx());
   assert.deepEqual(payloads(out.replies.at(-1)), ["BUY", "LIST", "ADMIN"]);
-  assert.ok(out.replies.at(-1).quick_replies.every((q) => q.title.length <= 20));
+  assert.ok([...out.replies.at(-1).attachment.payload.buttons, ...(out.replies.at(-1).quick_replies || [])].every((q) => q.title.length <= 20));
 });
 
 test("menu: hi, menu, GET_STARTED, RESTART all show it; legacy payloads still work", () => {
@@ -54,7 +55,7 @@ test("menu: hi, menu, GET_STARTED, RESTART all show it; legacy payloads still wo
 test("greeting text is exact and comes first in a conversation", () => {
   const want = "Chào bạn! 👋 Mình là trợ lý tự động của Yêu học bánh. Bạn muốn đăng ký khóa học hay cần hỗ trợ gì ạ?";
   const out = step(emptyState(), pb("GET_STARTED"), ctx());
-  assert.equal(out.replies[0].text, want);
+  assert.equal(textOf(out.replies[0]), want);
   assert.equal(out.replies.length, 1);
   assert.equal(step(emptyState(), txt("menu"), ctx()).replies[0].text, want);
 });
@@ -292,11 +293,11 @@ test("free text with orders and no draft (tickets on, U6): reads the pending ord
   await buyFull(off.convo, "khoa_b", "b@gmail.com", "b");
   await off.convo.handle(PSID, msg("q1", { text: "sao rồi shop" }));
   const m = off.sent.at(-1);
-  assert.match(m.text, /Khóa A: Chờ duyệt\nKhóa B: Đã duyệt - https:\/\/hoc\.yeubep\.shop\/my-courses\.html/);
-  assert.deepEqual(m.quick_replies.map((q) => q.payload), ["BUY", "LIST", "ADMIN"]);
+  assert.match(textOf(m), /Khóa A: Chờ duyệt\nKhóa B: Đã duyệt - https:\/\/hoc\.yeubep\.shop\/my-courses\.html/);
+  assert.deepEqual(payloads(m), ["BUY", "LIST", "ADMIN"]);
   off.convo.deps.loadOrder = async () => null;
   await off.convo.handle(PSID, msg("q2", { text: "sao nữa shop" }));
-  assert.match(off.sent.at(-1).text, /Khóa A: chưa được duyệt/);
+  assert.match(textOf(off.sent.at(-1)), /Khóa A: chưa được duyệt/);
 });
 
 test("image with an incomplete draft reminds the missing step; with no draft it shows order status", async () => {
@@ -585,8 +586,8 @@ test("order lookup error is not 'not found': busy message, no draft opened", asy
   await buyFull(h.convo, "khoa-a", "a@gmail.com", "a");
   h.convo.deps.loadOrder = async () => { throw new Error("db down"); };
   await h.convo.handle(PSID, quick("b1", "x", "BUY:khoa-a"));
-  assert.equal(h.sent.at(-1).text, "Hệ thống đang bận, bạn thử lại sau ít phút nhé.");
-  assert.deepEqual(h.sent.at(-1).quick_replies.map((q) => q.payload), ["BUY", "LIST", "ADMIN"]);
+  assert.equal(textOf(h.sent.at(-1)), "Hệ thống đang bận, bạn thử lại sau ít phút nhé.");
+  assert.deepEqual(payloads(h.sent.at(-1)), ["BUY", "LIST", "ADMIN"]);
   assert.equal((await h.storage.get("s")).state.course, null);
 });
 
