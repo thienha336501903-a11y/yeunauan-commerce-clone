@@ -109,7 +109,8 @@ const text = (t, quick = []) => (quick.length
 
 // Main menu with tickets on (V2): three buttons, plus "Đơn chờ duyệt" for a customer with a pending order (U6b).
 export const MENU3 = [["Đăng ký khóa học", "BUY"], ["Xem khóa đang mở bán", "LIST"], ["Chat với Admin", "ADMIN"]];
-const PENDING_BTN = ["Đơn chờ duyệt", "PENDING_ORDERS"];
+// G-LIVE-ux (Owner 14/11): the button opens "Đơn của bạn" (pending and approved), so it is named for that.
+const PENDING_BTN = ["Đơn của tôi", "PENDING_ORDERS"];
 const DRAFT_BTNS = [["Tiếp tục đăng ký", "CONTINUE_DRAFT"], ["Hủy đăng ký", "CANCEL_DRAFT"]];
 // The one builder of the main menu (B6). pendingMenu: "show" | "hide" | "unknown" (DB error: show only if the DO already holds an order id, B5).
 export function menuButtons(pendingMenu, hasOrdersInDo, extra = []) {
@@ -790,7 +791,8 @@ export function myOrdersReplies(verified, unverified, lmsUrl) {
   const lms = String(lmsUrl || "").replace(/\/$/, "");
   const lines = verified.map((o) => (o.status === "Đã duyệt"
     ? `${o.title} — Đã duyệt: vào ${lms}/my-courses.html, đăng nhập Google bằng ${o.email}`
-    : `${o.title} — Chờ duyệt (gửi bill ${dmy(o.createdAt)})`));
+    // The customer's own order (PSID-scoped), so its Gmail can be shown: they can check what they typed (Owner 14/11).
+    : `${o.title} — Chờ duyệt (gửi bill ${dmy(o.createdAt)}${o.email ? `, Gmail ${o.email}` : ""})`));
   const parts = [["Đơn của bạn:"]];
   for (const line of lines) {
     const cur = parts.at(-1);

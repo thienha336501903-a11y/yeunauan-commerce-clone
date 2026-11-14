@@ -293,7 +293,7 @@ test("free text with orders and no draft (tickets on, U6): reads the pending ord
   // G-LIVE-ux F-A1: "sao rồi shop" no longer falls into a pending list; a question about the order does (T7).
   await h.convo.handle(PSID, msg("q1", { text: "đơn của mình sao rồi" }));
   assert.equal(h.sent.length, before + 1);
-  assert.equal(h.sent.at(-1).text, "Đơn của bạn:\nKhóa A — Chờ duyệt (gửi bill 09/11/2026)");
+  assert.equal(h.sent.at(-1).text, "Đơn của bạn:\nKhóa A — Chờ duyệt (gửi bill 09/11/2026, Gmail a@gmail.com)"); // G-LIVE-ux: Gmail shown on the customer's own pending order (Owner 14/11)
   const off = harness({ tickets: false, statuses: { o1: { status: "Chờ duyệt" }, o2: { status: "Đã duyệt" } } });
   await buyFull(off.convo, "khoa-a", "a@gmail.com", "a");
   await buyFull(off.convo, "khoa_b", "b@gmail.com", "b");

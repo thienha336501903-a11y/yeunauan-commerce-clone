@@ -792,7 +792,7 @@ test("E5 F-A1 'đơn của tôi' / learning trouble: T7 shows pending and approv
   w.db.push({ id: "o1", slug: "banh-mi", status: "Chờ duyệt", gmail: "a@gmail.com" }, { id: "o2", slug: "banh-kem", status: "Đã duyệt", gmail: "lan@gmail.com" });
   await txt(w, "đơn của tôi");
   const m = w.sent.at(-1);
-  assert.match(m.text, /^Đơn của bạn:\nBánh mì Việt Nam — Chờ duyệt \(gửi bill \d\d\/\d\d\/\d{4}\)\nBánh kem cơ bản — Đã duyệt: vào https:\/\/[^ ]+\/my-courses\.html, đăng nhập Google bằng lan@gmail\.com$/);
+  assert.match(m.text, /^Đơn của bạn:\nBánh mì Việt Nam — Chờ duyệt \(gửi bill \d\d\/\d\d\/\d{4}, Gmail a@gmail\.com\)\nBánh kem cơ bản — Đã duyệt: vào https:\/\/[^ ]+\/my-courses\.html, đăng nhập Google bằng lan@gmail\.com$/);
   assert.deepEqual(payloadsOf(m), ["ADMIN", "LIST_OTHER", "MENU"]);
   w.sent.length = 0;
   await txt(w, "em không vào học được");

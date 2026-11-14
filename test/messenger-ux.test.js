@@ -370,8 +370,8 @@ test("UX-22 createBillOrder gets rawExtra.pageId = META_PAGE_ID; the bill still 
   assert.deepEqual(noPage.orders[0].opts.rawExtra, { channel: "facebook", psid: PSID });
 });
 
-test("UX-23 menu: with 'Đơn chờ duyệt' 4 buttons in the right order, without 3 as before; titles <= 20", () => {
-  assert.deepEqual(menuButtons("show", false), [["Đăng ký khóa học", "BUY"], ["Xem khóa đang mở bán", "LIST"], ["Đơn chờ duyệt", "PENDING_ORDERS"], ["Chat với Admin", "ADMIN"]]);
+test("UX-23 menu: with 'Đơn của tôi' 4 buttons in the right order, without 3 as before; titles <= 20", () => {
+  assert.deepEqual(menuButtons("show", false), [["Đăng ký khóa học", "BUY"], ["Xem khóa đang mở bán", "LIST"], ["Đơn của tôi", "PENDING_ORDERS"], ["Chat với Admin", "ADMIN"]]);
   assert.deepEqual(menuButtons("hide", true), MENU3);
   assert.equal(MENU3.length, 3);
   for (const [t] of [...menuButtons("show", false), ...menuButtons("hide", false, [["Tiếp tục đăng ký", "CONTINUE_DRAFT"], ["Hủy đăng ký", "CANCEL_DRAFT"]])]) assert.ok(t.length <= 20, t);
@@ -574,14 +574,14 @@ test("UX-43 courses that cannot be sold never appear on any page", async () => {
   for (const bad of ["off", "tg", "paused", "noprice", "nobank", "inactive"]) assert.ok(!text.includes(`"BUY:${bad}"`), bad);
 });
 
-test("UX-44 course A with a pending order: card says so with 'Đơn chờ duyệt'; an old BUY:A button still says 'already ordered'", async () => {
+test("UX-44 course A with a pending order: card says so with 'Đơn của tôi'; an old BUY:A button still says 'already ordered'", async () => {
   const h = harness({ rows: [ord("oA", "khoa-a", { title: "Khóa A" })], statuses: { oA: { status: "Chờ duyệt" } } });
   await h.seed({ orders: [{ id: "oA", slug: "khoa-a" }] });
   const els = elements(lastOf(await h.press("LIST")));
   const a = els.find((e) => e.title === "Khóa A");
   const b = els.find((e) => e.title === "Khóa B");
   assert.equal(a.subtitle, "Bạn đã có đơn chờ duyệt");
-  assert.deepEqual(a.buttons.at(-1), { type: "postback", title: "Đơn chờ duyệt", payload: "PENDING_ORDERS" });
+  assert.deepEqual(a.buttons.at(-1), { type: "postback", title: "Đơn của tôi", payload: "PENDING_ORDERS" });
   assert.equal(b.buttons.at(-1).payload, "BUY:khoa_b");
   assert.equal(lastOf(await h.press("BUY:khoa-a")).text, "Bạn đã có đơn khóa này đang chờ Admin xác nhận.");
   assert.equal(h.orders.length, 0);
