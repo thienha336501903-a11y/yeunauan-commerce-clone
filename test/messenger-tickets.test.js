@@ -365,7 +365,8 @@ test("endpoint: active tickets carry the customer's Facebook name (server-side l
   const seen = [];
   const fetchImpl = async (url, init) => {
     seen.push({ url: String(url), auth: init?.headers?.Authorization });
-    return new Response(JSON.stringify({ first_name: "Phạm", last_name: "Hùng" }), { status: 200 });
+    // Shape Meta returned in Graph API Explorer (14/11): the Page is the other participant.
+    return new Response(JSON.stringify({ data: [{ participants: { data: [{ name: "Phạm Hùng", id: PSID }, { name: "Yêu học bánh", id: PAGE }] }, id: "t_1" }] }), { status: 200 });
   };
   try {
     process.env.META_PAGE_ACCESS_TOKEN = "tok";
@@ -377,7 +378,7 @@ test("endpoint: active tickets carry the customer's Facebook name (server-side l
     assert.equal(active.updated_at, "2026-11-14T00:05:00Z");
     assert.equal(done.name, undefined); // no lookup for closed tickets
     assert.equal(seen.length, 1);
-    assert.match(seen[0].url, /\/v\d+\.\d+\/\d+\?fields=first_name,last_name$/);
+    assert.match(seen[0].url, /\/v\d+\.\d+\/me\/conversations\?platform=messenger&user_id=\d+&fields=participants$/);
     assert.equal(seen[0].auth, "Bearer tok"); // token in the header, never the URL
     assert.ok(!JSON.stringify(ok.json).includes(PSID));
     for (const bad of [async () => new Response("{}", { status: 400 }), async () => { throw new Error("net"); }, async () => new Response("{}", { status: 200 })]) {
@@ -397,16 +398,19 @@ test("endpoint: active tickets carry the customer's Facebook name (server-side l
   }
 });
 
-test("fetchProfileName: odd PSID or no token makes no call; name is trimmed and capped", async () => {
+test("fetchProfileName: odd PSID or no token makes no call; only the participant with this PSID counts, never the Page; trimmed and capped", async () => {
   const { fetchProfileName } = await import("../utils/messenger/meta.js");
   let n = 0;
-  const f = async () => { n++; return new Response(JSON.stringify({ first_name: "  Lan ", last_name: "x".repeat(100) }), { status: 200 }); };
+  const conv = (people) => async () => { n++; return new Response(JSON.stringify({ data: [{ participants: { data: people } }] }), { status: 200 }); };
+  const f = conv([{ name: "Yêu học bánh", id: PAGE }, { name: "  Lan  " + "x".repeat(100), id: PSID }]);
   assert.equal(await fetchProfileName("abc", { token: "t", fetchImpl: f }), "");
   assert.equal(await fetchProfileName("1/../me", { token: "t", fetchImpl: f }), "");
   assert.equal(await fetchProfileName(PSID, { token: "", fetchImpl: f }), "");
   assert.equal(n, 0);
   const name = await fetchProfileName(PSID, { token: "t", fetchImpl: f });
   assert.ok(name.startsWith("Lan x") && name.length === 80);
+  assert.equal(await fetchProfileName(PSID, { token: "t", fetchImpl: conv([{ name: "Yêu học bánh", id: PAGE }]) }), ""); // Page only: no name
+  assert.equal(await fetchProfileName(PSID, { token: "t", fetchImpl: conv([{ name: "Người khác", id: "998877665544" }]) }), ""); // someone else's id
 });
 
 test("endpoint: at most 20 name lookups, newest tickets first; a hung Graph call times out to no name", async () => {
@@ -417,10 +421,10 @@ test("endpoint: at most 20 name lookups, newest tickets first; a hung Graph call
   const seen = [];
   try {
     process.env.META_PAGE_ACCESS_TOKEN = "tok";
-    const r = await call(createHandler(db, { fetchImpl: async (url) => { seen.push(String(url)); return new Response(JSON.stringify({ first_name: "A" }), { status: 200 }); } }), { password: "pw" });
+    const r = await call(createHandler(db, { fetchImpl: async (url) => { seen.push(String(url)); return new Response(JSON.stringify({ data: [] }), { status: 200 }); } }), { password: "pw" });
     assert.equal(r.status, 200);
     assert.equal(seen.length, 20);
-    assert.ok(!seen.some((u) => u.includes("/1000000?"))); // the oldest one is the one left out
+    assert.ok(!seen.some((u) => u.includes("user_id=1000000&"))); // the oldest one is the one left out
   } finally {
     delete process.env.META_PAGE_ACCESS_TOKEN;
     delete process.env.MESSENGER_TICKETS_ENABLED;

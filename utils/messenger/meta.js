@@ -42,14 +42,18 @@ export async function sendMessage(psid, message, { token, fetchImpl = fetch, tim
 }
 
 // Admin tickets (14/11): the customer's Facebook name, so the Admin can find the chat in the Page inbox (Meta has no deep link).
-// "" on any failure: no permission (Meta's Business Asset User Profile Access), phone-only account, private name, timeout.
+// Read from the conversation's participants: the User Profile API needs an extra Meta feature this app lacks (staging, 14/11),
+// while conversations answer with pages_messaging (Owner checked in Graph API Explorer). Only the participant whose id is
+// this PSID counts (the other participant is the Page). "" on any failure: no permission, no conversation, timeout.
 export async function fetchProfileName(psid, { token, fetchImpl = fetch, timeoutMs = 3000 } = {}) {
   if (!token || !/^\d{5,32}$/.test(String(psid || ""))) return "";
   try {
-    const res = await fetchImpl(`${GRAPH}/${psid}?fields=first_name,last_name`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(timeoutMs) });
+    const res = await fetchImpl(`${GRAPH}/me/conversations?platform=messenger&user_id=${psid}&fields=participants`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(timeoutMs) });
     if (!res.ok) return "";
     const body = await res.json().catch(() => ({}));
-    return [body?.first_name, body?.last_name].filter((v) => typeof v === "string" && v.trim()).join(" ").replace(/\s+/g, " ").trim().slice(0, 80);
+    const people = (Array.isArray(body?.data) ? body.data : []).flatMap((c) => (Array.isArray(c?.participants?.data) ? c.participants.data : []));
+    const name = people.find((p) => String(p?.id || "") === String(psid))?.name;
+    return typeof name === "string" ? name.replace(/\s+/g, " ").trim().slice(0, 80) : "";
   } catch {
     return "";
   }
