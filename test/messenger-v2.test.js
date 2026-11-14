@@ -67,22 +67,24 @@ test("Admin handover text is exact; ticket failure text kept", () => {
   assert.equal(off.replies[0].text, TICKET_OK_TEXT);
 });
 
-test("ADMIN: one message with 3 quick replies; back goes to the menu", () => {
+test("ADMIN: one step with 2 quick replies; back goes to the menu", () => {
+  // G-LIVE-ux F-A3: the two-way choice is gone; one question, then the next text or image is the request.
   const out = step(G, pb("ADMIN"), ctx());
-  assert.deepEqual(out.replies[0].quick_replies.map((q) => [q.title, q.payload]), [["Hỏi về khóa học khác", "ADMIN_COURSE"], ["Hỗ trợ vấn đề khác", "ADMIN_SUPPORT"], ["Quay lại menu", "MENU"]]);
+  assert.equal(out.replies[0].text, "Bạn mô tả ngắn việc cần Admin hỗ trợ nhé.");
+  assert.deepEqual(out.replies[0].quick_replies.map((q) => [q.title, q.payload]), [["Bỏ qua, gặp Admin", "ADMIN_SKIP"], ["Quay lại menu", "MENU"]]);
   assert.deepEqual(payloads(step(out.state, txt("Quay lại menu", "MENU"), ctx()).replies[0]), ["BUY", "LIST", "ADMIN"]);
 });
 
 test("ADMIN branches: ask one question, next text opens the right ticket with the text as summary", () => {
+  // G-LIVE-ux F-A3: ADMIN_COURSE / ADMIN_SUPPORT are aliases of the one-step flow (old buttons in chat history); the reason is always "support".
   let out = step(G, pb("ADMIN_COURSE"), ctx());
-  assert.equal(out.replies[0].text, "Bạn quan tâm khóa học nào?");
-  assert.deepEqual(out.replies[0].quick_replies.map((q) => [q.title, q.payload]), [["Bỏ qua, gặp Admin", "ADMIN_SKIP"]]);
-  assert.equal(out.state.pendingAdmin, "other_course");
+  assert.equal(out.replies[0].text, "Bạn mô tả ngắn việc cần Admin hỗ trợ nhé.");
+  assert.equal(out.state.pendingAdmin, "support");
   let t = step(out.state, txt("khóa làm bánh mì"), ctx());
-  assert.deepEqual(t.action, { type: "openTicket", reason: "other_course", summary: "khóa làm bánh mì" });
+  assert.deepEqual(t.action, { type: "openTicket", reason: "support", summary: "khóa làm bánh mì" });
   assert.equal(t.state.pendingAdmin, null);
   out = step(G, pb("ADMIN_SUPPORT"), ctx());
-  assert.equal(out.replies[0].text, "Bạn mô tả ngắn vấn đề giúp mình nhé.");
+  assert.equal(out.replies[0].text, "Bạn mô tả ngắn việc cần Admin hỗ trợ nhé.");
   t = step(out.state, txt("Bỏ qua, gặp Admin", "ADMIN_SKIP"), ctx());
   assert.deepEqual(t.action, { type: "openTicket", reason: "support", summary: "" });
   assert.equal(step(G, txt("cho mình gặp admin"), ctx()).action.reason, "human");
@@ -155,7 +157,7 @@ test("short flow: card, Gmail ask with user_email, confirm text, payment only af
   assert.equal(out.replies[0].attachment.payload.template_type, "generic");
   assert.deepEqual([card.title, card.subtitle, card.image_url], ["Khóa A", "Học phí: 100.000đ", "https://img.example/a.jpg"]);
   assert.deepEqual(card.buttons, [{ type: "postback", title: "Xem nội dung khóa", payload: "DETAIL:khoa-a" }, { type: "postback", title: "Đổi khóa học", payload: "CHANGE_COURSE" }]); // U9: label and payload
-  assert.equal(out.replies[1].text, "Bạn gửi Gmail dùng để học (đăng nhập Google trên trang học) nhé.");
+  assert.equal(out.replies[1].text, "Bạn gửi Gmail dùng để học (đăng nhập Google trên trang học), ví dụ ten@gmail.com nhé." /* G-LIVE-ux: T9 */);
   // U2: the Gmail ask also carries "Hủy đăng ký" and "Chat với Admin".
   assert.deepEqual(out.replies[1].quick_replies[0], { content_type: "user_email" });
   assert.deepEqual(payloads({ quick_replies: out.replies[1].quick_replies.slice(1) }), ["CHANGE_COURSE", "CANCEL_DRAFT", "ADMIN"]);
@@ -200,8 +202,9 @@ function harness({ statuses = {}, courses = COURSES, tickets = true, active = nu
     return res;
   };
   const storage = fakeStorage();
+  let clock = 1_000_000; // G-LIVE-ux: a moving clock (the handoff reset compares read time with confirm time)
   const convo = new MessengerConversation({ storage }, { META_PAGE_ACCESS_TOKEN: "t", META_APP_ID: "777", META_PAGE_ID: PAGE, ...(tickets ? { MESSENGER_TICKETS_ENABLED: "1" } : {}), ...env }, {
-    fetchImpl, now: () => 1_000_000, loadCourses: async () => courses, loadFaq: () => [],
+    fetchImpl, now: () => (clock += 1), loadCourses: async () => courses, loadFaq: () => [],
     activeTicket: async () => active, openTicket: async (a) => { opened.push(a); return { ok: true }; }, touchTicket: async () => {},
     loadOrder: async (id) => statuses[id] ?? null,
     loadPendingOrders: async () => [],
@@ -253,8 +256,8 @@ test("re-registering an approved course shows the approved notice; a rejected/un
 
 test("state with only orderId reads as one order; orders capped at 10 (oldest dropped)", () => {
   assert.deepEqual(ordersOf({ orderId: "x", course: "khoa-a" }), [{ id: "x", slug: "khoa-a" }]);
-  const out = step({ ...G, orderId: "x", course: "khoa-a", gmail: "a@gmail.com", gmailOk: true }, txt("sao rồi shop"), ctx());
-  assert.deepEqual(out.action, { type: "pendingOrders" }, "U6: tickets on reads the pending orders instead of listing every order");
+  const out = step({ ...G, orderId: "x", course: "khoa-a", gmail: "a@gmail.com", gmailOk: true }, txt("đơn của mình sao rồi"), ctx());
+  assert.deepEqual(out.action, { type: "myOrders" }, "G-LIVE-ux F-A1: tickets on reads pending + approved orders instead of listing every order");
   const off = step({ ...G, orderId: "x", course: "khoa-a", gmail: "a@gmail.com", gmailOk: true }, txt("sao rồi shop"), ctx({ ticketsEnabled: false }));
   assert.deepEqual(off.action, { type: "orderStatus", mode: "list", orders: [{ id: "x", slug: "khoa-a" }] }, "tickets off keeps the old list");
 });
@@ -283,11 +286,14 @@ test("free text with orders and no draft (tickets on, U6): reads the pending ord
   const h = harness({ statuses: { o1: { status: "Chờ duyệt" }, o2: { status: "Đã duyệt" } } });
   await buyFull(h.convo, "khoa-a", "a@gmail.com", "a");
   await buyFull(h.convo, "khoa_b", "b@gmail.com", "b");
-  h.convo.deps.loadPendingOrders = async () => [{ id: "o1", slug: "khoa-a", title: "Khóa A", createdAt: "2026-11-09T10:00:00Z", psid: PSID, pageId: PAGE }];
+  const row = { id: "o1", slug: "khoa-a", title: "Khóa A", status: "Chờ duyệt", email: "a@gmail.com", createdAt: "2026-11-09T10:00:00Z", psid: PSID, pageId: PAGE };
+  h.convo.deps.loadPendingOrders = async () => [row];
+  h.convo.deps.loadMyOrders = async () => [row];
   const before = h.sent.length;
-  await h.convo.handle(PSID, msg("q1", { text: "sao rồi shop" }));
+  // G-LIVE-ux F-A1: "sao rồi shop" no longer falls into a pending list; a question about the order does (T7).
+  await h.convo.handle(PSID, msg("q1", { text: "đơn của mình sao rồi" }));
   assert.equal(h.sent.length, before + 1);
-  assert.equal(h.sent.at(-1).text, "Đơn của tôi đang chờ duyệt\nKhóa A — gửi bill 09/11/2026");
+  assert.equal(h.sent.at(-1).text, "Đơn của bạn:\nKhóa A — Chờ duyệt (gửi bill 09/11/2026)");
   const off = harness({ tickets: false, statuses: { o1: { status: "Chờ duyệt" }, o2: { status: "Đã duyệt" } } });
   await buyFull(off.convo, "khoa-a", "a@gmail.com", "a");
   await buyFull(off.convo, "khoa_b", "b@gmail.com", "b");
@@ -305,7 +311,7 @@ test("image with an incomplete draft reminds the missing step; with no draft it 
   await h.convo.handle(PSID, quick("a1", "x", "BUY:khoa-a"));
   await h.convo.handle(PSID, image("a2"));
   assert.equal(h.orders.length, 0);
-  assert.equal(h.sent.at(-1).text, "Bạn gửi Gmail dùng để học (đăng nhập Google trên trang học) nhé.");
+  assert.equal(h.sent.at(-1).text, "Bạn gửi Gmail dùng để học (đăng nhập Google trên trang học), ví dụ ten@gmail.com nhé." /* G-LIVE-ux: T9 */);
   await h.convo.handle(PSID, msg("a3", { text: "a@gmail.com" }));
   await h.convo.handle(PSID, quick("a4", "Đúng", "GMAIL_OK"));
   await h.convo.handle(PSID, image("a5"));
@@ -326,9 +332,9 @@ test("duplicate mid creates no second order", async () => {
 
 test("a typed Gmail never changes whose order is looked up", async () => {
   const looked = [];
-  const h = harness({ extraDeps: { loadPendingOrders: async (a) => { looked.push(a); return []; } } });
+  const h = harness({ extraDeps: { loadMyOrders: async (a) => { looked.push(a); return []; } } }); // G-LIVE-ux F-A1: loadMyOrders
   await buyFull(h.convo, "khoa-a", "a@gmail.com", "a");
-  await h.convo.handle(PSID, msg("t1", { text: "kiểm tra khac@gmail.com giúp" }));
+  await h.convo.handle(PSID, msg("t1", { text: "kiểm tra đơn khac@gmail.com giúp" }));
   // U6: the lookup is keyed by PSID + Page ID only (was: the order ids of the conversation).
   assert.deepEqual(looked, [{ psid: PSID, pageId: PAGE }]);
 });
@@ -399,7 +405,7 @@ test("DO: pendingAdmin ticket carries the new reason and redacted summary; skip 
   const h = harness();
   await h.convo.handle(PSID, quick("p1", "Hỏi khác", "ADMIN_COURSE"));
   await h.convo.handle(PSID, msg("p2", { text: "khóa A, sdt 0912345678" }));
-  assert.deepEqual([h.opened[0].reason, h.opened[0].summary], ["other_course", "khóa A, sdt [số]"]);
+  assert.deepEqual([h.opened[0].reason, h.opened[0].summary], ["support", "khóa A, sdt [số]"]); // G-LIVE-ux F-A3: the reason is always support
   assert.equal(h.sent.at(-1).text, TICKET_OK_TEXT);
   await h.convo.handle(PSID, quick("p3", "Hỗ trợ", "ADMIN_SUPPORT"));
   await h.convo.handle(PSID, quick("p4", "Bỏ qua, gặp Admin", "ADMIN_SKIP"));
@@ -591,16 +597,16 @@ test("order lookup error is not 'not found': busy message, no draft opened", asy
   assert.equal((await h.storage.get("s")).state.course, null);
 });
 
-test("a stale pendingAdmin is dropped when the bill creates an order: next text opens no ticket", async () => {
+// G-LIVE-ux F-A3: an image after "Chat với Admin" is the request itself (it used to create the order and drop the Admin question).
+test("an image while the Admin question is open opens the ticket and creates no order", async () => {
   const h = harness();
   await h.convo.handle(PSID, quick("p0", "x", "BUY:khoa-a"));
   await h.convo.handle(PSID, msg("p1", { text: "a@gmail.com" }));
   await h.convo.handle(PSID, quick("p2", "Đúng", "GMAIL_OK"));
   await h.convo.handle(PSID, quick("p3", "Hỗ trợ", "ADMIN_SUPPORT"));
   await h.convo.handle(PSID, image("p4"));
-  assert.equal(h.orders.length, 1);
-  await h.convo.handle(PSID, msg("p5", { text: "cảm ơn shop" }));
-  assert.equal(h.opened.length, 0);
+  assert.equal(h.orders.length, 0);
+  assert.deepEqual([h.opened[0].reason, h.opened[0].summary], ["support", "Khách gửi ảnh, xem trong Hộp thư Trang."]);
 });
 
 test("offer: ticket status write fails after the send -> 200 { ok, sent, done: false }", async () => {

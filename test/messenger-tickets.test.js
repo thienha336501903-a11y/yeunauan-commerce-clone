@@ -95,7 +95,8 @@ test("setTicketStatus: only open->in_progress and open|in_progress->done, uuid r
 const tctx = (extra = {}) => ({ now: 1_000_000, courses: COURSES, ticketsEnabled: true, faq: FAQ, activeTicket: null, ...extra });
 const MENU_PAYLOADS = ["BUY", "LIST", "ADMIN"];
 
-test("flag on: GET_STARTED and unclear text show the 4-button menu; second miss opens an 'unclear' ticket", () => {
+// G-LIVE-ux F-A2: the second miss offers an Admin (a button), it never opens a ticket by itself.
+test("flag on: GET_STARTED and unclear text show the 4-button menu; second miss offers an Admin, no ticket", () => {
   let out = step(emptyState(), { kind: "postback", payload: "GET_STARTED" }, tctx());
   assert.deepEqual(optionsOf(out.replies.at(-1)), MENU_PAYLOADS);
   out = step(emptyState(), { kind: "text", text: "asdf qwer" }, tctx());
@@ -103,7 +104,8 @@ test("flag on: GET_STARTED and unclear text show the 4-button menu; second miss 
   assert.equal(out.state.misses, 1);
   assert.equal(out.action, undefined);
   out = step(out.state, { kind: "text", text: "zzz" }, tctx());
-  assert.deepEqual(out.action, { type: "openTicket", reason: "unclear" });
+  assert.equal(out.action, undefined);
+  assert.match(out.replies.at(-1).text, /Bạn có muốn Admin hỗ trợ thêm không\?/);
   out = step({ ...emptyState(), misses: 1 }, { kind: "text", text: "vào học ở đâu" }, tctx());
   assert.equal(out.state.misses, 0, "a match resets the counter");
   assert.match(out.replies.at(-1).text, /Vào trang học/);
@@ -121,14 +123,16 @@ test("flag on: greetings show the menu and never count as a miss; real misses st
   assert.match(out.replies[0].text, /trợ lý tự động/, "first greeting still says automated");
   out = step(out.state, { kind: "text", text: "hi" }, tctx());
   assert.equal(out.action, undefined, "two greetings open no ticket");
+  // G-LIVE-ux F-A5: "cho hỏi giá" is a price question (course list, no miss).
   for (const t of ["hi bạn ơi cho hỏi giá", "chào", "hiểu"]) {
     // only "chào" alone is a greeting; a question that starts with hi is not swallowed
     const r = step({ ...emptyState(), greeted: true }, { kind: "text", text: t }, tctx());
-    assert.equal(r.state.misses, t === "chào" ? 0 : 1, t);
+    assert.equal(r.state.misses, t === "hiểu" ? 1 : 0, t);
   }
   out = step({ ...emptyState(), greeted: true }, { kind: "text", text: "asdf" }, tctx());
   out = step(out.state, { kind: "text", text: "qwer" }, tctx());
-  assert.deepEqual(out.action, { type: "openTicket", reason: "unclear" });
+  assert.equal(out.action, undefined); // G-LIVE-ux F-A2: an offer, no ticket
+  assert.match(out.replies.at(-1).text, /Admin hỗ trợ thêm/);
 });
 
 test("'menu' shows the menu and keeps the order; 'Khoá khác' still starts over", () => {
@@ -140,8 +144,8 @@ test("'menu' shows the menu and keeps the order; 'Khoá khác' still starts over
     assert.equal(out.state.course, null, "legacy state: the draft was spent on the order");
     assert.ok(out.replies.at(-1).quick_replies?.length);
     out = step(out.state, { kind: "text", text: "đơn của tôi sao rồi" }, c);
-    // Tickets on (U6): free text with orders asks the DO for this sender's pending orders instead of listing all of them.
-    assert.deepEqual(out.action, c.ticketsEnabled ? { type: "pendingOrders" } : { type: "orderStatus", mode: "list", orders: [{ id: UUID, slug: "khoa-test" }] }, "order still found after menu");
+    // Tickets on (G-LIVE-ux F-A1): a question about the order asks the DO for this sender's pending + approved orders instead of listing all of them.
+    assert.deepEqual(out.action, c.ticketsEnabled ? { type: "myOrders" } : { type: "orderStatus", mode: "list", orders: [{ id: UUID, slug: "khoa-test" }] }, "order still found after menu");
     out = step(withOrder, { kind: "postback", payload: "RESTART" }, c);
     assert.equal(out.state.course, null, "RESTART clears the draft");
     assert.deepEqual(out.state.orders, [{ id: UUID, slug: "khoa-test" }], "RESTART keeps the orders");
@@ -160,7 +164,8 @@ test("flag on: FAQ draft is never sent, approved is; FAQ without answer goes to 
   out = step({ ...emptyState(), greeted: true }, { kind: "postback", payload: "MENU_FAQ" }, tctx());
   assert.deepEqual(out.replies[0].quick_replies.map((q) => q.payload), ["FAQ:faq-login", "FAQ:faq-refund"], "drafts are not listed");
   out = step({ ...emptyState(), greeted: true }, { kind: "text", text: "hoàn tiền" }, tctx());
-  assert.deepEqual(out.action, { type: "openTicket", reason: "unclear" }, "refund always goes to a person");
+  // G-LIVE-ux F-A9: "hoàn tiền" is a money incident: a support ticket whose summary is the customer's sentence.
+  assert.deepEqual(out.action, { type: "openTicket", reason: "support", summary: "hoàn tiền" }, "refund always goes to a person");
   out = step({ ...emptyState(), greeted: true }, { kind: "postback", payload: "MENU_BOUGHT" }, tctx({ faq: [] }));
   assert.deepEqual(out.action, { type: "openTicket", reason: "self_help" });
 });
@@ -186,9 +191,10 @@ const echo = (mid, appId) => ({ sender: { id: PAGE }, recipient: { id: PSID }, t
 
 function ticketConvo({ db = fakeDb(), env = {}, deps = {} } = {}) {
   const sent = [];
+  let clock = 1_000_000; // G-LIVE-ux: a moving clock (the handoff reset compares read time with confirm time)
   const fetchImpl = async (url, init) => { sent.push(JSON.parse(init.body).message); return new Response("{}", { status: 200 }); };
   const convo = new MessengerConversation({ storage: fakeStorage() }, { META_PAGE_ACCESS_TOKEN: "t", META_APP_ID: "777", META_PAGE_ID: PAGE, MESSENGER_TICKETS_ENABLED: "1", ...env }, {
-    fetchImpl, now: () => 1_000_000, loadCourses: async () => COURSES, loadFaq: () => FAQ.filter((f) => f.status === "approved"),
+    fetchImpl, now: () => (clock += 1), loadCourses: async () => COURSES, loadFaq: () => FAQ.filter((f) => f.status === "approved"),
     activeTicket: (a) => activeTicket(a, db), openTicket: (a) => openTicket(a, db), touchTicket: async () => {}, loadCourseOrders: async () => [], ...deps
   });
   return { convo, db, sent };
@@ -270,13 +276,14 @@ test("DO: Admin echo opens an in-progress admin_reply ticket without replying; t
   assert.equal(sent.length, 0, "bot silent while Admin handles it");
 });
 
-test("DO: unclear twice opens one 'unclear' ticket", async () => {
+// G-LIVE-ux F-A2: two misses offer an Admin and open no ticket.
+test("DO: unclear twice offers an Admin and opens no ticket", async () => {
   const { convo, db, sent } = ticketConvo();
   await convo.handle(PSID, msg("m1", { text: "asdf" }));
   assert.equal(db.rows.length, 0);
   await convo.handle(PSID, msg("m2", { text: "qwer" }));
-  assert.equal(db.rows[0].reason, "unclear");
-  assert.equal(sent.at(-1).text, TICKET_OK_TEXT);
+  assert.equal(db.rows.length, 0);
+  assert.match(sent.at(-1).text, /Admin hỗ trợ thêm/);
 });
 
 test("DO: sales flow still works with the flag on (course -> Gmail -> confirm -> bill -> order)", async () => {

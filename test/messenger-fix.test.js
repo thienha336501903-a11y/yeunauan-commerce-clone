@@ -78,6 +78,8 @@ function harness({ rows = [], courses = COURSES, statuses = {}, tickets = true, 
     activeTicket: async () => { if (h.activeFn) return h.activeFn(); return h.active; }, openTicket: async (a) => { opened.push(a); return { ok: true }; }, touchTicket: async () => {},
     loadOrder: async (id) => statuses[id] ?? null,
     loadPendingOrders: (a) => loadPendingOrders(a, db),
+    // G-LIVE-ux F-A1: the orders view reads through loadMyOrders (pending-only fake DB here).
+    loadMyOrders: async (a) => (await loadPendingOrders(a, db)).map((r) => ({ ...r, status: "Chờ duyệt", email: "" })),
     loadCourseOrders: (a) => loadCourseOrders(a, db),
     createBillOrder: async (input, opts) => { orders.push({ input, opts }); return { status: 200, body: { orderId: `new${orders.length}` } }; },
     ...deps

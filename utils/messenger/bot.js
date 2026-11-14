@@ -10,7 +10,40 @@ export const PAUSE_MS = 12 * 60 * 60 * 1000;
 const GREETING = "Chào bạn! 👋 Mình là trợ lý tự động của Yêu học bánh. Bạn muốn đăng ký khóa học hay cần hỗ trợ gì ạ?";
 const EMAIL = /[^\s@<>()[\]",;:]+@[^\s@<>()[\]",;:]+\.[a-z]{2,}/i;
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !/[^\x00-\x7F]/.test(email); // = website
-const HUMAN = /(gặp|nói chuyện|chat).{0,12}(người|admin|nhân viên)|tư vấn viên/i;
+// G-LIVE-ux F-A6: matched against clean(text), so "gap admin", "noi chuyen voi nguoi" work like the accented forms.
+// G-LIVE-ux F-A9: money trouble goes to an Admin at once. "em vua chuyen khoan roi" is not one.
+// "dư"/"thừa" are read on the accented text: stripped, "đủ" (enough) would look like "dư" (too much). Unaccented, only "thua tien" and "chuyen du <amount>" count.
+const INCIDENT = /\b(chuyen nham|nham tai khoan|nham stk|chuyen thieu|thieu tien|thua tien|chuyen thua|chuyen du(?= \d)|chuyen (2|hai) lan|chuyen trung|hoan tien|tra lai tien|giao dich (loi|that bai|khong thanh cong)|bi tru tien|sai noi dung)\b/;
+const INCIDENT_ACCENTED = /(chuyển dư|dư tiền|thừa tiền|chuyển thừa)/;
+const GMAIL_CHANGE_TEXT = /\b(doi gmail|doi email)\b/;
+// gmailChange: "đổi gmail" is an incident only at the bill step or for a customer with orders (at the Gmail steps it is just the customer fixing the Gmail).
+const isIncident = (raw, gmailChange = false) => {
+  const c = clean(raw);
+  return INCIDENT.test(c) || INCIDENT_ACCENTED.test(String(raw || "").normalize("NFC").toLowerCase()) || (gmailChange && GMAIL_CHANGE_TEXT.test(c));
+};
+// G-LIVE-ux F-A2: acknowledgements are not unknown questions.
+const FILLER = /^(da )?(ok|oke|okie|okay|vang|u|uh|um|cam on( shop| ban| ad| nhieu)?|thanks?( you)?|tks|hihi|hehe|haha|da)( a| nha| nhe| ah)?$/;
+// G-LIVE-ux F-A4: only at the Gmail confirmation step.
+const YES = /^(dung|dung roi|ok|oke|vang|da|da dung|yes|phai|chuan|u)$/;
+const NO = /^(sai|khong|khong dung|nham|nhap lai)$/;
+// G-LIVE-ux F-A1 / F-A5.
+const LEARN = /\b(khong vao hoc duoc|khong dang nhap duoc|video loi|khong xem duoc|chua thay khoa|khong thay khoa|loi video)\b/;
+const CATALOG = /\b(co nhung khoa nao|khoa nao|xem khoa hoc|danh sach khoa|cac khoa hoc)\b/;
+// "chat" must be typed as "chat": stripped of accents, "chất" (quality) would look like it. The DO only asks this while a bill is being created, so "đổi gmail" counts.
+const isHuman = (t) => {
+  const raw = String(t || "").normalize("NFC").toLowerCase();
+  const c = clean(raw);
+  if (/\b(gap|noi chuyen)\b.{0,12}\b(nguoi|admin|ad|nhan vien)\b|\btu van vien\b/.test(c)) return true;
+  return /(^|[^\p{L}])chat([^\p{L}]|$)/u.test(raw) && /\bchat\b.{0,12}\b(nguoi|admin|ad|nhan vien)\b/.test(c);
+};
+// The DO needs this to hold a request for an Admin while a bill is being created (A6 step 6).
+export const adminIntent = (event) => (event.kind === "text" ? event.payload === "HUMAN" || (!event.payload && (isHuman(event.text) || isIncident(event.text, true))) : false);
+const REAL_DOMAINS = new Set(["gmail.com", "yahoo.com", "yahoo.com.vn", "outlook.com", "icloud.com", "hotmail.com", "live.com", "msn.com", "me.com", "mail.com", "email.com", "aol.com", "protonmail.com"]);
+const gmailTypo = (email) => {
+  const i = email.lastIndexOf("@");
+  const domain = email.slice(i + 1);
+  return !REAL_DOMAINS.has(domain) && osa(domain, "gmail.com") <= 2 ? `${email.slice(0, i)}@gmail.com` : null;
+};
 const RESTART = /^(khóa|khoá) khác$|^bắt đầu lại$/i;
 // "menu" only shows the menu: it keeps the conversation (draft, orders), unlike RESTART.
 // MENU and GREET are matched against clean(text): no accents, punctuation or emoji.
@@ -58,7 +91,7 @@ export const ticketReply = (ok) => ({ text: ok ? TICKET_OK_TEXT : TICKET_FAIL_TE
 // draftMisses (U4): consecutive non-email texts while a draft is open.
 export const emptyState = () => ({ course: null, gmail: null, gmailOk: false, orderId: null, pendingAdmin: null, ref: null, pausedUntil: 0, greeted: false, draftMisses: 0, lastInboundAt: 0, adminSeenAt: 0, ticketBusyAt: 0, switchRef: null });
 export const ordersOf = (s) => (Array.isArray(s?.orders) ? s.orders : s?.orderId ? [{ id: s.orderId, slug: s.course }] : []);
-export const clearDraft = (s) => ({ ...s, course: null, courseTitle: null, courseTitleFor: null, gmail: null, gmailOk: false, draftMisses: 0, switchRef: null });
+export const clearDraft = (s) => ({ ...s, course: null, courseTitle: null, courseTitleFor: null, gmail: null, gmailOk: false, draftMisses: 0, switchRef: null, gmailFix: null, gmailPending: null, billAskAt: 0 });
 // A new order spends the draft and the campaign ref; a stale pendingAdmin must not open a ticket afterwards.
 export const addOrder = (s, id, slug) => ({ ...s, orders: [...ordersOf(s), { id, slug }].slice(-MAX_ORDERS), orderId: id, pendingAdmin: null, ref: null, switchRef: null });
 // Full state from a saved one. An orderId missing from `orders` (saved before V2, or by an older build after a rollback)
@@ -79,10 +112,8 @@ export const MENU3 = [["Đăng ký khóa học", "BUY"], ["Xem khóa đang mở 
 const PENDING_BTN = ["Đơn chờ duyệt", "PENDING_ORDERS"];
 const DRAFT_BTNS = [["Tiếp tục đăng ký", "CONTINUE_DRAFT"], ["Hủy đăng ký", "CANCEL_DRAFT"]];
 // The one builder of the main menu (B6). pendingMenu: "show" | "hide" | "unknown" (DB error: show only if the DO already holds an order id, B5).
-export function menuButtons(pendingMenu, hasOrdersInDo, extra = [], resume = false) {
+export function menuButtons(pendingMenu, hasOrdersInDo, extra = []) {
   const show = pendingMenu === "show" || (pendingMenu === "unknown" && Boolean(hasOrdersInDo));
-  // U8 (back after a long gap with a draft): continue / see courses / [pending orders] / Admin.
-  if (resume) return [DRAFT_BTNS[0], ["Xem các khóa học", "LIST"], ...(show ? [PENDING_BTN] : []), MENU3[2]];
   return [...(show ? [MENU3[0], MENU3[1], PENDING_BTN, MENU3[2]] : MENU3), ...extra];
 }
 // Every message with the main menu is a placeholder; renderReplies fills it in once the DO knows pendingMenu.
@@ -131,9 +162,10 @@ function ticketStep(state, event, ctx, payload) {
   const base = { ...state, misses: 0, pendingAdmin: null };
   const faq = approvedFaq(ctx);
   const extra = draftExtra(state);
-  if (payload === "HUMAN" || (isText && !payload && HUMAN.test(event.text || ""))) return ticket(state, "human");
+  if (payload === "HUMAN" || (payload === "ADMIN_SKIP" && !state.pendingAdmin) || (isText && !payload && isHuman(event.text))) return ticket(state, "human");
+  if (isText && !payload && isIncident(event.text, Boolean(state.gmailOk) || ordersOf(state).length > 0)) return ticket(state, "support", event.text);
   if (payload === "RESTART" || (isText && RESTART.test((event.text || "").trim()))) {
-    return { state: { ...clearDraft(base), ref: null }, replies: mainMenu("") };
+    return { state: { ...clearDraft(base), ref: null }, replies: mainMenu(""), closeRun: true };
   }
   // U3: with a draft the menu also offers "Tiếp tục đăng ký" / "Hủy đăng ký"; the draft is kept.
   if (payload === "MENU" || (isText && MENU.test(clean(event.text)))) return { state: base, replies: mainMenu("", extra) };
@@ -150,20 +182,20 @@ function ticketStep(state, event, ctx, payload) {
     const n = payload.slice(11);
     return { state: base, replies: [], action: { type: "listOther", page: /^\d{1,6}$/.test(n) ? Number(n) : 1 } };
   }
-  if (payload === "ADMIN") {
-    return { state: base, replies: [text("Bạn muốn Admin hỗ trợ việc gì?", [["Hỏi về khóa học khác", "ADMIN_COURSE"], ["Hỗ trợ vấn đề khác", "ADMIN_SUPPORT"], ["Quay lại menu", "MENU"]])] };
+  // G-LIVE-ux F-A3: one step. ADMIN_COURSE / ADMIN_SUPPORT stay as aliases for buttons still in old chats.
+  if (payload === "ADMIN" || payload === "ADMIN_COURSE" || payload === "ADMIN_SUPPORT") {
+    return { state: { ...base, pendingAdmin: "support" }, replies: [text("Bạn mô tả ngắn việc cần Admin hỗ trợ nhé.", [["Bỏ qua, gặp Admin", "ADMIN_SKIP"], ["Quay lại menu", "MENU"]])] };
   }
-  if (payload === "ADMIN_COURSE" || payload === "ADMIN_SUPPORT") {
-    const ask = payload === "ADMIN_COURSE" ? "Bạn quan tâm khóa học nào?" : "Bạn mô tả ngắn vấn đề giúp mình nhé.";
-    return { state: { ...base, pendingAdmin: payload === "ADMIN_COURSE" ? "other_course" : "support" }, replies: [text(ask, [["Bỏ qua, gặp Admin", "ADMIN_SKIP"]])] };
-  }
-  // The next message after the question (any text, or "Bỏ qua") opens the ticket; its text is the summary.
+  // The next message after the question (text, image, or "Bỏ qua") opens the ticket; its text is the summary.
   if (state.pendingAdmin && (payload === "ADMIN_SKIP" || (isText && !payload))) {
     return ticket(state, state.pendingAdmin, payload === "ADMIN_SKIP" ? "" : event.text || "");
   }
+  // G-LIVE-ux F-A3: a picture here is the request too (it used to be dropped).
+  if (state.pendingAdmin && event.kind === "image") return ticket(state, state.pendingAdmin, "Khách gửi ảnh, xem trong Hộp thư Trang.");
   // Greeting before the Gmail/step reminder (U3). Read-only: the draft stays.
   if (isText && !payload && GREET.test(clean(event.text))) return { state: base, replies: mainMenu("", extra) };
-  if (payload === "PENDING_ORDERS" || (isText && !payload && PENDING_TEXT.test(clean(event.text)))) return { state: base, replies: [], action: { type: "pendingOrders" } };
+  // A6 step 10: the typed form is only read with no draft; with a draft the step handler below answers.
+  if (payload === "PENDING_ORDERS" || (isText && !payload && !state.course && PENDING_TEXT.test(clean(event.text)))) return myOrders(base);
   if (payload === "MENU_BOUGHT") {
     const items = ["faq-login", "faq-wrong-account", "faq-video"].map((id) => faq.find((f) => f.id === id)).filter((f) => f?.answer);
     if (!items.length) return ticket(state, "self_help");
@@ -183,13 +215,18 @@ function ticketStep(state, event, ctx, payload) {
 
 const listOrders = (state) => ({ state, replies: [], action: { type: "orderStatus", mode: "list", orders: ordersOf(state) } });
 // Tickets on (U6): the customer's pending orders, read from the DB by the DO; replaces listing every order of the DO.
-const pendingOrders = (state) => ({ state, replies: [], action: { type: "pendingOrders" } });
+// G-LIVE-ux F-A1: pending and approved orders of this PSID (the DO reads and renders T7/T8).
+const myOrders = (state) => ({ state: { ...state, misses: 0 }, replies: [], action: { type: "myOrders" } });
 
-// Typo-tolerant course match (U5): words of 4+ letters, optimal-string-alignment distance <= 1 (a swap of two neighbours counts 1).
+// Typo-tolerant course match (U5): optimal-string-alignment distance (a swap of two neighbours counts 1).
+// G-LIVE-ux F-A6: a distance of 1 only for words of 5+ letters; shorter words must match exactly ("rảnh" is not "bánh").
 const STOP = new Set(["khoa", "hoc", "lop", "toi", "muon", "ve", "cho", "minh", "staging", "dang", "ky", "mua", "hoi", "xin", "can", "ban", "shop"]);
 const words = (t) => clean(t).split(" ").filter((w) => w.length >= 4 && !STOP.has(w));
 function near(a, b) {
-  if (Math.abs(a.length - b.length) > 1) return false;
+  if (a.length < 5 || b.length < 5) return a === b;
+  return Math.abs(a.length - b.length) <= 1 && osa(a, b) <= 1;
+}
+function osa(a, b) {
   const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
   for (let j = 0; j <= b.length; j++) d[0][j] = j;
   for (let i = 1; i <= a.length; i++) {
@@ -198,7 +235,7 @@ function near(a, b) {
       if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
     }
   }
-  return d[a.length][b.length] <= 1;
+  return d[a.length][b.length];
 }
 const fuzzyCourses = (q, courses) => {
   const ws = words(q);
@@ -206,20 +243,26 @@ const fuzzyCourses = (q, courses) => {
 };
 
 // A course named outright in the text (its title or slug).
-const courseNamed = (ctx, q) => ctx.courses.find((c) => (norm(c.title).length >= 4 && q.includes(norm(c.title))) || q.includes(String(c.slug).toLowerCase()));
+// G-LIVE-ux F-A6: compared on clean() so punctuation in a title ("–") does not stop the match.
+const courseNamed = (ctx, q) => {
+  const c = clean(q);
+  return ctx.courses.find((co) => { const t = clean(co.title); const s = clean(co.slug); return (t.length >= 4 && c.includes(t)) || (s && c.includes(s)); });
+};
 
 // Tickets on, free text (no draft, or a draft after a second miss in a row, U4): FAQ keyword or course name,
-// else a close course name (asks, never assigns), else (past orders -> pending orders), else ask once more, then ticket.
+// else a close course name (asks, never assigns), else price / list / buy wishes, else the AI, else ask once more, then offer an Admin (never a ticket).
 // A draft is only replaced when the text names a course outright; it survives everything else.
 function freeText(state, event, ctx) {
   const q = norm(event.text);
+  const c = clean(event.text);
   // A greeting is not a miss: show the menu and keep the counter at 0.
-  if (GREET.test(clean(event.text))) return { state: { ...state, misses: 0 }, replies: mainMenu("") };
+  if (GREET.test(c)) return { state: { ...state, misses: 0 }, replies: mainMenu("") };
+  // G-LIVE-ux F-A2: "ok", "cảm ơn"... need no answer (a first contact still gets the greeting and menu).
+  if (FILLER.test(c)) return { state: { ...state, misses: 0 }, replies: state.greeted ? [] : mainMenu("") };
   const hit = approvedFaq(ctx).find((f) => (f.keywords || []).some((k) => k && q.includes(k)));
   if (hit) return hit.answer ? { state: { ...state, misses: 0 }, replies: [faqAnswer(hit)] } : ticket(state, "unclear");
-  const hasOrders = ordersOf(state).length > 0;
   // G-MC1-intent: without a draft, a question about an order comes before any course match in the same sentence.
-  if (!state.course && hasOrders && orderText(event.text)) return pendingOrders({ ...state, misses: 0 });
+  if (!state.course && (orderText(event.text) || LEARN.test(c))) return myOrders(state);
   const course = courseNamed(ctx, q);
   const close = course ? [] : fuzzyCourses(event.text, ctx.courses);
   // G-MC1-intent: without a draft, naming a course is not asking to buy it (Gmail only on a clear wish to register).
@@ -227,13 +270,13 @@ function freeText(state, event, ctx) {
   if (course) return buy({ ...state, misses: 0 }, ctx, course.slug);
   if (close.length === 1) return { state: { ...state, misses: 0 }, replies: askCourse(close[0], `BUY:${close[0].slug}`) };
   if (close.length > 1) return { state: { ...state, misses: 0 }, replies: listReply(ctx, "") };
-  // G-MC1-route: a customer with orders who writes about an order gets the pending orders; other questions may go to the AI.
-  if (hasOrders && orderText(event.text)) return pendingOrders({ ...state, misses: 0 });
+  // G-LIVE-ux F-A5: the basics of buying still work with the AI off.
+  if (PRICE_TEXT.test(c)) return { state: { ...state, misses: 0 }, replies: listReply(ctx, "Bạn xem học phí của từng khóa bên dưới nhé. ") };
+  if (CATALOG.test(c)) return { state: { ...state, misses: 0 }, replies: listReply(ctx, "") };
+  if (buyText(event.text)) return buy({ ...state, misses: 0 }, ctx, null);
   // G-MC1: text nothing above understood goes to the AI (flag on, no draft, under the daily cap); it only answers.
   const ai = aiTurn(state, event, ctx);
   if (ai) return ai;
-  // No AI (flag off, draft, cap): as before G-MC1, past orders -> pending orders.
-  if (hasOrders) return pendingOrders({ ...state, misses: 0 });
   return freeTextFallback(state);
 }
 
@@ -275,6 +318,8 @@ const withoutTitle = (raw, c) => {
 function courseQuestion(state, event, ctx, c, exact) {
   const intent = courseIntent(exact ? withoutTitle(event.text, c) : event.text);
   if (intent === "buy") return exact ? buy(state, ctx, c.slug) : { state, replies: askCourse(c, `BUY:${c.slug}`) };
+  // G-LIVE-ux F-A7: a question about lessons or content shows the same card as [Xem chi tiết] (never a made-up answer).
+  if (intent === "lessons" || intent === "content") return exact ? { state, replies: detailReplies(c) } : { state, replies: askCourse(c, `DETAIL:${c.slug}`) };
   if (intent !== "other") return exact ? { state, replies: infoReply(c, intent) } : { state, replies: askCourse(c, `INFO:${c.slug}:${intent}`) };
   const ai = bareName(event.text, c) ? null : aiTurn(state, event, ctx, { slug: c.slug, exact });
   return ai || courseFallback(state, c, exact);
@@ -291,8 +336,9 @@ function infoReply(c, topic) {
   return [text(`Hiện mình chưa có đủ thông tin chi tiết về nội dung khóa ${name}. Bạn chat với Admin để được tư vấn thêm nhé.`, [adminBtn(true), ["Đăng ký", `BUY:${c.slug}`], ["Xem các khóa học", "LIST"]])];
 }
 
+// G-LIVE-ux F-A2: the second miss in a row offers an Admin; it never opens a ticket by itself. The counter resets on any button or understood text.
 export function freeTextFallback(state) {
-  if ((state.misses || 0) >= 1) return ticket(state, "unclear");
+  if ((state.misses || 0) >= 1) return { ...offerAdmin(state), state: { ...state, misses: 2 } };
   return { state: { ...state, misses: 1 }, replies: mainMenu("Mình chưa hiểu ý bạn. ", draftExtra(state)) };
 }
 
@@ -326,7 +372,7 @@ export function aiReply(state, ai, ctx, match) {
     // Gate 1b: the AI read it and found it unclear ("ok"): a customer with orders did not ask about them, so the menu.
     if (ai && ordersOf(state).length) return { state: { ...state, misses: 0 }, replies: mainMenu("", draftExtra(state)) };
     // No usable answer: the pre-AI behaviour (past orders -> pending orders, else ask once more / ticket).
-    return ordersOf(state).length ? pendingOrders({ ...state, misses: 0 }) : freeTextFallback(state);
+    return ordersOf(state).length ? myOrders(state) : freeTextFallback(state); // G-LIVE-ux F-A1: pending + approved view
   }
   if (ai.route === "ticket") return ticket(state, "unclear");
   if (ai.route === "offer_admin") return offerAdmin(state);
@@ -357,9 +403,13 @@ const soldOut = (state, ctx) => ({
 });
 const withExits = (message, T) => ({ ...message, quick_replies: [...message.quick_replies, ...exits(T).map(([title, payload]) => ({ content_type: "text", title, payload }))] });
 const gmailAsk = (T) => withExits({
-  text: "Bạn gửi Gmail dùng để học (đăng nhập Google trên trang học) nhé.",
+  text: "Bạn gửi Gmail dùng để học (đăng nhập Google trên trang học), ví dụ ten@gmail.com nhé.",
   quick_replies: [{ content_type: "user_email" }]
 }, T);
+// G-LIVE-ux F-A8: T5, the domain looks like a typo of gmail.com. Nothing is changed without the customer's answer.
+const gmailFixAsk = (fix, T) => withExits({ text: `Có phải ý bạn là ${fix} không?`, quick_replies: [{ content_type: "text", title: "Đúng, sửa lại", payload: "GMAIL_FIX" }, { content_type: "text", title: "Giữ nguyên", payload: "GMAIL_KEEP" }] }, T);
+// G-LIVE-ux A6 step 9: T6, another Gmail typed at the bill step. The confirmed Gmail stays until the customer says so.
+const gmailChangeAsk = (gmail) => text(`Bạn muốn đổi Gmail học thành ${gmail} không? Nếu đã chuyển khoản, bạn gửi ảnh bill như bình thường nhé.`, [["Đổi Gmail", "GMAIL_CHANGE"], ["Giữ Gmail cũ", "GMAIL_KEEPOLD"]]);
 const retryGmailAsk = (T) => withExits({ text: "Bạn gửi lại Gmail dùng để học nhé.", quick_replies: [{ content_type: "user_email" }] }, T);
 
 // Generic template card for a course (G3-2). Needs ctx.commerceUrl for the "view" button.
@@ -381,9 +431,12 @@ const billAsk = (T) => text("Bạn chụp ảnh bill chuyển khoản và gửi 
 export function paymentInfo(c, T = false) {
   const lines = [`Khoá: ${c.title || c.slug}`];
   if (c.price) lines.push(`Học phí: ${c.price}`);
-  if (c.bankAccount) lines.push(`Chuyển khoản: ${[c.bankName, c.bankAccount, c.bankOwner && `(${c.bankOwner})`].filter(Boolean).join(" ")}`);
+  // G-LIVE-ux F-A10: the account number is its own message (T10) so it is easy to copy.
+  const bank = [c.bankName, c.bankOwner && `(${c.bankOwner})`].filter(Boolean).join(" ");
+  if (c.bankAccount && bank) lines.push(`Chuyển khoản: ${bank}`);
   if (c.transferNote) lines.push(`Nội dung chuyển khoản: ${c.transferNote}`);
   const out = [text(lines.join("\n"))];
+  if (c.bankAccount) out.push(text(String(c.bankAccount)));
   if (c.qrImageUrl) out.push({ attachment: { type: "image", payload: { url: c.qrImageUrl, is_reusable: true } } });
   out.push(billAsk(T));
   return out;
@@ -395,7 +448,7 @@ const confirmGmail = (gmail, title, T) => text(`Đăng ký khóa "${title}" bằ
 function nextPrompt(state, ctx) {
   const T = Boolean(ctx.ticketsEnabled);
   if (!state.course) return T ? mainMenu("") : listReply(ctx, "");
-  if (!state.gmail) return [gmailAsk(T)];
+  if (!state.gmail) return [state.gmailFix ? gmailFixAsk(state.gmailFix.fix, T) : gmailAsk(T)];
   if (!state.gmailOk) return [confirmGmail(state.gmail, titleOf(ctx, state.course), T)];
   return [billAsk(T)];
 }
@@ -404,7 +457,8 @@ function nextPrompt(state, ctx) {
 export function openCourse(state, course, ctx) {
   if (state.course === course.slug) return { state, replies: nextPrompt(state, ctx) };
   // courseTitle: the title for U8.8 once the course is no longer sold (then loadCourses no longer has it).
-  return { state: { ...state, course: course.slug, courseTitle: course.title || course.slug, courseTitleFor: course.slug, gmail: null, gmailOk: false, misses: 0, draftMisses: 0, switchRef: null }, replies: [courseCard(course, ctx), gmailAsk(Boolean(ctx.ticketsEnabled))] };
+  // opened: the course went from none/another to this one; the DO starts the 30-minute run only if none is open (SWITCH keeps it).
+  return { state: { ...state, course: course.slug, courseTitle: course.title || course.slug, courseTitleFor: course.slug, gmail: null, gmailOk: false, misses: 0, draftMisses: 0, switchRef: null, gmailFix: null, gmailPending: null, billAskAt: 0 }, replies: [courseCard(course, ctx), gmailAsk(Boolean(ctx.ticketsEnabled))], opened: true };
 }
 
 // BUY / BUY:<slug> / COURSE:<slug>. A course with an order already goes to a status lookup first (the DO decides).
@@ -450,14 +504,6 @@ export function stepRaw(prev, event, ctx) {
   return { ...out, state: { ...out.state, greeted: true }, replies };
 }
 
-// U8 exceptions: the customer chose clearly (these buttons, a campaign link), or a bill with a complete draft
-// (they may have paid already; blocking it would make them send it again).
-const RESUME_PAYLOAD = /^(CONTINUE_DRAFT|LIST|LIST:.*|LIST_OTHER(:.*)?|MENU_COURSES|ADMIN.*|CANCEL_DRAFT|CHANGE_COURSE|BUY.*|COURSE:.*|SWITCH:.*|PENDING_ORDERS|MENU|RESTART|HUMAN|DETAIL:.*|INFO:.*)$/;
-// Typed requests for a person or a restart are explicit too: they must not need two more taps after a break.
-const skipsResume = (state, event, payload) => Boolean(event.ref) || RESUME_PAYLOAD.test(payload)
-  || (event.kind === "text" && !payload && (HUMAN.test(event.text || "") || RESTART.test((event.text || "").trim())))
-  || (event.kind === "image" && state.gmail && state.gmailOk);
-
 // Gate 1: stickers, voice, files, video... never create anything. A draft keeps its step; a sticker with no draft needs no answer.
 const UNREADABLE = "Mình chưa đọc được loại tin này";
 function attachmentReply(state, event, ctx) {
@@ -468,12 +514,59 @@ function attachmentReply(state, event, ctx) {
   if (event.kind === "sticker") {
     if (!state.course && !state.greeted) return { state, replies: T ? mainMenu("") : listReply(ctx, "") }; // first contact still gets the greeting
     if (!state.course) return { state, replies: [] };
-    return { state, replies: billStep ? [text("Khi chuyển khoản xong, bạn gửi ảnh chụp bill vào đây giúp mình nhé.", exits(T))] : nextPrompt(state, ctx) };
+    // G-LIVE-ux A6 step 6/13: a 👍 sent next to the bill must not produce a reminder.
+    return { state, replies: billStep ? (T ? [] : [text("Khi chuyển khoản xong, bạn gửi ảnh chụp bill vào đây giúp mình nhé.", exits(T))]) : nextPrompt(state, ctx) };
   }
   if (billStep) return { state, replies: [text(`${UNREADABLE}. Bạn gửi ảnh chụp bill (JPG, PNG hoặc WEBP, dưới 5MB) giúp mình nhé.`, exits(T))] };
   if (state.course) return { state, replies: [text(`${UNREADABLE}.`), ...nextPrompt(state, ctx)] };
   const intro = `${UNREADABLE}, bạn nhắn bằng chữ giúp mình nhé. `;
   return { state, replies: T ? mainMenu(intro) : listReply(ctx, intro) };
+}
+
+// GMAIL_OK (button, or a "đúng" typed at the confirmation step, F-A4).
+function gmailConfirmed(state, ctx, T) {
+  const course = ctx.courses.find((c) => c.slug === state.course);
+  if (!course) return { state: clearDraft(state), replies: listReply(ctx, "Khóa này hiện chưa mở đăng ký. ") };
+  // Tickets on: the DO checks the DB for an order of this course before the transfer details (P0-1); it sets gmailOk after.
+  if (T) return { state, replies: [], action: { type: "checkPayment", slug: course.slug, gmail: state.gmail } };
+  return { state: { ...state, gmailOk: true }, replies: paymentInfo(course, T) };
+}
+
+// Tickets on, text with a draft open (A6 step 9). Never "chưa hiểu" at the bill step, never a ticket for not understanding.
+function draftText(state, event, ctx) {
+  const now = ctx.now;
+  const c = clean(event.text);
+  const billStep = Boolean(state.gmail && state.gmailOk);
+  const match = EMAIL.exec(event.text || "");
+  if (match) {
+    const gmail = match[0].toLowerCase();
+    if (!isValidEmail(gmail)) return { state, replies: [text("Địa chỉ email chưa đúng. Bạn kiểm tra và gửi lại nhé.")] };
+    if (billStep) {
+      // Same Gmail as confirmed = plain text; another one is asked about without stepping back.
+      if (gmail !== state.gmail) return { state: { ...state, gmailPending: gmail }, replies: [gmailChangeAsk(gmail)] };
+    } else {
+      const fix = gmailTypo(gmail);
+      if (fix) return { state: { ...state, gmail: null, gmailOk: false, draftMisses: 0, gmailFix: { fix, typed: gmail } }, replies: [gmailFixAsk(fix, true)] };
+      const replies = [];
+      if (!gmail.endsWith("@gmail.com")) replies.push(text("Lưu ý: trang học đăng nhập bằng Google. Nếu đây không phải tài khoản Google, bạn hãy gửi Gmail khác."));
+      replies.push(confirmGmail(gmail, titleOf(ctx, state.course), true));
+      return { state: { ...state, gmail, gmailOk: false, draftMisses: 0, gmailFix: null }, replies };
+    }
+  }
+  // U9.3: a typed name of another course asks about switching right away (never replaces the draft).
+  const named = courseNamed(ctx, event.text);
+  if (named && named.slug !== state.course) return buy({ ...state, misses: 0 }, ctx, named.slug);
+  if (billStep) {
+    if (state.billAskAt && now - state.billAskAt < 10 * 60 * 1000) return { state, replies: [] };
+    return { state: { ...state, billAskAt: now, draftMisses: 0 }, replies: [billAsk(true)] };
+  }
+  if (state.gmail && !state.gmailOk) {
+    if (YES.test(c)) return gmailConfirmed({ ...state, draftMisses: 0 }, ctx, true);
+    if (NO.test(c)) return { state: { ...state, gmail: null, gmailOk: false, draftMisses: 0 }, replies: [retryGmailAsk(true)] };
+  }
+  // U4: the first stray text repeats the step (with the exit buttons); the second in a row is handled as free text.
+  if (state.draftMisses >= 1) return freeText({ ...state, draftMisses: 2 }, event, ctx);
+  return { state: { ...state, draftMisses: 1 }, replies: nextPrompt(state, ctx) };
 }
 
 function stepInner(prev, event, ctx) {
@@ -494,12 +587,10 @@ function stepInner(prev, event, ctx) {
     if (!event.fromThisApp) state.pausedUntil = now + PAUSE_MS;
     return { state, replies: [] };
   }
-  // U8: every customer message (not echoes) moves the mark; the gap is read before. No mark yet (old state) = no U8 this time.
-  const sinceLast = typeof state.lastInboundAt === "number" && state.lastInboundAt > 0 ? now - state.lastInboundAt : -1;
   state.lastInboundAt = now;
   // Open ticket: silent for every kind (text, postback, image, referral).
   if (T && ctx.activeTicket) return { state, replies: [], action: { type: "touchTicket" } };
-  // P0-2: the ticket lookup failed or timed out, so an open ticket cannot be ruled out. No U8, no order, no ticket, the draft stays.
+  // P0-2: the ticket lookup failed or timed out, so an open ticket cannot be ruled out. No order, no ticket, the draft stays.
   // Quiet if an Admin wrote from the inbox within 12 hours; else one busy message (with the Admin button) per 10 minutes.
   if (T && ctx.ticketUnknown) {
     if (state.adminSeenAt && now - state.adminSeenAt < PAUSE_MS) return { state, replies: [] };
@@ -509,12 +600,7 @@ function stepInner(prev, event, ctx) {
   if (!T && state.pausedUntil > now) return { state, replies: [] };
 
   const payload = event.payload || "";
-  if (T && state.course && !state.pendingAdmin && sinceLast >= (ctx.resumeGapMs ?? PAUSE_MS) && !skipsResume(state, event, payload)) {
-    // Back after a long gap with an open draft: ask once (the mark is now fresh) instead of repeating the step.
-    if (!ctx.courses.some((c) => c.slug === state.course)) return soldOut(state, ctx);
-    return { state, replies: [{ menu: { intro: `Chào bạn! Trước đó bạn đang đăng ký khóa ${titleOf(ctx, state.course)} nhưng chưa hoàn tất. Bạn muốn tiếp tục đăng ký khóa này, xem các khóa học khác đang mở bán hay trò chuyện với Admin ạ?`, ask: false, resume: true } }] };
-  }
-  if (payload) state.draftMisses = 0; // U4: any button resets the count
+  if (payload) { state.draftMisses = 0; state.misses = 0; } // U4 / G-LIVE-ux F-A2: any button resets both counts
   // Campaign entry (m.me ref / ad): a valid, sellable course opens the buy flow, anything else the menu.
   if (event.ref) {
     const course = refCourse(event.ref, ctx);
@@ -524,7 +610,7 @@ function stepInner(prev, event, ctx) {
   }
   // U2: drop the draft, keep the orders; never touches the DB.
   if (payload === "CANCEL_DRAFT") {
-    return { state: { ...clearDraft(state), ref: null, pendingAdmin: null, misses: 0 }, replies: T ? mainMenu("Đã hủy đăng ký dở. ") : listReply(ctx, "Đã hủy đăng ký dở. ") };
+    return { state: { ...clearDraft(state), ref: null, pendingAdmin: null, misses: 0 }, replies: T ? mainMenu("Đã hủy đăng ký dở. ") : listReply(ctx, "Đã hủy đăng ký dở. "), closeRun: true };
   }
   if (event.kind === "sticker" || event.kind === "unsupported") return attachmentReply(state, event, ctx);
   if (T) {
@@ -533,12 +619,12 @@ function stepInner(prev, event, ctx) {
   }
   state.pendingAdmin = null;
 
-  if (payload === "HUMAN" || payload === "ADMIN" || (event.kind === "text" && !payload && HUMAN.test(event.text || ""))) {
+  if (payload === "HUMAN" || payload === "ADMIN" || (event.kind === "text" && !payload && isHuman(event.text))) {
     state.pausedUntil = now + PAUSE_MS;
     return { state, replies: [text(TICKET_OK_TEXT)] };
   }
   if (payload === "RESTART" || (event.kind === "text" && RESTART.test((event.text || "").trim()))) {
-    return { state: { ...clearDraft(state), ref: null }, replies: listReply(ctx, "") };
+    return { state: { ...clearDraft(state), ref: null }, replies: listReply(ctx, ""), closeRun: true };
   }
   if (payload === "MENU" || (event.kind === "text" && MENU.test(clean(event.text)))) return { state, replies: listReply(ctx, "") };
   if (payload === "GET_STARTED") {
@@ -566,19 +652,23 @@ function stepInner(prev, event, ctx) {
     const course = ctx.courses.find((c) => c.slug === payload.slice(7));
     return { state, replies: course ? detailReplies(course) : listReply(ctx, "Khóa này hiện chưa mở đăng ký. ") };
   }
-  if (payload === "GMAIL_OK" && state.gmail && state.course) {
-    const course = ctx.courses.find((c) => c.slug === state.course);
-    if (!course) return { state: clearDraft(state), replies: listReply(ctx, "Khóa này hiện chưa mở đăng ký. ") };
-    // Tickets on: the DO checks the DB for an order of this course before the transfer details (P0-1); it sets gmailOk after.
-    if (T) return { state, replies: [], action: { type: "checkPayment", slug: course.slug, gmail: state.gmail } };
-    state.gmailOk = true;
-    return { state, replies: paymentInfo(course, T) };
-  }
+  if (payload === "GMAIL_OK" && state.gmail && state.course) return gmailConfirmed(state, ctx, T);
   if (payload === "GMAIL_NO") {
-    return { state: { ...state, gmail: null, gmailOk: false }, replies: [retryGmailAsk(T)] };
+    return { state: { ...state, gmail: null, gmailOk: false, gmailFix: null, gmailPending: null }, replies: [retryGmailAsk(T)] };
   }
+  // G-LIVE-ux F-A8: answers to the "did you mean x@gmail.com" question (stale buttons fall through to the current step).
+  if ((payload === "GMAIL_FIX" || payload === "GMAIL_KEEP") && state.course && !state.gmail && state.gmailFix) {
+    const gmail = payload === "GMAIL_FIX" ? state.gmailFix.fix : state.gmailFix.typed;
+    return { state: { ...state, gmail, gmailOk: false, gmailFix: null }, replies: [confirmGmail(gmail, titleOf(ctx, state.course), T)] };
+  }
+  // G-LIVE-ux A6 step 9: another Gmail at the bill step. Only "Đổi Gmail" moves back to the confirmation.
+  if (payload === "GMAIL_CHANGE" && state.course && state.gmailOk && state.gmailPending) {
+    return { state: { ...state, gmail: state.gmailPending, gmailOk: false, gmailPending: null }, replies: [confirmGmail(state.gmailPending, titleOf(ctx, state.course), T)] };
+  }
+  if (payload === "GMAIL_KEEPOLD" && state.course && state.gmailOk) return { state: { ...state, gmailPending: null }, replies: [billAsk(T)] };
 
   if (event.kind === "text") {
+    if (T && state.course) return draftText(state, event, ctx);
     const match = EMAIL.exec(event.text || "");
     if (match && state.course) {
       const gmail = match[0].toLowerCase();
@@ -589,14 +679,11 @@ function stepInner(prev, event, ctx) {
       replies.push(confirmGmail(gmail, titleOf(ctx, state.course), T));
       return { state: { ...state, gmail, gmailOk: false }, replies };
     }
-    if (T && !state.course) return freeText(state, event, ctx);
-    // U4: with a draft, the first stray text repeats the step (with the exit buttons); the second in a row is handled as free text.
-    if (T && state.course) {
-      // U9.3: a typed name of another course asks about switching right away (never replaces the draft).
-      const named = courseNamed(ctx, norm(event.text));
-      if (named && named.slug !== state.course) return buy({ ...state, misses: 0 }, ctx, named.slug);
-      if (state.draftMisses >= 1) return freeText({ ...state, draftMisses: 2 }, event, ctx);
-      return { state: { ...state, draftMisses: 1 }, replies: nextPrompt(state, ctx) };
+    if (T) {
+      // G-LIVE-ux F-A1: any text in the 30 minutes after an order is a question about it (A6 step 10).
+      // A clear wish to buy a named course goes on as usual (greetings and menu words were answered above).
+      if (!payload && ctx.postOrderUntil > now && !(courseNamed(ctx, event.text) && buyText(event.text))) return myOrders(state);
+      return freeText(state, event, ctx);
     }
     // No draft but past orders: any message reopens Meta's 24-hour window, so answer with this sender's own
     // orders (looked up by the order ids in this conversation, never by a typed Gmail).
@@ -607,8 +694,10 @@ function stepInner(prev, event, ctx) {
   if (event.kind === "image") {
     // Gate 1: with orders and no draft the image may be the real bill: the DO checks for a pending order and tells the Admin.
     if (!state.course && state.orders.length) return T ? { state, replies: [], action: { type: "extraImage" } } : listOrders(state);
+    // G-LIVE-ux F-A11 (T4): no draft and no order to attach it to: never an order, the customer chooses Admin.
+    if (T && !state.course) return { state, replies: [text("Mình chưa biết ảnh này thuộc đơn đăng ký nào. Nếu đây là bill chuyển khoản, bạn bấm Chat với Admin để được kiểm tra nhé.", [["Chat với Admin", "ADMIN"], ["Quay lại menu", "MENU"]])] };
     if (!state.course || !state.gmail || !state.gmailOk) return { state, replies: nextPrompt(state, ctx) };
-    return { state, replies: [], action: { type: "createOrder", url: event.url } };
+    return { state: { ...state, gmailPending: null }, replies: [], action: { type: "createOrder", url: event.url } };
   }
 
   return { state, replies: nextPrompt(state, ctx) };
@@ -690,6 +779,28 @@ export function pendingOrdersReplies(verified, unverified) {
   return texts.map((t, i) => text(t, i === texts.length - 1 ? ALT : []));
 }
 
+// ---- G-LIVE-ux: T1 (the 30-minute handoff), T7 / T8 (orders of this PSID) ----
+export const HANDOFF_TEXT = "Đã hết thời gian đăng ký tự động (30 phút). Mình đã chuyển Admin hỗ trợ bạn tiếp trong cuộc trò chuyện này. Nếu bạn đã chuyển khoản, bạn cứ gửi ảnh bill vào đây để Admin kiểm tra, không cần chuyển khoản lại.";
+export const NO_ORDERS_TEXT = "Mình chưa thấy đơn nào của bạn trên Messenger. Nếu bạn đã chuyển khoản hoặc đã mua trước đây, bạn bấm Chat với Admin để được kiểm tra nhé.";
+// verified / unverified (R1/R2): [{ title, status, createdAt, email }]. Only the customer's own verified orders show a Gmail.
+export function myOrdersReplies(verified, unverified, lmsUrl) {
+  const btns = [adminBtn(true), ["Đăng ký khóa khác", "LIST_OTHER"], ["Quay lại menu", "MENU"]];
+  if (!verified.length && !unverified.length) return [text(NO_ORDERS_TEXT, [adminBtn(true), ["Quay lại menu", "MENU"]])];
+  if (!verified.length) return [text(UNVERIFIED_TEXT, [adminBtn(true), ["Quay lại menu", "MENU"]])];
+  const lms = String(lmsUrl || "").replace(/\/$/, "");
+  const lines = verified.map((o) => (o.status === "Đã duyệt"
+    ? `${o.title} — Đã duyệt: vào ${lms}/my-courses.html, đăng nhập Google bằng ${o.email}`
+    : `${o.title} — Chờ duyệt (gửi bill ${dmy(o.createdAt)})`));
+  const parts = [["Đơn của bạn:"]];
+  for (const line of lines) {
+    const cur = parts.at(-1);
+    if (cur.join("\n").length + line.length > 1700) parts.push([line]); else cur.push(line);
+  }
+  const texts = parts.map((p) => p.join("\n"));
+  if (unverified.length) texts[texts.length - 1] += `\n\n${UNVERIFIED_TEXT}`;
+  return texts.map((t, i) => text(t, i === texts.length - 1 ? btns : []));
+}
+
 // ---- Course details in Messenger (P2-5): one text message (<= 2000), description cut to 600, HTML removed ----
 const plain = (t) => String(t || "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&")
   .split(/\r?\n/).map((l) => l.replace(/[ \t]+/g, " ").trim()).join("\n").replace(/\n{3,}/g, "\n\n").trim();
@@ -749,8 +860,8 @@ export function menuMessage(t, options) {
 export function renderReplies(replies, view, ctx) {
   return replies.flatMap((r) => {
     if (r.menu) {
-      const { intro, extra = [], ask = true, resume = false } = r.menu;
-      const options = menuButtons(view.pendingMenu, (view.doOrderIds || []).length > 0, extra, resume);
+      const { intro, extra = [], ask = true } = r.menu;
+      const options = menuButtons(view.pendingMenu, (view.doOrderIds || []).length > 0, extra);
       const t = `${intro}${ask ? "Bạn cần mình giúp gì?" : ""}`;
       // A template text holds 640 characters (a long order summary does not): send the intro as plain text first.
       return t.length <= 640 ? [menuMessage(t, options)] : [text(intro), menuMessage("Bạn cần mình giúp gì?", options)];

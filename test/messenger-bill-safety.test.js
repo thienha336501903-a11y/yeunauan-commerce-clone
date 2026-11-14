@@ -59,12 +59,12 @@ test("BILL-2 other attachments are 'unsupported'; images, text and quick replies
 });
 
 for (const [name, a] of [["old sticker", att("image", { url: CDN, sticker_id: LIKE })], ["new sticker", att("sticker", { sticker_id: LIKE })]]) {
-  test(`BILL-3 ${name} at the bill step: no order, draft kept, asks for the bill`, async () => {
+  test(`BILL-3 ${name} at the bill step: no order, draft kept, silent`, async () => {
     const w = world();
     await send(w, { attachments: [a] });
     assert.equal(w.created.length, 0);
     assert.equal(w.state().course, "b");
-    assert.match(texts(w), /gửi ảnh chụp bill/);
+    assert.equal(w.sent.length, 0); // G-LIVE-ux A6 step 13: a sticker at the bill step gets no reminder
     assert.ok(!/đã nhận bill/.test(texts(w)));
   });
 }
@@ -282,11 +282,12 @@ test("BILL-23 tickets off: voice gets the course list, sticker with a bill step 
   await send(offBill, { attachments: [att("sticker", { sticker_id: LIKE })] });
   assert.equal(offBill.created.length, 0);
   assert.match(texts(offBill), /gửi ảnh chụp bill/);
+  // G-LIVE-ux O3: U8 is gone; after a long gap a sticker at the bill step is silent and the draft stays.
   const back = world({ state: billStep({ lastInboundAt: NOW - 13 * 3600 * 1000 }) });
   await send(back, { attachments: [att("sticker", { sticker_id: LIKE })] });
   assert.equal(back.created.length, 0);
   assert.equal(back.state().course, "b");
-  assert.match(JSON.stringify(back.sent), /chưa hoàn tất/);
+  assert.equal(back.sent.length, 0);
 });
 
 test("BILL-24 emoji-only text counts as a sticker; emoji with words, digits and punctuation stay text", () => {
@@ -303,13 +304,13 @@ test("BILL-25 DO: emoji with no draft is silent, no AI, no order list; at the bi
   const bill = world();
   await send(bill, { text: "👍" });
   assert.equal(bill.created.length, 0);
-  assert.match(texts(bill), /gửi ảnh chụp bill/);
+  assert.equal(bill.sent.length, 0); // G-LIVE-ux: silent at the bill step
 });
 
 test("BILL-26 DO: AI 'clarify' for a customer with orders shows the menu, not the list; AI failure keeps the list", async () => {
   const run = async (runAi) => {
     let looked = 0;
-    const w = world({ state: withOrder(), env: { MESSENGER_AI_ENABLED: "1", AI: { run: async () => ({}) } }, deps: { runAi, loadPendingOrders: async () => { looked++; return PENDING; } } });
+    const w = world({ state: withOrder(), env: { MESSENGER_AI_ENABLED: "1", AI: { run: async () => ({}) } }, deps: { runAi, loadPendingOrders: async () => { looked++; return PENDING; }, loadMyOrders: async () => { looked++; return PENDING.map((r) => ({ ...r, status: "Chờ duyệt", email: "" })); } } }); // G-LIVE-ux F-A1
     await send(w, { text: "hmm chắc vậy" });
     return { w, looked };
   };
@@ -355,7 +356,7 @@ test("PREP-1 a bill upload that hangs: the customer is told, a ticket is opened,
   assert.match(w.tickets[0].summary, /^Tạo đơn quá thời gian cho khóa b;/);
   assert.equal(w.state().course, "b");
   assert.equal((w.state().orders || []).length, 0);
-  assert.ok(w.store.get("s").creatingAt > 0, "the lock stays: the upload may still insert the order");
+  assert.ok(w.store.get("s").creating?.at > 0, "the lock stays: the upload may still insert the order");
   assert.deepEqual(lines, ['{"evt":"messenger_bill_timeout"}']);
 });
 
@@ -432,12 +433,13 @@ test("PREP-8 orders.html tells the Admin the working way to change the Gmail of 
 
 test("PREP-9 the upload finishes after the timeout while the customer sends the bill again: one order attempt only", async () => {
   let finish;
-  const w = world({ deps: { billMs: 30, createBillOrder: (x) => { w.created.push(x); return new Promise((resolve) => { finish = resolve; }); } } });
+  // G-LIVE-ux O9: the timeout opened a ticket, so the fake ticket read now returns it and the bot is silent (it used to say "đang xử lý bill").
+  const w = world({ deps: { activeTicket: async () => (w.tickets.length ? { id: "t1" } : null), billMs: 30, createBillOrder: (x) => { w.created.push(x); return new Promise((resolve) => { finish = resolve; }); } } });
   await quiet(() => send(w, { attachments: [image] }));
   w.sent.length = 0;
   await quiet(() => send(w, { attachments: [image] }));
   assert.equal(w.created.length, 1, "the second image starts no second upload");
-  assert.match(texts(w), /Mình đang xử lý bill bạn vừa gửi/);
+  assert.equal(w.sent.length, 0, JSON.stringify(w.sent));
   finish({ status: 200, body: { orderId: "late" } });
 });
 

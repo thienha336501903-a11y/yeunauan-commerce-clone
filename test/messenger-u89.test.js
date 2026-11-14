@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { step, emptyState, normalizeState, PAUSE_MS, openCourse, switchAsk, paymentInfo } from "../utils/messenger/bot.js";
-import { MessengerConversation, loadPendingOrders, resumeGapMs } from "../cloudflare/commerce-worker/src/messenger.js";
+import { MessengerConversation, loadPendingOrders } from "../cloudflare/commerce-worker/src/messenger.js";
 
 const PSID = "1234567890123";
 const PAGE = "555";
@@ -27,9 +27,8 @@ const G = { ...emptyState(), greeted: true };
 const payloads = (m) => [...(m.attachment?.payload?.buttons || []), ...(m.quick_replies || [])].map((q) => q.payload);
 const textOf = (m) => m.text ?? m.attachment?.payload?.text;
 const elements = (m) => m.attachment.payload.elements;
-const U8_B = "Chào bạn! Trước đó bạn đang đăng ký khóa Khóa B nhưng chưa hoàn tất. Bạn muốn tiếp tục đăng ký khóa này, xem các khóa học khác đang mở bán hay trò chuyện với Admin ạ?";
 const ASK_AB = "Bạn đang đăng ký dở khóa Khóa A. Bạn muốn đổi sang khóa Khóa B không?";
-const GMAIL_ASK = "Bạn gửi Gmail dùng để học (đăng nhập Google trên trang học) nhé.";
+const GMAIL_ASK = "Bạn gửi Gmail dùng để học (đăng nhập Google trên trang học), ví dụ ten@gmail.com nhé."; // G-LIVE-ux: T9
 const BILL_ASK = "Bạn chụp ảnh bill chuyển khoản và gửi vào đây nhé.";
 const BUSY = "Hệ thống đang bận, bạn thử lại sau ít phút nhé.";
 
@@ -102,7 +101,7 @@ const DRAFTS = {
   bill: { course: "khoa_b", gmail: "b@gmail.com", gmailOk: true, lastInboundAt: T0 }
 };
 
-// ======== U8 ========
+// ======== U8 (removed by G-LIVE-ux O3: no "back after 12 hours" question any more) ========
 test("U89-47 gap 11:59:59: stray text repeats the step as U4, no U8 question", async () => {
   const h = harness();
   await h.seed(DRAFTS.gmail);
@@ -110,36 +109,26 @@ test("U89-47 gap 11:59:59: stray text repeats the step as U4, no U8 question", a
   assert.equal(last(await h.say("blah blah")).text, GMAIL_ASK);
 });
 
-test("U89-48 gap exactly 12:00:00: U8 question with the 3 buttons; the draft is unchanged", async () => {
+// G-LIVE-ux O3: U8 removed; after 12 hours a greeting is the normal menu (with the draft buttons), the draft is unchanged.
+test("U89-48 gap exactly 12:00:00: no U8 question; 'hi' shows the menu with the draft buttons; the draft is unchanged", async () => {
   const h = harness();
   await h.seed(DRAFTS.confirm);
   h.later(H12);
   const m = last(await h.say("hi"));
-  assert.equal(textOf(m), U8_B);
-  assert.deepEqual(m.attachment.payload.buttons.map((q) => [q.title, q.payload]), [["Tiếp tục đăng ký", "CONTINUE_DRAFT"], ["Xem các khóa học", "LIST"], ["Chat với Admin", "ADMIN"]]);
-  assert.equal(m.quick_replies, undefined);
+  assert.ok(!textOf(m).includes("Trước đó"));
+  assert.deepEqual(payloads(m), ["BUY", "LIST", "ADMIN", "CONTINUE_DRAFT", "CANCEL_DRAFT"]);
   const s = await h.state();
   assert.deepEqual([s.course, s.gmail, s.gmailOk], ["khoa_b", "b@gmail.com", false]);
 });
 
-test("U89-49 gap over 12h at each step (Gmail / confirm / bill): U8 names the course", async () => {
+// G-LIVE-ux O3: U8 removed.
+test("U89-49 gap over 12h at each step (Gmail / confirm / bill): no U8, the step handler answers", async () => {
   for (const d of Object.values(DRAFTS)) {
     const h = harness();
     await h.seed(d);
     h.later(H12 + 5000);
-    assert.equal(textOf(last(await h.say("alo shop có ở đó không"))), U8_B);
+    assert.ok(!JSON.stringify(await h.say("alo shop có ở đó không")).includes("Trước đó"));
   }
-});
-
-test("U89-50 asked once per gap: the next message is normal; after another 12h it asks again", async () => {
-  const h = harness();
-  await h.seed(DRAFTS.gmail);
-  h.later(H12);
-  assert.equal(textOf(last(await h.say("hi"))), U8_B);
-  h.later(1000);
-  assert.equal(last(await h.say("blah blah")).text, GMAIL_ASK);
-  h.later(H12);
-  assert.equal(textOf(last(await h.say("blah blah"))), U8_B);
 });
 
 test("U89-51 'Tiếp tục đăng ký' restores the exact step; gmailOk is kept; no order", async () => {
@@ -147,14 +136,15 @@ test("U89-51 'Tiếp tục đăng ký' restores the exact step; gmailOk is kept;
   assert.equal(last((await run(DRAFTS.gmail)).out).text, GMAIL_ASK);
   assert.equal(last((await run(DRAFTS.confirm)).out).text, 'Đăng ký khóa "Khóa B" bằng Gmail b@gmail.com. Đúng không?');
   const { h, out } = await run(DRAFTS.bill);
-  assert.match(out[0].text, /^Khoá: Khóa B\nHọc phí: 200\.000đ\nChuyển khoản: VCB 0456 \(X\)/);
+  assert.match(out[0].text, /^Khoá: Khóa B\nHọc phí: 200\.000đ\nChuyển khoản: VCB \(X\)/); // G-LIVE-ux F-A10: the account number is its own message
+  assert.equal(out[1].text, "0456");
   assert.equal(last(out).text, BILL_ASK);
   const s = await h.state();
   assert.deepEqual([s.gmail, s.gmailOk, s.course], ["b@gmail.com", true, "khoa_b"]);
   assert.equal(h.orders.length, 0);
 });
 
-test("U89-52 'Xem các khóa học' after U8: carousel, draft kept, no DB write", async () => {
+test("U89-52 'Xem các khóa học' with a draft: carousel, draft kept, no DB write", async () => {
   const h = harness();
   await h.seed(DRAFTS.confirm);
   h.later(H12);
@@ -165,21 +155,22 @@ test("U89-52 'Xem các khóa học' after U8: carousel, draft kept, no DB write"
   assert.equal(writes(h.db).length, 0);
 });
 
-test("U89-53 'Chat với Admin' after U8: Admin branch; draft and orders kept", async () => {
+test("U89-53 'Chat với Admin' with a draft: Admin branch; draft and orders kept", async () => {
   const h = harness();
   await h.seed({ ...DRAFTS.confirm, orders: [{ id: "oA", slug: "khoa-a" }], orderId: "oA" });
   h.later(H12);
   await h.say("hi");
-  assert.equal(last(await h.press("ADMIN")).text, "Bạn muốn Admin hỗ trợ việc gì?");
+  assert.equal(last(await h.press("ADMIN")).text, "Bạn mô tả ngắn việc cần Admin hỗ trợ nhé."); // G-LIVE-ux F-A3
   const s = await h.state();
   assert.deepEqual([s.course, s.orders], ["khoa_b", [{ id: "oA", slug: "khoa-a" }]]);
 });
 
+// G-LIVE-ux O3: the sold-out check now runs on "Tiếp tục đăng ký" (it used to run on the U8 question).
 test("U89-54 draft course no longer sold: sold-out sentence, draft dropped, orders kept, no DB write", async () => {
   const h = harness({ courses: [A] });
   await h.seed({ ...DRAFTS.confirm, orders: [{ id: "oA", slug: "khoa-a" }], orderId: "oA" });
   h.later(H12);
-  const m = last(await h.say("hi"));
+  const m = last(await h.press("CONTINUE_DRAFT"));
   assert.equal(m.text, "Khóa khoa_b hiện không còn mở đăng ký qua Messenger. Bạn muốn xem các khóa học khác đang mở bán hay trò chuyện với Admin ạ?");
   assert.deepEqual(payloads(m), ["LIST", "ADMIN"]);
   const s = await h.state();
@@ -192,7 +183,7 @@ test("U89-54b sold-out sentence uses the title saved with the draft; old drafts 
   const h = harness({ courses: [A] });
   await h.seed({ ...DRAFTS.confirm, courseTitle: "Khóa B – Làm bánh", courseTitleFor: "khoa_b" });
   h.later(H12);
-  assert.match(last(await h.say("hi")).text, /^Khóa Khóa B – Làm bánh hiện không còn mở đăng ký/);
+  assert.match(last(await h.press("CONTINUE_DRAFT")).text, /^Khóa Khóa B – Làm bánh hiện không còn mở đăng ký/);
   assert.equal((await h.state()).courseTitle, null, "cleared with the draft");
 });
 
@@ -205,17 +196,16 @@ test("U89-55 pending order, no draft, back after 12h: no U8; the menu has 'Đơn
   assert.ok(!textOf(m).includes("Trước đó"));
 });
 
-test("U89-56 draft + pending order: U8 with 'Đơn chờ duyệt'; DB error with an empty DO: 3 buttons, no 'no orders'", async () => {
+test("U89-56 draft + pending order: the menu has 'Đơn chờ duyệt' and the draft buttons; DB error with an empty DO: 3 buttons + draft buttons, no 'no orders'", async () => {
   const h = harness({ rows: [ord("oA", "khoa-a")] });
   await h.seed({ ...DRAFTS.confirm, orders: [{ id: "oA", slug: "khoa-a" }] });
   h.later(H12);
-  assert.deepEqual(payloads(last(await h.say("hi"))), ["CONTINUE_DRAFT", "LIST", "PENDING_ORDERS", "ADMIN"]);
+  assert.deepEqual(payloads(last(await h.say("hi"))), ["BUY", "LIST", "PENDING_ORDERS", "ADMIN", "CONTINUE_DRAFT", "CANCEL_DRAFT"]); // G-LIVE-ux O3: no U8 variant
   const bad = harness({ dbOpts: { fail: true } });
   await bad.seed(DRAFTS.confirm);
   bad.later(H12);
   const m = last(await bad.say("hi"));
-  assert.equal(textOf(m), U8_B);
-  assert.deepEqual(payloads(m), ["CONTINUE_DRAFT", "LIST", "ADMIN"]);
+  assert.deepEqual(payloads(m), ["BUY", "LIST", "ADMIN", "CONTINUE_DRAFT", "CANCEL_DRAFT"]);
   assert.ok(!bad.sent.some((x) => (x.text || "").includes("không có đơn")));
 });
 
@@ -235,7 +225,7 @@ test("U89-57 open ticket after 12h: silent (touchTicket), no U8; pendingAdmin af
   assert.ok(!p.sent.some((x) => (textOf(x) || "").includes("Trước đó")));
 });
 
-test("U89-58 bill after 12h with a complete draft creates exactly 1 order; an image with an incomplete draft gets U8 and no order", async () => {
+test("U89-58 bill after 12h with a complete draft creates exactly 1 order; an image with an incomplete draft repeats the step and creates no order", async () => {
   const h = harness();
   await h.seed(DRAFTS.bill);
   h.later(H12 + 1000);
@@ -246,7 +236,7 @@ test("U89-58 bill after 12h with a complete draft creates exactly 1 order; an im
   const inc = harness();
   await inc.seed(DRAFTS.confirm);
   inc.later(H12 + 1000);
-  assert.equal(textOf(last(await inc.img())), U8_B);
+  assert.equal(textOf(last(await inc.img())), 'Đăng ký khóa "Khóa B" bằng Gmail b@gmail.com. Đúng không?'); // G-LIVE-ux O3: no U8
   assert.equal(inc.orders.length, 0);
 });
 
@@ -255,7 +245,7 @@ test("U89-59 duplicate mid after 12h: handled once, the mark moves once", async 
   await h.seed(DRAFTS.gmail);
   h.later(H12);
   const first = await h.raw("dup1", { text: "hi" });
-  assert.equal(textOf(last(first)), U8_B);
+  assert.ok(first.length > 0);
   const mark = (await h.state()).lastInboundAt;
   assert.equal(mark, h.t);
   h.later(H12);
@@ -263,7 +253,7 @@ test("U89-59 duplicate mid after 12h: handled once, the mark moves once", async 
   assert.equal((await h.state()).lastInboundAt, mark);
 });
 
-test("U89-60 old state without lastInboundAt: no U8 the first time, the mark is written; an echo does not move it", async () => {
+test("U89-60 old state without lastInboundAt: no U8, the mark is written; an echo does not move it", async () => {
   const h = harness();
   await h.seed({ course: "khoa_b" });
   h.later(100 * H12);
@@ -276,14 +266,15 @@ test("U89-60 old state without lastInboundAt: no U8 the first time, the mark is 
   assert.equal((await h.state()).lastInboundAt, mark);
 });
 
-test("U89-61 old 'Đúng' (GMAIL_OK) pressed after 12h: U8, no transfer details", async () => {
+// G-LIVE-ux O3: an old "Đúng" button pressed after a long gap just works (no U8 in the way).
+test("U89-61 old 'Đúng' (GMAIL_OK) pressed after 12h: the transfer details follow", async () => {
   const h = harness();
   await h.seed(DRAFTS.confirm);
   h.later(H12);
   const out = await h.press("GMAIL_OK");
-  assert.equal(textOf(last(out)), U8_B);
-  assert.ok(!JSON.stringify(out).includes("0456"));
-  assert.equal((await h.state()).gmailOk, false);
+  assert.ok(!JSON.stringify(out).includes("Trước đó"));
+  assert.ok(JSON.stringify(out).includes("0456"));
+  assert.equal((await h.state()).gmailOk, true);
 });
 
 test("U89-62 tickets off: no U8 (old behaviour)", async () => {
@@ -295,18 +286,13 @@ test("U89-62 tickets off: no U8 (old behaviour)", async () => {
   assert.equal(last(out).text, GMAIL_ASK);
 });
 
-test("U89-63 MESSENGER_RESUME_GAP_MS: unset 12h; 120000 = 2 minutes; below 60000 or not a number = 12h", async () => {
-  assert.equal(PAUSE_MS, H12);
-  assert.equal(resumeGapMs({}), H12);
-  assert.equal(resumeGapMs({ MESSENGER_RESUME_GAP_MS: "120000" }), 120000);
-  assert.equal(resumeGapMs({ MESSENGER_RESUME_GAP_MS: "60000" }), 60000);
-  for (const bad of ["59999", "abc", "", "1e5", "-120000", "120000.5", "0"]) assert.equal(resumeGapMs({ MESSENGER_RESUME_GAP_MS: bad }), H12, bad);
+// G-LIVE-ux O3: MESSENGER_RESUME_GAP_MS is gone; setting it changes nothing.
+test("U89-63 MESSENGER_RESUME_GAP_MS is ignored: 2 minutes later a stray text is still the normal step", async () => {
+  assert.equal(PAUSE_MS, H12); // PAUSE_MS stays for the tickets-off pause and P0-2
   const h = harness({ env: { MESSENGER_RESUME_GAP_MS: "120000" } });
   await h.seed(DRAFTS.gmail);
-  h.later(119000);
-  assert.equal(last(await h.say("blah")).text, GMAIL_ASK);
   h.later(120000);
-  assert.equal(textOf(last(await h.say("blah"))), U8_B);
+  assert.equal(last(await h.say("blah")).text, GMAIL_ASK);
 });
 
 test("U89-64 rollback: state with lastInboundAt survives normalizeState; SWITCH / CHANGE_COURSE create no order and do not throw", async () => {
@@ -432,7 +418,7 @@ test("U89-75 review fixes: stale courseTitle of another slug is ignored; typed '
   const h = harness({ courses: [A] });
   await h.seed({ ...DRAFTS.confirm, courseTitle: "Khóa A cũ", courseTitleFor: "khoa-a" });
   h.later(H12);
-  assert.match(last(await h.say("hi")).text, /^Khóa khoa_b hiện không còn/);
+  assert.match(last(await h.press("CONTINUE_DRAFT")).text, /^Khóa khoa_b hiện không còn/); // G-LIVE-ux O3: checked on CONTINUE_DRAFT
   for (const ev of [(x) => x.say("cho mình gặp người thật"), (x) => x.press("HUMAN")]) {
     const g = harness();
     await g.seed(DRAFTS.confirm);
@@ -450,7 +436,7 @@ test("U89-76 review fixes: failed bill upload after 12h keeps the time mark (nex
   h.later(H12 + 1000);
   assert.match(last(await h.img()).text, /chưa tạo được đơn/); // Gate 1: a server error is not an image problem
   h.later(10_000);
-  assert.notEqual(last(await h.say("sao vậy")).text, U8_B);
+  assert.ok(!JSON.stringify(await h.say("sao vậy")).includes("Trước đó"));
   assert.equal(h.orders.length, 0);
 });
 

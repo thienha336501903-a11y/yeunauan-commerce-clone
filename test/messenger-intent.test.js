@@ -26,24 +26,28 @@ const noBuyFlow = (out, msg) => {
 
 test("INT-1 typo or partial name + question: 'Đúng' keeps the topic, no buy flow", () => {
   const cases = [
-    ["khóa làm bánh học những gì", "content"], ["khoá lam bnah học gì", "content"], ["khoa lam banh day nhung gi", "content"],
+    // G-LIVE-ux F-A6: "bnah" (4 letters) is no longer a typo of "bánh", so the typo rows use the exact words.
+    // G-LIVE-ux F-A7: content / lessons questions answer with the [Xem chi tiết] card ("Đúng" = DETAIL).
+    ["khóa làm bánh học những gì", "content"], ["khoa lam banh day nhung gi", "content"],
     ["khoa lam banh co nhung bai nao", "lessons"], ["khoá làm bánh có bao nhiêu bài", "lessons"],
-    ["khoá làm bánh giá bao nhiêu", "price"], ["khoa lam bnah hoc phi bao nhieu", "price"],
+    ["khoá làm bánh giá bao nhiêu", "price"],
   ];
   for (const state of [G(), withOrder()]) for (const [t, topic] of cases) {
     const out = stepRaw(state, txt(t), ctx());
     noBuyFlow(out, t);
-    assert.deepEqual(payloads(out.replies[0]), [`INFO:stg-khoa-b:${topic}`, "LIST"], t);
+    if (topic === "price") assert.deepEqual(payloads(out.replies[0]), [`INFO:stg-khoa-b:${topic}`, "LIST"], t);
+    else assert.deepEqual(payloads(out.replies[0]), ["DETAIL:stg-khoa-b", "LIST"], t); // partial name: "Đúng" = the card
   }
 });
 
 test("INT-2 exact name + question answers directly, never opens the buy flow", () => {
+  // G-LIVE-ux F-A7: content / lessons -> the detail card, not "chưa có đủ thông tin".
   const content = stepRaw(G(), txt(`${EXACT} học những gì`), ctx());
   noBuyFlow(content);
-  assert.match(content.replies[0].text, NO_INFO);
+  assert.deepEqual(content.replies, detailReplies(B));
   const lessons = stepRaw(G(), txt(`${EXACT} có những bài nào`), ctx());
   noBuyFlow(lessons);
-  assert.match(lessons.replies[0].text, NO_INFO);
+  assert.deepEqual(lessons.replies, detailReplies(B));
   const price = stepRaw(G(), txt(`${EXACT} giá bao nhiêu`), ctx());
   noBuyFlow(price);
   assert.equal(price.replies[0].text, `Học phí ${EXACT}: 1.000đ (TEST).`);
@@ -51,7 +55,7 @@ test("INT-2 exact name + question answers directly, never opens the buy flow", (
 
 test("INT-3 clear wish to register: exact name -> buy flow, typo -> 'Đúng' = BUY", () => {
   for (const t of [`tôi muốn đăng ký ${EXACT}`, `mua ${EXACT}`, `dk ${EXACT}`]) assert.equal(stepRaw(G(), txt(t), ctx()).action?.type, "checkCourse", t);
-  for (const t of ["tôi muốn đăng ký khoá làm bánh", "đăng ký khoá lam bnah", "mình muốn mua khoá làm bánh", "mua khoa lam banh", "dk khoa lam banh"]) {
+  for (const t of ["tôi muốn đăng ký khoá làm bánh", "mình muốn mua khoá làm bánh", "mua khoa lam banh", "dk khoa lam banh"]) {
     const out = stepRaw(G(), txt(t), ctx());
     assert.deepEqual(payloads(out.replies[0]), ["BUY:stg-khoa-b", "LIST"], t);
   }
@@ -93,8 +97,8 @@ test("INT-6 a question beats 'đăng ký'; how-to and negatives are not a wish t
 });
 
 test("INT-7 with orders: an order question beats a course match in the same sentence", () => {
-  for (const t of ["đơn khoá làm bánh duyệt chưa", "khoá làm bánh mình chuyển khoản rồi"]) assert.equal(stepRaw(withOrder(), txt(t), ctx()).action?.type, "pendingOrders", t);
-  assert.notEqual(stepRaw(G(), txt("đơn khoá làm bánh duyệt chưa"), ctx()).action?.type, "pendingOrders", "no orders: nothing to list");
+  for (const t of ["đơn khoá làm bánh duyệt chưa", "khoá làm bánh mình chuyển khoản rồi"]) assert.equal(stepRaw(withOrder(), txt(t), ctx()).action?.type, "myOrders", t); // G-LIVE-ux F-A1
+  assert.equal(stepRaw(G(), txt("đơn khoá làm bánh duyệt chưa"), ctx()).action?.type, "myOrders", "no orders: T8 invites Admin");
 });
 
 test("INT-8 other question with a course: AI gets the course as a hint; no usable answer -> card or 'this course?'", () => {
@@ -118,9 +122,7 @@ test("INT-9 only the course name: card or 'this course?', no AI call, no buy flo
   const exact = stepRaw(G(), txt(EXACT), ctx());
   assert.equal(exact.action, undefined);
   assert.deepEqual(exact.replies, detailReplies(B));
-  const typo = stepRaw(G(), txt("khoá làm bnah"), ctx());
-  assert.equal(typo.action, undefined);
-  assert.deepEqual(payloads(typo.replies[0]), ["INFO:stg-khoa-b:general", "LIST"]);
+  // G-LIVE-ux F-A6: a 4-letter typo ("bnah") is no longer matched.
 });
 
 test("INT-10 course text reaches the model only when approved", () => {
@@ -142,8 +144,8 @@ test("INT-11 INFO: course gone -> list; open draft is kept; U8 treats it like DE
 
 test("INT-12 with a draft: the old paths stay (U4, U5, U9)", () => {
   const draft = { ...G(), course: "stg-khoa-c", gmail: null, draftMisses: 1 };
-  const typo = stepRaw(draft, txt("khoá làm bnah học gì"), ctx());
-  assert.deepEqual(payloads(typo.replies[0]), ["BUY:stg-khoa-b", "LIST"]);
+  const typo = stepRaw(draft, txt("khoá làm banh học gì"), ctx());
+  assert.deepEqual(payloads(typo.replies[0]), ["BUY:stg-khoa-b", "LIST"]); // G-LIVE-ux F-A6: "bnah" became "banh" (typos need 5+ letters)
   assert.equal(typo.state.course, "stg-khoa-c");
   const named = stepRaw({ ...draft, draftMisses: 0 }, txt(EXACT), ctx());
   assert.equal(named.state.course, "stg-khoa-c", "the draft is never replaced by typing a name");
@@ -196,7 +198,7 @@ test("INT-17 'gia' and 'chương trình' look-alikes; more content wordings", ()
   }
   assert.equal(stepRaw(G(), txt("khoá làm bánh có chương trình khuyến mãi không"), ctx()).action?.type, "ai");
   for (const t of ["khoá làm bánh dạy những món gì", "khoá làm bánh học món gì", "khoá làm bánh gồm những gì"]) {
-    assert.deepEqual(payloads(stepRaw(G(), txt(t), ctx()).replies[0]), ["INFO:stg-khoa-b:content", "LIST"], t);
+    assert.deepEqual(payloads(stepRaw(G(), txt(t), ctx()).replies[0]), ["DETAIL:stg-khoa-b", "LIST"], t); // G-LIVE-ux F-A7
   }
 });
 

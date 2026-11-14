@@ -139,7 +139,7 @@ test("AI-8 no AI call for: draft, open ticket, order text with orders, greeting,
     [greeted(), "xin chào", ctx()],
     [greeted(), "mình muốn biết vào học ở đâu", ctx()],
     [greeted(), "cho hỏi khoá test", ctx()],
-    [greeted(), "khoa tset", ctx()],
+    // G-LIVE-ux F-A6: "tset" (4 letters) is no longer a typo of "test"; fuzzy matching is covered in messenger-glive-ux.test.js.
   ];
   for (const [s, t, c] of cases) assert.notEqual(stepRaw(s, TXT(t), c).action?.type, "ai", t);
 });
@@ -235,7 +235,7 @@ test("ROUTE-1 with orders: a course question goes to the AI", () => {
 });
 test("ROUTE-2 with orders: order text shows the pending orders, no AI", () => {
   for (const t of ["đơn của mình duyệt chưa", "don minh duyet chua", "mình chuyển khoản rồi", "ck xong roi", "gửi bill rồi đó", "khi nào kích hoạt", "cấp quyền giúp mình", "Đơn A sao rồi", "mình đã chuyển khoản", "da ck nha", "thanh toán rồi", "chuyển tiền xong rồi", "đơn".normalize("NFD") + " mình sao rồi"]) {
-    assert.equal(stepRaw(withOrders(), TXT(t), ctx()).action?.type, "pendingOrders", t);
+    assert.equal(stepRaw(withOrders(), TXT(t), ctx()).action?.type, "myOrders", t); // G-LIVE-ux F-A1: pending + approved view
   }
 });
 test("ROUTE-3 order words do not match by mistake", () => {
@@ -243,8 +243,8 @@ test("ROUTE-3 order words do not match by mistake", () => {
     assert.equal(stepRaw(withOrders(), TXT(t), ctx()).action?.type, "ai", t);
   }
 });
-test("ROUTE-4 with orders, no usable AI answer: pending orders as before G-MC1", () => {
-  assert.equal(aiReply(withOrders(), null, ctx()).action?.type, "pendingOrders");
+test("ROUTE-4 with orders, no usable AI answer: the orders view (G-LIVE-ux F-A1: myOrders, pending + approved)", () => {
+  assert.equal(aiReply(withOrders(), null, ctx()).action?.type, "myOrders");
   // Gate 1b: "clarify" means the AI answered; the customer did not ask about orders.
   const clarify = aiReply(withOrders(), { route: "clarify", answer: null, course_slug: null, sources: [] }, ctx());
   assert.equal(clarify.action, undefined);
@@ -252,9 +252,12 @@ test("ROUTE-4 with orders, no usable AI answer: pending orders as before G-MC1",
   assert.equal(aiReply(withOrders(), { route: "ticket", answer: null, course_slug: null, sources: [] }, ctx()).action.reason, "unclear");
   assert.deepEqual(aiReply(greeted(), null, ctx()), freeTextFallback(greeted()), "no orders: unchanged");
 });
-test("ROUTE-5 with orders, flag off or cap reached: pending orders, no AI (same as before)", () => {
-  assert.equal(stepRaw(withOrders(), TXT(UNCLEAR), ctx({ aiEnabled: false })).action?.type, "pendingOrders");
-  assert.equal(stepRaw({ ...withOrders(), ai: { day: "2026-11-10", n: AI_DAILY_CAP } }, TXT(UNCLEAR), ctx()).action?.type, "pendingOrders");
+// G-LIVE-ux F-A1/F-A2: the "unknown text with orders -> pending list" catch-all is gone; unknown text gets the "chưa hiểu" menu, no ticket.
+test("ROUTE-5 with orders, flag off or cap reached: 'chưa hiểu' menu, no AI, no ticket", () => {
+  for (const out of [stepRaw(withOrders(), TXT(UNCLEAR), ctx({ aiEnabled: false })), stepRaw({ ...withOrders(), ai: { day: "2026-11-10", n: AI_DAILY_CAP } }, TXT(UNCLEAR), ctx())]) {
+    assert.equal(out.action, undefined);
+    assert.match(out.replies[0].menu.intro, /chưa hiểu/);
+  }
 });
 test("ROUTE-6 with orders: open ticket, pendingAdmin, draft (draftMisses 0/1) keep their flow", () => {
   assert.equal(stepRaw(withOrders(), TXT(UNCLEAR), ctx({ activeTicket: { id: "t" } })).action?.type, "touchTicket");
@@ -277,7 +280,7 @@ test("ROUTE-7 DO: customer with orders asks a course question and gets the AI an
 test("ROUTE-8 DO: AI fails for a customer with orders -> pending orders lookup runs", async () => {
   let t = Date.UTC(2026, 10, 10, 5);
   let looked = 0;
-  const { c } = convo({ deps: { now: () => (t += 1000), runAi: async () => null, loadPendingOrders: async () => { looked++; return []; } } });
+  const { c } = convo({ deps: { now: () => (t += 1000), runAi: async () => null, loadMyOrders: async () => { looked++; return []; } } }); // G-LIVE-ux F-A1
   await c.storage.put("s", { state: withOrders(), mids: [], hits: [] });
   await c.handle(PSID, ev("khoá này học gì vậy"));
   assert.ok(looked >= 1);
@@ -297,11 +300,12 @@ test("ROUTE-9 DO: stale AI answer for a customer with orders runs no pending-ord
   await first;
   assert.equal(looked, before, "no lookup for the stale AI turn");
 });
-test("ROUTE-10 with orders: U8 after a long gap with a draft still asks to resume (no AI)", () => {
+test("ROUTE-10 with orders: a long gap with a draft no longer asks to resume (no AI)", () => {
+  // G-LIVE-ux O3: U8 removed.
   const now = Date.UTC(2026, 10, 10, 5);
   const s = { ...withOrders(), course: "khoa-test", lastInboundAt: now - 13 * 3600 * 1000 };
-  const out = stepRaw(s, TXT(UNCLEAR), ctx({ now, resumeGapMs: 12 * 3600 * 1000 }));
+  const out = stepRaw(s, TXT(UNCLEAR), ctx({ now }));
   assert.notEqual(out.action?.type, "ai");
-  assert.ok(out.replies.some((r) => r.menu?.resume), "U8 resume question");
+  assert.ok(!out.replies.some((r) => r.menu?.resume));
 });
 

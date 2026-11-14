@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   step, stepRaw, renderReplies, menuButtons, emptyState, normalizeState, MENU3, busyReplies, ordersSummaryReplies,
-  NO_PENDING_TEXT, UNVERIFIED_TEXT
+  NO_PENDING_TEXT, NO_ORDERS_TEXT, UNVERIFIED_TEXT
 } from "../utils/messenger/bot.js";
 import { MessengerConversation, loadCourses, loadPendingOrders } from "../cloudflare/commerce-worker/src/messenger.js";
 
@@ -74,6 +74,8 @@ function harness({ rows = [], courses = COURSES, statuses = {}, tickets = true, 
     activeTicket: async () => null, openTicket: async () => ({ ok: true }), touchTicket: async () => {},
     loadOrder: async (id) => statuses[id] ?? null,
     loadPendingOrders: (a) => loadPendingOrders(a, db),
+    // G-LIVE-ux F-A1: the orders view reads through loadMyOrders; these tests keep the pending-only fake DB (statuses are tested in messenger-glive-ux).
+    loadMyOrders: async (a) => (await loadPendingOrders(a, db)).map((r) => ({ ...r, status: "Chờ duyệt", email: "" })),
     loadCourseOrders: async () => [],
     createBillOrder: async (input, opts) => { orders.push({ input, opts }); return { status: 200, body: { orderId: `new${orders.length}` } }; },
     ...deps
@@ -202,7 +204,8 @@ test("UX-07 CANCEL_DRAFT clears the draft, keeps orders, writes nothing to the D
 test("UX-08 draft B: first stray text repeats Gmail with exit buttons, second runs free text; the draft stays", () => {
   const st = { ...G, course: "khoa_b" };
   const one = step(st, txt("blah blah"), ctx());
-  assert.equal(one.replies[0].text, "Bạn gửi Gmail dùng để học (đăng nhập Google trên trang học) nhé.");
+  // G-LIVE-ux F-A8: T9 adds the example "ten@gmail.com".
+  assert.equal(one.replies[0].text, "Bạn gửi Gmail dùng để học (đăng nhập Google trên trang học), ví dụ ten@gmail.com nhé.");
   assert.deepEqual(one.replies[0].quick_replies.map((q) => q.payload ?? q.content_type), ["user_email", "CHANGE_COURSE", "CANCEL_DRAFT", "ADMIN"]); // U9 adds "Đổi khóa học"
   assert.equal(one.state.draftMisses, 1);
   const two = step(one.state, txt("blah blah"), ctx());
@@ -212,14 +215,15 @@ test("UX-08 draft B: first stray text repeats Gmail with exit buttons, second ru
   assert.equal(step(one.state, pb("ADMIN"), ctx()).state.draftMisses, 0, "any button resets");
 });
 
-test("UX-09 typo 'khoa bnah': one close course asks, two list; nothing is assigned", () => {
-  const banhMi = { ...A, slug: "banh-mi", title: "Làm Bánh Mì" };
-  const banhBao = { ...A, slug: "banh-bao", title: "Làm Bánh Bao" };
-  const one = step(G, txt("khoa bnah"), ctx({ courses: [banhMi, { ...B, title: "Pha chế" }] }));
-  assert.equal(one.replies[0].text, "Bạn muốn hỏi khóa Làm Bánh Mì?");
+// G-LIVE-ux F-A6: a typo only counts for words of 5+ letters ("bnah" is 4 letters), so the test uses "chiffon".
+test("UX-09 typo 'khoa chifon': one close course asks, two list; nothing is assigned", () => {
+  const banhMi = { ...A, slug: "banh-mi", title: "Làm Chiffon" };
+  const banhBao = { ...A, slug: "banh-bao", title: "Làm Chiffoa" };
+  const one = step(G, txt("khoa chiffo"), ctx({ courses: [banhMi, { ...B, title: "Pha chế" }] }));
+  assert.equal(one.replies[0].text, "Bạn muốn hỏi khóa Làm Chiffon?");
   assert.deepEqual(one.replies[0].quick_replies.map((q) => [q.title, q.payload]), [["Đúng", "INFO:banh-mi:general"], ["Không", "LIST"]]);
   assert.equal(one.state.course, null);
-  const two = step(G, txt("khoa bnah"), ctx({ courses: [banhMi, banhBao] }));
+  const two = step(G, txt("khoa chiffo"), ctx({ courses: [banhMi, banhBao] }));
   assert.equal(two.state.course, null);
   assert.equal(elements(two.replies.at(-1)).length, 2);
   assert.match(two.replies[0].text, /^Có 2 khóa/);
@@ -229,7 +233,7 @@ test("UX-10 image with an incomplete draft reminds the missing step and creates 
   const h = harness();
   await h.seed({ course: "khoa_b" });
   const m = lastOf(await h.img());
-  assert.equal(m.text, "Bạn gửi Gmail dùng để học (đăng nhập Google trên trang học) nhé.");
+  assert.equal(m.text, "Bạn gửi Gmail dùng để học (đăng nhập Google trên trang học), ví dụ ten@gmail.com nhé."); // G-LIVE-ux: T9
   assert.equal(h.orders.length, 0);
 });
 
@@ -260,17 +264,18 @@ test("UX-13 no pending order: exact sentence + LIST_OTHER + MENU", async () => {
   const h = harness();
   await h.seed({});
   const m = lastOf(await h.press("PENDING_ORDERS"));
-  assert.equal(m.text, "Bạn hiện không có đơn đăng ký nào đang chờ duyệt.");
-  assert.equal(m.text, NO_PENDING_TEXT);
-  assert.deepEqual(payloads(m), ["LIST_OTHER", "MENU"]);
+  // G-LIVE-ux F-A1: the button now reads pending + approved orders; none = T8 with Chat với Admin.
+  assert.equal(m.text, NO_ORDERS_TEXT);
+  assert.deepEqual(payloads(m), ["ADMIN", "MENU"]);
 });
 
 test("UX-14 one pending order: title, one line (course + bill date in Vietnam time), 2 buttons", async () => {
   const h = harness({ rows: [ord("oA", "khoa-a", { title: "Khóa A", at: "2026-11-09T18:00:00Z" })] });
   await h.seed({ orders: [{ id: "oA", slug: "khoa-a" }] });
   const m = lastOf(await h.say("đơn của tôi"));
-  assert.equal(m.text, "Đơn của tôi đang chờ duyệt\nKhóa A — gửi bill 10/11/2026");
-  assert.deepEqual(payloads(m), ["LIST_OTHER", "MENU"]);
+  // G-LIVE-ux F-A1: T7 text and buttons.
+  assert.equal(m.text, "Đơn của bạn:\nKhóa A — Chờ duyệt (gửi bill 10/11/2026)");
+  assert.deepEqual(payloads(m), ["ADMIN", "LIST_OTHER", "MENU"]);
   assert.ok(!/oA|1234567890123|@/.test(m.text), "no id, PSID or Gmail");
 });
 
@@ -279,16 +284,17 @@ test("UX-15 several pending orders: one line each in created_at order; two order
   const h = harness({ rows });
   await h.seed({ orders: [{ id: "o1", slug: "khoa-a" }, { id: "o2", slug: "khoa_b" }, { id: "o3", slug: "khoa-a" }] });
   const m = lastOf(await h.press("PENDING_ORDERS"));
-  assert.equal(m.text, "Đơn của tôi đang chờ duyệt\nKhóa A — gửi bill 05/11/2026\nKhóa B — gửi bill 07/11/2026\nKhóa A — gửi bill 09/11/2026");
+  // G-LIVE-ux F-A1: T7 line format.
+  assert.equal(m.text, "Đơn của bạn:\nKhóa A — Chờ duyệt (gửi bill 05/11/2026)\nKhóa B — Chờ duyệt (gửi bill 07/11/2026)\nKhóa A — Chờ duyệt (gửi bill 09/11/2026)");
 });
 
 test("UX-16 order approved in the DB is gone from the list although the DO still holds it", async () => {
   const rows = [ord("oA", "khoa-a", { status: "Đã duyệt" }), ord("oB", "khoa_b", { title: "Khóa B" })];
   const h = harness({ rows });
   await h.seed({ orders: [{ id: "oA", slug: "khoa-a" }, { id: "oB", slug: "khoa_b" }] });
-  assert.equal(lastOf(await h.press("PENDING_ORDERS")).text, "Đơn của tôi đang chờ duyệt\nKhóa B — gửi bill 09/11/2026");
+  assert.equal(lastOf(await h.press("PENDING_ORDERS")).text, "Đơn của bạn:\nKhóa B — Chờ duyệt (gửi bill 09/11/2026)"); // G-LIVE-ux: T7
   rows[1].status = "Từ chối";
-  assert.equal(lastOf(await h.press("PENDING_ORDERS")).text, NO_PENDING_TEXT);
+  assert.equal(lastOf(await h.press("PENDING_ORDERS")).text, NO_ORDERS_TEXT); // G-LIVE-ux: T8
 });
 
 test("UX-17 mixed statuses: only the Chờ duyệt line is shown", async () => {
@@ -298,7 +304,7 @@ test("UX-17 mixed statuses: only the Chờ duyệt line is shown", async () => {
     await h.seed({ orders: rows.map((r) => ({ id: r.id, slug: r.course_slug })) });
     const m = lastOf(await h.press("PENDING_ORDERS"));
     assert.ok(m.text.includes("Khóa A"));
-    assert.ok(!/Khóa B|X —|Y —/.test(m.text.replace("Đơn của tôi đang chờ duyệt", "")) || lax, "DB filters status");
+    assert.ok(!/Khóa B|X —|Y —/.test(m.text.replace("Đơn của bạn:", "")) || lax, "DB filters status");
   }
   const h = harness({ rows });
   assert.ok(h.db.log.length === 0);
@@ -312,7 +318,7 @@ test("UX-18 other PSID or other Page: never listed (DB filter and the JS re-chec
   for (const lax of [false, true]) {
     const h = harness({ rows, dbOpts: { lax } });
     await h.seed({ orders: [{ id: "o1", slug: "khoa-a" }, { id: "o2", slug: "khoa_b" }] });
-    assert.equal(lastOf(await h.press("PENDING_ORDERS")).text, NO_PENDING_TEXT, `lax=${lax}`);
+    assert.equal(lastOf(await h.press("PENDING_ORDERS")).text, NO_ORDERS_TEXT, `lax=${lax}`); // G-LIVE-ux: T8
   }
   const h = harness({ rows });
   await h.seed({});
@@ -328,7 +334,7 @@ test("UX-19 old order without pageId: shown only when its id is in the DO and th
   const h = harness({ rows, dbOpts: { lax: true } });
   await h.seed({ orders: [{ id: "inDo", slug: "khoa-a" }, { id: "otherPsid", slug: "khoa_b" }] });
   const m = lastOf(await h.press("PENDING_ORDERS"));
-  assert.equal(m.text, `Đơn của tôi đang chờ duyệt\nKhóa A — gửi bill 09/11/2026\n\n${UNVERIFIED_TEXT}`);
+  assert.equal(m.text, `Đơn của bạn:\nKhóa A — Chờ duyệt (gửi bill 09/11/2026)\n\n${UNVERIFIED_TEXT}`); // G-LIVE-ux: T7
   assert.ok(!m.text.includes("Khóa B"));
 });
 
@@ -410,7 +416,7 @@ test("UX-28 several pending orders: exactly one PENDING_ORDERS button; pressing 
   const h = harness({ rows });
   await h.seed({ orders: rows.map((r) => ({ id: r.id, slug: r.course_slug })) });
   assert.equal(payloads(lastOf(await h.say("hi"))).filter((p) => p === "PENDING_ORDERS").length, 1);
-  assert.equal(lastOf(await h.press("PENDING_ORDERS")).text.split("\n").length, 4);
+  assert.equal(lastOf(await h.press("PENDING_ORDERS")).text.split("\n").length, 4); // header + 3 lines (G-LIVE-ux: T7 header "Đơn của bạn:")
 });
 
 test("UX-29 no pending order -> 3 buttons; button present, Admin approves, next 'hi' has no button", async () => {
