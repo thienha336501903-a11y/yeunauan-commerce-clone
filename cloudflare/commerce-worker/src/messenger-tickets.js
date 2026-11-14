@@ -2,7 +2,7 @@
 // routed by app.js through runCompatHandler, same (req, res) shape and Admin auth as api/orders.js.
 import { enforceSameOriginAdminRequest } from "../../../utils/admin-cors.js";
 import { supabase } from "../../../utils/supabase.js";
-import { getActiveTicket, isTicketId, listTicketRows, setTicketStatus, toView } from "../../../utils/messenger/tickets.js";
+import { getActiveTicket, isTicketId, listActiveTicketRows, listTicketRows, markTicketSeen, setTicketStatus, toView } from "../../../utils/messenger/tickets.js";
 import { fetchProfileName } from "../../../utils/messenger/meta.js";
 import { loadCourses } from "./messenger.js";
 
@@ -33,12 +33,21 @@ export function createHandler(db = supabase, { fetchImpl = fetch } = {}) {
     try {
       if (req.method === "GET") {
         // Sellable courses for the "send registration" picker; a failure only empties the picker.
+        // ?changes=1: the page's 30-second check. Ids, status and times only: no Meta call, no courses, no text.
+        if (String(req.query?.changes || "") === "1") {
+          const rows = await listActiveTicketRows(db);
+          return res.status(200).json({ changes: rows.map(({ id, status, updated_at, customer_msg_at, seen_at }) => ({ id, status, updated_at, customer_msg_at: customer_msg_at || null, seen_at: seen_at || null })) });
+        }
         const courses = await loadCourses(env, db).then((list) => list.map(({ slug, title }) => ({ slug, title }))).catch(() => []);
         return res.status(200).json({ tickets: await ticketsWithNames(env, db, fetchImpl), courses });
       }
       if (req.method === "POST") {
-        const { id, status, action, slug } = req.body || {};
+        const { id, status, action, slug, seenAsOf } = req.body || {};
         if (action === "offer") return await offer(env, db, id, slug, res);
+        if (action === "seen") {
+          const seen = await markTicketSeen(id, db, seenAsOf);
+          return seen.ok ? res.status(200).json({ success: true }) : res.status(seen.status).json({ error: seen.error });
+        }
         const result = await setTicketStatus(id, status, db);
         return result.ok ? res.status(200).json({ success: true }) : res.status(result.status).json({ error: result.error });
       }

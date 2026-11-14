@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { redactSummary, openTicket, activeTicket, setTicketStatus } from "../utils/messenger/tickets.js";
+import { redactSummary, openTicket, activeTicket, setTicketStatus, touchTicket, markTicketSeen, listTicketRows } from "../utils/messenger/tickets.js";
 import { step, emptyState, TICKET_OK_TEXT, TICKET_FAIL_TEXT } from "../utils/messenger/bot.js";
 import { MessengerConversation, loadFaq } from "../cloudflare/commerce-worker/src/messenger.js";
 import { createHandler } from "../cloudflare/commerce-worker/src/messenger-tickets.js";
@@ -22,7 +22,7 @@ const optionsOf = (m) => [...(m.attachment?.payload?.buttons || []), ...(m.quick
 const UUID = "123e4567-e89b-42d3-a456-426614174000";
 
 // In-memory stand-in for the supabase query builder, enough for tickets.js. Mimics the partial unique index (23505).
-function fakeDb({ failInsert = false, failAll = false } = {}) {
+function fakeDb({ failInsert = false, failAll = false, noActivityColumns = false, missingCode = "42703" } = {}) {
   const rows = [];
   const log = [];
   let seq = 0;
@@ -31,6 +31,8 @@ function fakeDb({ failInsert = false, failAll = false } = {}) {
     const run = () => {
       log.push(q.op);
       if (failAll) return { error: { code: "XX000" } };
+      // A database before migration 20261114100000 (Production until its gate): the two columns are unknown.
+      if (noActivityColumns && ((q.payload && ("customer_msg_at" in q.payload || "seen_at" in q.payload)) || /customer_msg_at|seen_at/.test(q.cols || ""))) return { error: { code: q.op === "update" ? missingCode : "42703" } };
       const match = (r) => q.filters.every(([k, v, isIn]) => (isIn ? v.includes(r[k]) : r[k] === v));
       if (q.op === "insert") {
         if (failInsert) return { error: { code: "XX000" } };
@@ -48,7 +50,7 @@ function fakeDb({ failInsert = false, failAll = false } = {}) {
     const api = {
       insert(p) { q.op = "insert"; q.payload = p; return api; },
       update(p) { q.op = "update"; q.payload = p; return api; },
-      select() { return api; },
+      select(cols) { q.cols = cols; return api; },
       eq(k, v) { q.filters.push([k, v]); return api; },
       in(k, v) { q.filters.push([k, v, true]); return api; },
       order() { return api; },
@@ -324,11 +326,11 @@ test("loadFaq returns nothing while every faq.json entry is a draft", () => {
 });
 
 // ---- Admin endpoint ----
-async function call(handler, { method = "GET", password, body, flag = "1", adminPassword = "pw" } = {}) {
+async function call(handler, { method = "GET", password, body, flag = "1", adminPassword = "pw", path = "/api/messenger-tickets" } = {}) {
   process.env.MESSENGER_TICKETS_ENABLED = flag;
   process.env.ADMIN_PASSWORD = adminPassword;
   const headers = { "content-type": "application/json", ...(password === undefined ? {} : { "x-admin-password": password }) };
-  const res = await runCompatHandler(handler, new Request("https://yeubep.shop/api/messenger-tickets", { method, headers, body: body && JSON.stringify(body) }));
+  const res = await runCompatHandler(handler, new Request("https://yeubep.shop" + path, { method, headers, body: body && JSON.stringify(body) }));
   return { status: res.status, json: await res.json().catch(() => null) };
 }
 
@@ -469,4 +471,131 @@ test("migration grants the service role exactly what tickets.js uses, nothing to
   assert.match(sql, /revoke all on table public\.messenger_support_tickets from public, anon, authenticated;/);
   assert.match(sql, /force row level security;/);
   assert.doesNotMatch(sql, /grant[^;]*to[^;]*\b(anon|authenticated)\b/i);
+});
+
+// ---- "Có tin mới" (Owner 14/11): customer_msg_at / seen_at ----
+test("ACT-1 touchTicket marks a customer message on an open ticket only; a ticket closed meanwhile is not flagged", async () => {
+  const db = fakeDb();
+  db.rows.push({ id: UUID, page_id: PAGE, psid: PSID, reason: "support", summary: "", status: "in_progress", created_at: "2026-11-14T00:00:00Z" });
+  await touchTicket(UUID, db);
+  assert.ok(db.rows[0].customer_msg_at && db.rows[0].updated_at);
+  db.rows[0].status = "done";
+  delete db.rows[0].customer_msg_at;
+  await touchTicket(UUID, db);
+  assert.equal(db.rows[0].customer_msg_at, undefined);
+});
+
+test("ACT-2 an Admin reply from the inbox on an open ticket counts as seen; a new ticket from an Admin reply has no customer message", async () => {
+  const db = fakeDb();
+  db.rows.push({ id: UUID, page_id: PAGE, psid: PSID, reason: "support", summary: "", status: "open", created_at: "2026-11-14T00:00:00Z", customer_msg_at: "2026-11-14T00:01:00.000Z" });
+  const r = await openTicket({ pageId: PAGE, psid: PSID, reason: "admin_reply", status: "in_progress" }, db);
+  assert.equal(r.existing, true);
+  assert.ok(db.rows[0].seen_at > db.rows[0].customer_msg_at);
+  assert.equal(db.rows[0].status, "in_progress");
+  const db2 = fakeDb();
+  db2.rows.push({ id: UUID, page_id: PAGE, psid: PSID, reason: "support", summary: "", status: "open", created_at: "2026-11-14T00:00:00Z" });
+  await openTicket({ pageId: PAGE, psid: PSID, reason: "human" }, db2); // a customer request on an open ticket is not "seen"
+  assert.equal(db2.rows[0].seen_at, undefined);
+});
+
+test("ACT-3 markTicketSeen: open tickets only, uuid required; a database without the columns answers not_migrated", async () => {
+  const db = fakeDb();
+  db.rows.push({ id: UUID, page_id: PAGE, psid: PSID, reason: "support", summary: "", status: "open", created_at: "2026-11-14T00:00:00Z" });
+  assert.equal((await markTicketSeen("nope", db)).status, 400);
+  assert.equal((await markTicketSeen(UUID, db)).ok, true);
+  assert.ok(db.rows[0].seen_at);
+  db.rows[0].status = "done";
+  assert.equal((await markTicketSeen(UUID, db)).status, 400);
+  const old = fakeDb({ noActivityColumns: true });
+  old.rows.push({ id: UUID, page_id: PAGE, psid: PSID, reason: "support", summary: "", status: "open", created_at: "2026-11-14T00:00:00Z" });
+  assert.deepEqual(await markTicketSeen(UUID, old), { ok: false, status: 409, error: "not_migrated" });
+});
+
+test("ACT-4 before the migration: list, touch and Admin-reply still work on the old columns (no 500, no lost ticket)", async () => {
+  const db = fakeDb({ noActivityColumns: true });
+  db.rows.push({ id: UUID, page_id: PAGE, psid: PSID, reason: "support", summary: "", status: "open", created_at: "2026-11-14T00:00:00Z" });
+  assert.equal((await listTicketRows(db)).length, 1);
+  await touchTicket(UUID, db);
+  assert.ok(db.rows[0].updated_at);
+  assert.equal((await openTicket({ pageId: PAGE, psid: PSID, reason: "admin_reply", status: "in_progress" }, db)).ok, true);
+  assert.equal(db.rows[0].status, "in_progress");
+  try {
+    const r = await call(createHandler(db), { password: "pw" });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.tickets.length, 1);
+  } finally { delete process.env.MESSENGER_TICKETS_ENABLED; delete process.env.ADMIN_PASSWORD; }
+});
+
+test("ACT-5 endpoint: ?changes=1 returns ids, status and times of open tickets only (no text, no name, no PSID, no Meta call); 'seen' needs the Admin password", async () => {
+  const db = fakeDb();
+  db.rows.push({ id: UUID, page_id: PAGE, psid: PSID, reason: "support", summary: "em ck roi", status: "in_progress", created_at: "2026-11-14T00:00:00Z", updated_at: "2026-11-14T00:02:00Z", customer_msg_at: "2026-11-14T00:02:00Z" });
+  db.rows.push({ id: "22222222-2222-4222-8222-222222222222", page_id: PAGE, psid: "998877665544", reason: "human", summary: "x", status: "done", created_at: "2026-11-13T00:00:00Z" });
+  let metaCalls = 0;
+  const handler = createHandler(db, { fetchImpl: async () => { metaCalls++; return new Response("{}"); } });
+  try {
+    process.env.META_PAGE_ACCESS_TOKEN = "tok";
+    const ch = await call(handler, { password: "pw", path: "/api/messenger-tickets?changes=1" });
+    assert.equal(ch.status, 200);
+    assert.deepEqual(ch.json, { changes: [{ id: UUID, status: "in_progress", updated_at: "2026-11-14T00:02:00Z", customer_msg_at: "2026-11-14T00:02:00Z", seen_at: null }] });
+    assert.equal(metaCalls, 0);
+    assert.equal((await call(handler, { path: "/api/messenger-tickets?changes=1" })).status, 401);
+    assert.equal((await call(handler, { method: "POST", body: { id: UUID, action: "seen" } })).status, 401);
+    assert.equal((await call(handler, { method: "POST", password: "pw", body: { id: UUID, action: "seen" } })).status, 200);
+    assert.ok(db.rows[0].seen_at);
+    assert.equal(db.rows[0].status, "in_progress"); // "Đã xem" does not change the ticket status
+  } finally {
+    delete process.env.META_PAGE_ACCESS_TOKEN;
+    delete process.env.MESSENGER_TICKETS_ENABLED;
+    delete process.env.ADMIN_PASSWORD;
+  }
+});
+
+test("ACT-6 DO: while a ticket is open a customer message only touches it (bot silent); an Admin echo never touches it; a redelivered mid touches once", async () => {
+  const touched = [];
+  const { convo, sent } = ticketConvo({ deps: { activeTicket: async () => ({ id: UUID, status: "in_progress" }), touchTicket: async (id) => { touched.push(id); } } });
+  const before = sent.length;
+  await convo.handle(PSID, msg("c1", { text: "em chuyển khoản rồi" }));
+  await convo.handle(PSID, msg("c1", { text: "em chuyển khoản rồi" })); // Meta redelivery
+  await convo.handle(PSID, msg("c2", { attachments: [{ type: "image", payload: { url: "https://scontent.xx.fbcdn.net/v/bill.jpg" } }] }));
+  await convo.handle(PSID, { sender: { id: PAGE }, recipient: { id: PSID }, timestamp: 1, message: { mid: "e1", is_echo: true, text: "Admin trả lời", app_id: 999 } });
+  assert.deepEqual(touched, [UUID, UUID]);
+  assert.equal(sent.length, before); // bot silent
+});
+
+test("ACT-7 Admin page: 'Có tin mới' badge, newest-first order, 'Đã xem' button, 30-second light check only while visible", () => {
+  const html = readFileSync(new URL("../orders.html", import.meta.url), "utf8");
+  assert.match(html, /id="ticketNewBadge"/);
+  assert.match(html, /function hasNewMessage\(t\)/);
+  assert.match(html, /"Có tin mới"/);
+  assert.match(html, /"Đã xem"/);
+  assert.match(html, /\/api\/messenger-tickets\?changes=1/);
+  assert.match(html, /setInterval\(checkTicketChanges, 30000\)/);
+  assert.match(html, /if \(document\.hidden \|\| !currentAdminPassword/);
+});
+
+test("ACT-8 'Đã xem' records the message time the Admin saw: a message that arrived after the page loaded stays new; a future or bad time falls back to now", async () => {
+  const db = fakeDb();
+  db.rows.push({ id: UUID, page_id: PAGE, psid: PSID, reason: "support", summary: "", status: "open", created_at: "2026-11-14T00:00:00Z", customer_msg_at: "2026-11-14T00:05:00.000Z" });
+  assert.equal((await markTicketSeen(UUID, db, "2026-11-14T00:03:00.000Z")).ok, true);
+  assert.equal(db.rows[0].seen_at, "2026-11-14T00:03:00.000Z");
+  assert.ok(db.rows[0].customer_msg_at > db.rows[0].seen_at); // still "Có tin mới"
+  await markTicketSeen(UUID, db, "2999-01-01T00:00:00Z");
+  assert.ok(Date.parse(db.rows[0].seen_at) <= Date.now());
+  await markTicketSeen(UUID, db, "not a date");
+  assert.ok(Number.isFinite(Date.parse(db.rows[0].seen_at)));
+});
+
+test("ACT-9 before the migration with PostgREST's PGRST204 on updates, and ?changes=1 on an unmigrated database: no 500", async () => {
+  const db = fakeDb({ noActivityColumns: true, missingCode: "PGRST204" });
+  db.rows.push({ id: UUID, page_id: PAGE, psid: PSID, reason: "support", summary: "", status: "open", created_at: "2026-11-14T00:00:00Z" });
+  await touchTicket(UUID, db);
+  assert.ok(db.rows[0].updated_at);
+  assert.equal((await openTicket({ pageId: PAGE, psid: PSID, reason: "admin_reply", status: "in_progress" }, db)).ok, true);
+  assert.deepEqual(await markTicketSeen(UUID, db), { ok: false, status: 409, error: "not_migrated" });
+  try {
+    const r = await call(createHandler(db), { password: "pw", path: "/api/messenger-tickets?changes=1" });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.changes.length, 1);
+    assert.equal(r.json.changes[0].customer_msg_at, null);
+  } finally { delete process.env.MESSENGER_TICKETS_ENABLED; delete process.env.ADMIN_PASSWORD; }
 });

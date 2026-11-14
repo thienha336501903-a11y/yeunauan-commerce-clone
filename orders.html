@@ -112,7 +112,7 @@
       <!-- MESSENGER SUPPORT TICKETS (hidden until /api/messenger-tickets answers; filled with textContent only) -->
       <section id="ticketBox" class="hidden bg-white rounded-3xl p-6 border border-slate-100 shadow-sm mb-8">
         <div class="flex items-center justify-between gap-3 mb-4">
-          <h2 class="text-lg font-black text-slate-800 flex items-center gap-2">Cần hỗ trợ <span id="ticketBadge" class="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-slate-200 text-slate-700">0</span></h2>
+          <h2 class="text-lg font-black text-slate-800 flex items-center gap-2">Cần hỗ trợ <span id="ticketBadge" class="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-slate-200 text-slate-700">0</span><span id="ticketNewBadge" class="hidden px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-red-600 text-white"></span></h2>
           <a href="https://business.facebook.com/latest/inbox/all" target="_blank" rel="noopener" class="text-sm font-bold text-pink-600 hover:underline">Mở Hộp thư</a>
         </div>
         <div id="ticketList" class="space-y-2"></div>
@@ -413,14 +413,23 @@
       const late = active.some((t) => t.status === "open" && Date.now() - new Date(t.created_at).getTime() > TICKET_LATE_MS);
       badge.textContent = String(active.length);
       badge.className = "px-2.5 py-0.5 rounded-full text-xs font-extrabold " + (late ? "bg-red-600 text-white" : "bg-slate-200 text-slate-700");
-      for (const t of tickets) {
-        const row = ticketEl("div", "flex flex-wrap items-center gap-x-4 gap-y-1 rounded-2xl border border-slate-100 px-4 py-3 text-sm" + (t.status === "done" ? " opacity-60" : ""));
+      // Tickets with an unseen customer message first (newest message first), then the server's order.
+      const fresh = active.filter(hasNewMessage);
+      const newBadge = document.getElementById("ticketNewBadge");
+      newBadge.textContent = fresh.length + " có tin mới";
+      newBadge.classList.toggle("hidden", !fresh.length);
+      const order = [...fresh.sort((a, b) => new Date(b.customer_msg_at) - new Date(a.customer_msg_at)), ...tickets.filter((t) => !fresh.includes(t))];
+      for (const t of order) {
+        const isNew = fresh.includes(t);
+        const row = ticketEl("div", "flex flex-wrap items-center gap-x-4 gap-y-1 rounded-2xl border px-4 py-3 text-sm" + (isNew ? " border-red-300 bg-red-50" : " border-slate-100") + (t.status === "done" ? " opacity-60" : ""));
+        if (isNew) row.appendChild(ticketEl("span", "px-2 py-0.5 rounded-full text-xs font-extrabold bg-red-600 text-white", "Có tin mới"));
         row.appendChild(ticketEl("span", "text-slate-500", new Date(t.created_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })));
         row.appendChild(ticketEl("span", "font-bold", TICKET_REASONS[t.reason] || t.reason));
         row.appendChild(ticketEl("span", "flex-1 min-w-[8rem] text-slate-700", t.summary || ""));
         if (t.name) row.appendChild(ticketEl("span", "font-bold text-slate-800", t.name));
         row.appendChild(ticketEl("span", "font-mono text-slate-500", "…" + (t.psidTail || "")));
-        if (t.status !== "done" && t.updated_at) row.appendChild(ticketEl("span", "text-slate-500", "Hoạt động lúc " + ticketTime(t.updated_at)));
+        if (t.status !== "done" && t.customer_msg_at) row.appendChild(ticketEl("span", isNew ? "font-bold text-red-700" : "text-slate-500", "Khách nhắn lúc " + ticketTime(t.customer_msg_at)));
+        else if (t.status !== "done" && t.updated_at) row.appendChild(ticketEl("span", "text-slate-500", "Hoạt động lúc " + ticketTime(t.updated_at)));
         row.appendChild(ticketEl("span", "font-bold text-slate-600", TICKET_STATUS[t.status] || t.status));
         if (t.status === "open") {
           const take = ticketEl("button", "px-3 py-1 rounded-lg bg-slate-100 font-bold hover:bg-slate-200", "Nhận xử lý");
@@ -432,6 +441,11 @@
           const chat = ticketEl("button", "px-3 py-1 rounded-lg bg-slate-100 font-bold hover:bg-slate-200", "Mở chat");
           chat.addEventListener("click", () => openInbox(t));
           row.appendChild(chat);
+        }
+        if (isNew) {
+          const seen = ticketEl("button", "px-3 py-1 rounded-lg bg-red-100 text-red-700 font-bold hover:bg-red-200", "Đã xem");
+          seen.addEventListener("click", () => markSeen(t.id, t.customer_msg_at));
+          row.appendChild(seen);
         }
         if (t.status !== "done") {
           const finish = ticketEl("button", "px-3 py-1 rounded-lg bg-emerald-600 text-white font-bold hover:bg-emerald-700", "Hoàn thành");
@@ -451,16 +465,52 @@
       box.classList.remove("hidden");
     }
 
+    // "Có tin mới": the customer wrote after the Admin last pressed "Đã xem" or answered from the inbox (both kept in the DB).
+    function hasNewMessage(t) {
+      return t.status !== "done" && Boolean(t.customer_msg_at) && (!t.seen_at || new Date(t.customer_msg_at) > new Date(t.seen_at));
+    }
+    // What the 30-second check compares: one line per open ticket, so any status, message or "seen" change reloads the list.
+    const ticketSignature = (list) => list.filter((t) => t.status !== "done").map((t) => [t.id, t.status, t.customer_msg_at || "", t.seen_at || ""].join("|")).sort().join(";");
+    let ticketSig = null;
+
     async function loadTickets() {
       try {
         const res = await fetch("/api/messenger-tickets", { cache: "no-store", headers: { "X-Admin-Password": currentAdminPassword } });
         if (!res.ok) { document.getElementById("ticketBox").classList.add("hidden"); return; } // 404 = feature off
         const body = await res.json();
         ticketCourses = Array.isArray(body.courses) ? body.courses : [];
+        ticketSig = ticketSignature(body.tickets || []);
         renderTickets(body.tickets || []);
       } catch (err) {
         document.getElementById("ticketBox").classList.add("hidden");
       }
+    }
+
+    // Light check every 30 s while the page is visible: ids and times only (no Meta call); the full list only on a change.
+    async function checkTicketChanges() {
+      if (document.hidden || !currentAdminPassword || ticketSig === null) return;
+      try {
+        const res = await fetch("/api/messenger-tickets?changes=1", { cache: "no-store", headers: { "X-Admin-Password": currentAdminPassword } });
+        if (!res.ok) return;
+        const body = await res.json();
+        if (ticketSignature(body.changes || []) !== ticketSig) loadTickets();
+      } catch (err) { /* next round */ }
+    }
+    setInterval(checkTicketChanges, 30000);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) checkTicketChanges(); });
+
+    async function markSeen(id, seenAsOf) {
+      try {
+        const res = await fetch("/api/messenger-tickets", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Admin-Password": currentAdminPassword },
+          body: JSON.stringify({ id, action: "seen", seenAsOf })
+        });
+        if (!res.ok) showToast("Chưa đánh dấu đã xem được.");
+      } catch (err) {
+        showToast("Chưa đánh dấu đã xem được.");
+      }
+      loadTickets();
     }
 
     async function offerCourse(id, slug, title) {

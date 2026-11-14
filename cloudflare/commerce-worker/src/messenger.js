@@ -681,7 +681,7 @@ export class MessengerConversation {
       if (out.action?.type === "extraImage") replies.push(...await this.extraImageReplies(psid, finalState));
       if (out.action?.type === "listOther") replies.push(...await this.listOtherReplies(finalState, out.action.page));
       // Ticket writes also run after the state is saved. Admin replies (echo) are recorded without answering the customer.
-      if (out.action?.type === "touchTicket" && ticket) await deps.touchTicket(ticket.id);
+      if (out.action?.type === "touchTicket" && ticket) await this.timed(() => deps.touchTicket(ticket.id)).catch(() => {}); // a stuck DB must not hang the event
       if (out.action?.type === "openTicket") replies.push(...await this.openTicketReplies(psid, out.action, event));
       if (out.action?.type === "ai") {
         const r = aiReply(finalState, await this.runAi(out.action.text, ctx), ctx, out.action.match);
