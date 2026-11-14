@@ -21,6 +21,7 @@ const textOf = (m) => m.text ?? m.attachment?.payload?.text;
 const last = (msgs) => msgs.at(-1);
 const DUP_PENDING = "Bạn đã có đơn khóa này đang chờ Admin xác nhận.";
 const BUSY = "Hệ thống đang bận, bạn thử lại sau ít phút nhé.";
+const FEAT = "\n\nKhóa nổi bật: Khóa B."; // featured line after an ask:false text (Owner 14/11)
 const ASK_AB = "Bạn đang đăng ký dở khóa Khóa A. Bạn muốn đổi sang khóa Khóa B không?";
 
 // ---- fake orders DB: filters like PostgREST would, records every command ----
@@ -313,7 +314,7 @@ test("FIX-91 loadOrder that hangs past the timeout: busy message, no draft, the 
   const h = harness({ deps: { loadOrder: (id) => loadOrder(id, db, 30) } });
   await h.seed({ orders: [{ id: "oA", slug: "khoa-a" }], orderId: "oA" });
   const out = await h.press("BUY:khoa-a");
-  assert.equal(textOf(last(out)), BUSY);
+  assert.equal(textOf(last(out)), BUSY + FEAT); // featured button (Owner 14/11)
   assert.equal((await h.state()).course, null);
 });
 

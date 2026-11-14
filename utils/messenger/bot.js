@@ -113,10 +113,21 @@ export const MENU3 = [["Đăng ký khóa học", "BUY"], ["Xem khóa đang mở 
 const PENDING_BTN = ["Đơn của tôi", "PENDING_ORDERS"];
 const DRAFT_BTNS = [["Tiếp tục đăng ký", "CONTINUE_DRAFT"], ["Hủy đăng ký", "CANCEL_DRAFT"]];
 // The one builder of the main menu (B6). pendingMenu: "show" | "hide" | "unknown" (DB error: show only if the DO already holds an order id, B5).
-export function menuButtons(pendingMenu, hasOrdersInDo, extra = []) {
+// featured (Owner 14/11): the sellable featured course from the DB. The first button then registers THAT course (BUY:<slug>,
+// so an old button keeps meaning the course it named); a title over 20 characters is never cut: the button says
+// FEATURED_SHORT and the full title is in the message text (featuredLine).
+export const FEATURED_SHORT = "Đăng ký khóa này";
+const BUTTON_MAX = 20;
+export function menuButtons(pendingMenu, hasOrdersInDo, extra = [], featured = null) {
   const show = pendingMenu === "show" || (pendingMenu === "unknown" && Boolean(hasOrdersInDo));
-  return [...(show ? [MENU3[0], MENU3[1], PENDING_BTN, MENU3[2]] : MENU3), ...extra];
+  const title = featured ? featuredTitle(featured) : "";
+  // UTF-16 length: never longer than Meta's count whatever unit it uses (an emoji counts 2 here), so no title is refused or cut.
+  const first = featured ? [title.length <= BUTTON_MAX ? title : FEATURED_SHORT, `BUY:${featured.slug}`] : MENU3[0];
+  return [...(show ? [first, MENU3[1], PENDING_BTN, MENU3[2]] : [first, MENU3[1], MENU3[2]]), ...extra];
 }
+// One line, NFC (a title pasted from macOS may be decomposed), HTML removed.
+const featuredTitle = (c) => plain(c.title).normalize("NFC").replace(/\s+/g, " ").trim() || c.slug;
+export const featuredLine = (featured) => (featured ? `Khóa nổi bật: ${featuredTitle(featured)}.\n` : "");
 // Every message with the main menu is a placeholder; renderReplies fills it in once the DO knows pendingMenu.
 // ask:false = the intro is the whole text (greeting, busy, orders summary).
 const mainMenu = (intro, extra = [], ask = true) => [{ menu: { intro, extra, ask } }];
@@ -863,10 +874,15 @@ export function renderReplies(replies, view, ctx) {
   return replies.flatMap((r) => {
     if (r.menu) {
       const { intro, extra = [], ask = true } = r.menu;
-      const options = menuButtons(view.pendingMenu, (view.doOrderIds || []).length > 0, extra);
-      const t = `${intro}${ask ? "Bạn cần mình giúp gì?" : ""}`;
+      // ctx.courses holds only sellable courses (loadCourses) and at most one is featured: a paused/closed one never shows.
+      const featured = (ctx?.ticketsEnabled && (ctx.courses || []).find((c) => c.featured)) || null;
+      const options = menuButtons(view.pendingMenu, (view.doOrderIds || []).length > 0, extra, featured);
+      const line = featuredLine(featured);
+      // ask:false = the intro is a whole sentence (greeting, busy, orders): the course name goes on its own line after it,
+      // because a long title's button only says FEATURED_SHORT and the name must be on screen.
+      const t = ask ? `${intro}${line}Bạn cần mình giúp gì?` : `${intro}${line ? `\n\n${line.trim()}` : ""}`;
       // A template text holds 640 characters (a long order summary does not): send the intro as plain text first.
-      return t.length <= 640 ? [menuMessage(t, options)] : [text(intro), menuMessage("Bạn cần mình giúp gì?", options)];
+      return t.length <= 640 ? [menuMessage(t, options)] : [text(intro), menuMessage(`${line}Bạn cần mình giúp gì?`, options)];
     }
     if (r.courses) return courseList(r.courses, view, ctx);
     return [r];

@@ -31,6 +31,7 @@ const ASK_AB = "Bạn đang đăng ký dở khóa Khóa A. Bạn muốn đổi s
 const GMAIL_ASK = "Bạn gửi Gmail dùng để học (đăng nhập Google trên trang học), ví dụ ten@gmail.com nhé."; // G-LIVE-ux: T9
 const BILL_ASK = "Bạn chụp ảnh bill chuyển khoản và gửi vào đây nhé.";
 const BUSY = "Hệ thống đang bận, bạn thử lại sau ít phút nhé.";
+const FEAT = "\n\nKhóa nổi bật: Khóa B."; // featured line after an ask:false text (Owner 14/11)
 
 // ---- fake orders DB (records commands) ----
 const ord = (id, slug, o = {}) => ({ id, status: o.status ?? "Chờ duyệt", course_slug: slug, course_title: slug.toUpperCase(), created_at: "2026-11-09T10:00:00Z", raw_data: { psid: PSID, pageId: PAGE } });
@@ -116,7 +117,7 @@ test("U89-48 gap exactly 12:00:00: no U8 question; 'hi' shows the menu with the 
   h.later(H12);
   const m = last(await h.say("hi"));
   assert.ok(!textOf(m).includes("Trước đó"));
-  assert.deepEqual(payloads(m), ["BUY", "LIST", "ADMIN", "CONTINUE_DRAFT", "CANCEL_DRAFT"]);
+  assert.deepEqual(payloads(m), ["BUY:khoa_b", "LIST", "ADMIN", "CONTINUE_DRAFT", "CANCEL_DRAFT"]); // featured button (Owner 14/11)
   const s = await h.state();
   assert.deepEqual([s.course, s.gmail, s.gmailOk], ["khoa_b", "b@gmail.com", false]);
 });
@@ -192,7 +193,7 @@ test("U89-55 pending order, no draft, back after 12h: no U8; the menu has 'Đơn
   await h.seed({ orders: [{ id: "oA", slug: "khoa-a" }], lastInboundAt: T0 });
   h.later(H12 + 1);
   const m = last(await h.say("hi"));
-  assert.deepEqual(payloads(m), ["BUY", "LIST", "PENDING_ORDERS", "ADMIN"]);
+  assert.deepEqual(payloads(m), ["BUY:khoa_b", "LIST", "PENDING_ORDERS", "ADMIN"]); // featured button (Owner 14/11)
   assert.ok(!textOf(m).includes("Trước đó"));
 });
 
@@ -200,12 +201,12 @@ test("U89-56 draft + pending order: the menu has 'Đơn chờ duyệt' and the d
   const h = harness({ rows: [ord("oA", "khoa-a")] });
   await h.seed({ ...DRAFTS.confirm, orders: [{ id: "oA", slug: "khoa-a" }] });
   h.later(H12);
-  assert.deepEqual(payloads(last(await h.say("hi"))), ["BUY", "LIST", "PENDING_ORDERS", "ADMIN", "CONTINUE_DRAFT", "CANCEL_DRAFT"]); // G-LIVE-ux O3: no U8 variant
+  assert.deepEqual(payloads(last(await h.say("hi"))), ["BUY:khoa_b", "LIST", "PENDING_ORDERS", "ADMIN", "CONTINUE_DRAFT", "CANCEL_DRAFT"]); // G-LIVE-ux O3: no U8 variant // featured button (Owner 14/11)
   const bad = harness({ dbOpts: { fail: true } });
   await bad.seed(DRAFTS.confirm);
   bad.later(H12);
   const m = last(await bad.say("hi"));
-  assert.deepEqual(payloads(m), ["BUY", "LIST", "ADMIN", "CONTINUE_DRAFT", "CANCEL_DRAFT"]);
+  assert.deepEqual(payloads(m), ["BUY:khoa_b", "LIST", "ADMIN", "CONTINUE_DRAFT", "CANCEL_DRAFT"]); // featured button (Owner 14/11)
   assert.ok(!bad.sent.some((x) => (x.text || "").includes("không có đơn")));
 });
 
@@ -407,7 +408,7 @@ test("U89-74 DB error on the duplicate check while switching: busy message, draf
   const h = harness({ loadOrder: async () => { throw new Error("db down"); } });
   await h.seed({ course: "khoa_b", gmail: "b@gmail.com", orders: [{ id: "oA", slug: "khoa-a" }], orderId: "oA" });
   for (const p of ["BUY:khoa-a", "SWITCH:khoa-a"]) {
-    assert.equal(textOf(last(await h.press(p))), BUSY);
+    assert.equal(textOf(last(await h.press(p))), BUSY + FEAT); // featured button (Owner 14/11)
     const s = await h.state();
     assert.deepEqual([s.course, s.gmail], ["khoa_b", "b@gmail.com"]);
   }

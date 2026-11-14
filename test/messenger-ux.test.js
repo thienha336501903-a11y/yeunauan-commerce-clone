@@ -182,7 +182,7 @@ test("UX-06 draft B, 'hi' (and 'menu') shows the menu with Tiếp tục/Hủy đ
   const st = { ...G, course: "khoa_b" };
   for (const e of [txt("hi"), txt("menu"), pb("MENU")]) {
     const out = step(st, e, ctx());
-    assert.deepEqual(payloads(out.replies.at(-1)), ["BUY", "LIST", "ADMIN", "CONTINUE_DRAFT", "CANCEL_DRAFT"], JSON.stringify(e));
+    assert.deepEqual(payloads(out.replies.at(-1)), ["BUY:khoa_b", "LIST", "ADMIN", "CONTINUE_DRAFT", "CANCEL_DRAFT"], JSON.stringify(e)); // featured button (Owner 14/11)
     assert.equal(out.state.course, "khoa_b");
   }
   assert.equal(step({ ...st, gmail: "a@gmail.com" }, pb("CONTINUE_DRAFT"), ctx()).replies[0].text, 'Đăng ký khóa "Khóa B" bằng Gmail a@gmail.com. Đúng không?');
@@ -402,13 +402,13 @@ test("UX-25 empty or odd META_PAGE_ID: no query, busy message", async () => {
 test("UX-26 new customer: 'hi' shows 3 buttons, no PENDING_ORDERS", async () => {
   const h = harness();
   await h.seed({});
-  assert.deepEqual(payloads(lastOf(await h.say("hi"))), ["BUY", "LIST", "ADMIN"]);
+  assert.deepEqual(payloads(lastOf(await h.say("hi"))), ["BUY:khoa_b", "LIST", "ADMIN"]); // featured button (Owner 14/11)
 });
 
 test("UX-27 one pending order (with pageId): 'hi' shows 4 buttons", async () => {
   const h = harness({ rows: [ord("o1", "khoa-a")] });
   await h.seed({ orders: [{ id: "o1", slug: "khoa-a" }] });
-  assert.deepEqual(payloads(lastOf(await h.say("hi"))), ["BUY", "LIST", "PENDING_ORDERS", "ADMIN"]);
+  assert.deepEqual(payloads(lastOf(await h.say("hi"))), ["BUY:khoa_b", "LIST", "PENDING_ORDERS", "ADMIN"]); // featured button (Owner 14/11)
 });
 
 test("UX-28 several pending orders: exactly one PENDING_ORDERS button; pressing it lists each order", async () => {
@@ -423,7 +423,7 @@ test("UX-29 no pending order -> 3 buttons; button present, Admin approves, next 
   const rows = [ord("o1", "khoa-a", { status: "Đã duyệt" }), ord("o2", "khoa_b", { status: "Từ chối" }), ord("o3", "x", { status: "Hủy" })];
   const h = harness({ rows });
   await h.seed({ orders: rows.map((r) => ({ id: r.id, slug: r.course_slug })) });
-  assert.deepEqual(payloads(lastOf(await h.say("hi"))), ["BUY", "LIST", "ADMIN"]);
+  assert.deepEqual(payloads(lastOf(await h.say("hi"))), ["BUY:khoa_b", "LIST", "ADMIN"]); // featured button (Owner 14/11)
   const h2 = harness({ rows: [ord("o1", "khoa-a")] });
   await h2.seed({ orders: [{ id: "o1", slug: "khoa-a" }] });
   assert.ok(payloads(lastOf(await h2.say("hi"))).includes("PENDING_ORDERS"));
@@ -435,7 +435,7 @@ test("UX-30 pending order of another PSID or another Page: no button", async () 
   for (const lax of [false, true]) {
     const h = harness({ rows: [ord("o1", "khoa-a", { psid: OTHER_PSID }), ord("o2", "khoa_b", { pageId: "777" })], dbOpts: { lax } });
     await h.seed({ orders: [{ id: "o1", slug: "khoa-a" }, { id: "o2", slug: "khoa_b" }] });
-    assert.deepEqual(payloads(lastOf(await h.say("hi"))), ["BUY", "LIST", "ADMIN"], `lax=${lax}`);
+    assert.deepEqual(payloads(lastOf(await h.say("hi"))), ["BUY:khoa_b", "LIST", "ADMIN"], `lax=${lax}`); // featured button (Owner 14/11)
   }
 });
 
@@ -463,7 +463,7 @@ test("UX-33 DB error while building the menu and the DO is empty: 3 buttons, no 
   const h = harness({ dbOpts: { fail: true } });
   await h.seed({});
   const m = lastOf(await h.say("hi"));
-  assert.deepEqual(payloads(m), ["BUY", "LIST", "ADMIN"]);
+  assert.deepEqual(payloads(m), ["BUY:khoa_b", "LIST", "ADMIN"]); // featured button (Owner 14/11)
   assert.ok(!h.sent.some((x) => (x.text || "").includes("không có đơn")));
 });
 
@@ -493,7 +493,7 @@ test("UX-35 B6: every main-menu message is a placeholder rendered by one builder
   for (const r of raw) {
     assert.ok(r.menu && !r.quick_replies, JSON.stringify(r));
     assert.deepEqual(payloads(renderReplies([r], show, ctx())[0]).includes("PENDING_ORDERS"), true);
-    assert.deepEqual(payloads(renderReplies([r], hide, ctx())[0]).slice(0, 3), ["BUY", "LIST", "ADMIN"]);
+    assert.deepEqual(payloads(renderReplies([r], hide, ctx())[0]).slice(0, 3), ["BUY:khoa_b", "LIST", "ADMIN"]); // featured button (Owner 14/11)
   }
 });
 

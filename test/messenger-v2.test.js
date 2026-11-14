@@ -35,13 +35,13 @@ const textOf = (m) => m.text ?? m.attachment?.payload?.text;
 test("menu: exactly 3 buttons, exact titles and payloads, titles <= 20", () => {
   assert.deepEqual(MENU3, [["Đăng ký khóa học", "BUY"], ["Xem khóa đang mở bán", "LIST"], ["Chat với Admin", "ADMIN"]]);
   const out = step(G, txt("hi"), ctx());
-  assert.deepEqual(payloads(out.replies.at(-1)), ["BUY", "LIST", "ADMIN"]);
+  assert.deepEqual(payloads(out.replies.at(-1)), ["BUY:khoa_b", "LIST", "ADMIN"]); // featured button (Owner 14/11)
   assert.ok([...out.replies.at(-1).attachment.payload.buttons, ...(out.replies.at(-1).quick_replies || [])].every((q) => q.title.length <= 20));
 });
 
 test("menu: hi, menu, GET_STARTED, RESTART all show it; legacy payloads still work", () => {
   for (const e of [txt("hi"), txt("menu"), pb("GET_STARTED"), pb("RESTART"), txt("x", "MENU")]) {
-    assert.deepEqual(payloads(step(G, e, ctx()).replies.at(-1)), ["BUY", "LIST", "ADMIN"], JSON.stringify(e));
+    assert.deepEqual(payloads(step(G, e, ctx()).replies.at(-1)), ["BUY:khoa_b", "LIST", "ADMIN"], JSON.stringify(e)); // featured button (Owner 14/11)
   }
   // U7: the course list is a carousel (one card per course, "Đăng ký" = BUY:<slug>), not quick replies.
   const list = step(G, pb("MENU_COURSES"), ctx()).replies.at(-1);
@@ -55,7 +55,7 @@ test("menu: hi, menu, GET_STARTED, RESTART all show it; legacy payloads still wo
 test("greeting text is exact and comes first in a conversation", () => {
   const want = "Chào bạn! 👋 Mình là trợ lý tự động của Yêu học bánh. Bạn muốn đăng ký khóa học hay cần hỗ trợ gì ạ?";
   const out = step(emptyState(), pb("GET_STARTED"), ctx());
-  assert.equal(textOf(out.replies[0]), want);
+  assert.equal(textOf(out.replies[0]), want + "\n\nKhóa nổi bật: Khóa B."); // featured button (Owner 14/11)
   assert.equal(out.replies.length, 1);
   assert.equal(step(emptyState(), txt("menu"), ctx()).replies[0].text, want);
 });
@@ -72,7 +72,7 @@ test("ADMIN: one step with 2 quick replies; back goes to the menu", () => {
   const out = step(G, pb("ADMIN"), ctx());
   assert.equal(out.replies[0].text, "Bạn mô tả ngắn việc cần Admin hỗ trợ nhé.");
   assert.deepEqual(out.replies[0].quick_replies.map((q) => [q.title, q.payload]), [["Bỏ qua, gặp Admin", "ADMIN_SKIP"], ["Quay lại menu", "MENU"]]);
-  assert.deepEqual(payloads(step(out.state, txt("Quay lại menu", "MENU"), ctx()).replies[0]), ["BUY", "LIST", "ADMIN"]);
+  assert.deepEqual(payloads(step(out.state, txt("Quay lại menu", "MENU"), ctx()).replies[0]), ["BUY:khoa_b", "LIST", "ADMIN"]); // featured button (Owner 14/11)
 });
 
 test("ADMIN branches: ask one question, next text opens the right ticket with the text as summary", () => {
@@ -384,7 +384,7 @@ test("referral: bad ref, disabled course or unknown label shape goes to the 3-bu
   for (const ref of ["xyz", "c__", "c__khoa-zzz", "c__khoa-a__" + "x".repeat(41), "C__KHOA-A", "c__khoa-a extra"]) {
     const out = step(emptyState(), { kind: "referral", ref }, ctx());
     assert.equal(out.state.course, null, ref);
-    assert.deepEqual(payloads(out.replies.at(-1)), ["BUY", "LIST", "ADMIN"], ref);
+    assert.deepEqual(payloads(out.replies.at(-1)), ["BUY:khoa_b", "LIST", "ADMIN"], ref); // featured button (Owner 14/11)
   }
 });
 
@@ -592,8 +592,8 @@ test("order lookup error is not 'not found': busy message, no draft opened", asy
   await buyFull(h.convo, "khoa-a", "a@gmail.com", "a");
   h.convo.deps.loadOrder = async () => { throw new Error("db down"); };
   await h.convo.handle(PSID, quick("b1", "x", "BUY:khoa-a"));
-  assert.equal(textOf(h.sent.at(-1)), "Hệ thống đang bận, bạn thử lại sau ít phút nhé.");
-  assert.deepEqual(payloads(h.sent.at(-1)), ["BUY", "LIST", "ADMIN"]);
+  assert.equal(textOf(h.sent.at(-1)), "Hệ thống đang bận, bạn thử lại sau ít phút nhé.\n\nKhóa nổi bật: Khóa B."); // featured button (Owner 14/11)
+  assert.deepEqual(payloads(h.sent.at(-1)), ["BUY:khoa_b", "LIST", "ADMIN"]); // featured button (Owner 14/11)
   assert.equal((await h.storage.get("s")).state.course, null);
 });
 
@@ -642,7 +642,7 @@ test("ref: only attached when it names the ordered course; cleared after the ord
   assert.equal(step({ ...G, ref: "c__khoa-a" }, pb("RESTART"), ctx({ ticketsEnabled: false })).state.ref, null);
   const bad = step(emptyState(), { kind: "referral", ref: "c__khoa-a__" }, ctx());
   assert.equal(bad.state.course, null);
-  assert.deepEqual(payloads(bad.replies.at(-1)), ["BUY", "LIST", "ADMIN"]);
+  assert.deepEqual(payloads(bad.replies.at(-1)), ["BUY:khoa_b", "LIST", "ADMIN"]); // featured button (Owner 14/11)
 });
 
 test("loadCourses asks the DB for active + messengerSale (JSON path filter)", async () => {
