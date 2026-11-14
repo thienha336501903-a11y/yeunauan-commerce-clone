@@ -46,16 +46,22 @@ export async function touchTicket(id, db = supabase) {
   try { await db.from(TABLE).update({ updated_at: new Date().toISOString() }).eq("id", id); } catch { /* best effort */ }
 }
 
-const COLUMNS = "id,psid,reason,summary,status,created_at,taken_at,done_at";
-const toView = ({ psid, ...rest }) => ({ ...rest, psidTail: String(psid || "").slice(-4) });
+// updated_at = last activity on the ticket (customer message via touchTicket, Admin reply echo, status change): the Admin finds the chat by that time.
+const COLUMNS = "id,psid,reason,summary,status,created_at,updated_at,taken_at,done_at";
+export const toView = ({ psid, ...rest }) => ({ ...rest, psidTail: String(psid || "").slice(-4) });
 
-// Returns psidTail only: the full PSID never leaves this module toward the Admin UI.
-export async function listTickets(db = supabase) {
+// Rows with the full PSID, for server-side use only (the endpoint looks up names, then maps through toView).
+export async function listTicketRows(db = supabase) {
   const open = await db.from(TABLE).select(COLUMNS).in("status", ACTIVE).order("created_at", { ascending: true });
   if (open.error) throw open.error;
   const done = await db.from(TABLE).select(COLUMNS).eq("status", "done").order("done_at", { ascending: false }).limit(20);
   if (done.error) throw done.error;
-  return [...(open.data || []), ...(done.data || [])].map(toView);
+  return [...(open.data || []), ...(done.data || [])];
+}
+
+// Returns psidTail only: the full PSID never leaves this module toward the Admin UI.
+export async function listTickets(db = supabase) {
+  return (await listTicketRows(db)).map(toView);
 }
 
 // open -> in_progress, open|in_progress -> done. Anything else is a 400.

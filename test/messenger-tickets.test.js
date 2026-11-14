@@ -357,6 +357,89 @@ test("endpoint: auth, flag, list without full psid, status validation", async ()
   }
 });
 
+test("endpoint: active tickets carry the customer's Facebook name (server-side lookup), never the full PSID; failures leave no name", async () => {
+  const db = fakeDb();
+  const DONE = "22222222-2222-4222-8222-222222222222";
+  db.rows.push({ id: UUID, page_id: PAGE, psid: PSID, reason: "support", summary: "s", status: "in_progress", created_at: "2026-11-14T00:00:00Z", updated_at: "2026-11-14T00:05:00Z" });
+  db.rows.push({ id: DONE, page_id: PAGE, psid: "998877665544", reason: "human", summary: "x", status: "done", created_at: "2026-11-13T00:00:00Z", done_at: "2026-11-13T01:00:00Z" });
+  const seen = [];
+  const fetchImpl = async (url, init) => {
+    seen.push({ url: String(url), auth: init?.headers?.Authorization });
+    return new Response(JSON.stringify({ first_name: "Phạm", last_name: "Hùng" }), { status: 200 });
+  };
+  try {
+    process.env.META_PAGE_ACCESS_TOKEN = "tok";
+    const ok = await call(createHandler(db, { fetchImpl }), { password: "pw" });
+    assert.equal(ok.status, 200);
+    const active = ok.json.tickets.find((t) => t.id === UUID);
+    const done = ok.json.tickets.find((t) => t.id === DONE);
+    assert.equal(active.name, "Phạm Hùng");
+    assert.equal(active.updated_at, "2026-11-14T00:05:00Z");
+    assert.equal(done.name, undefined); // no lookup for closed tickets
+    assert.equal(seen.length, 1);
+    assert.match(seen[0].url, /\/v\d+\.\d+\/\d+\?fields=first_name,last_name$/);
+    assert.equal(seen[0].auth, "Bearer tok"); // token in the header, never the URL
+    assert.ok(!JSON.stringify(ok.json).includes(PSID));
+    for (const bad of [async () => new Response("{}", { status: 400 }), async () => { throw new Error("net"); }, async () => new Response("{}", { status: 200 })]) {
+      const r = await call(createHandler(db, { fetchImpl: bad }), { password: "pw" });
+      assert.equal(r.status, 200);
+      assert.equal(r.json.tickets.find((t) => t.id === UUID).name, undefined);
+    }
+    delete process.env.META_PAGE_ACCESS_TOKEN;
+    let called = 0;
+    const noTok = await call(createHandler(db, { fetchImpl: async () => { called++; return new Response("{}"); } }), { password: "pw" });
+    assert.equal(noTok.status, 200);
+    assert.equal(called, 0); // no token: no Meta call
+  } finally {
+    delete process.env.META_PAGE_ACCESS_TOKEN;
+    delete process.env.MESSENGER_TICKETS_ENABLED;
+    delete process.env.ADMIN_PASSWORD;
+  }
+});
+
+test("fetchProfileName: odd PSID or no token makes no call; name is trimmed and capped", async () => {
+  const { fetchProfileName } = await import("../utils/messenger/meta.js");
+  let n = 0;
+  const f = async () => { n++; return new Response(JSON.stringify({ first_name: "  Lan ", last_name: "x".repeat(100) }), { status: 200 }); };
+  assert.equal(await fetchProfileName("abc", { token: "t", fetchImpl: f }), "");
+  assert.equal(await fetchProfileName("1/../me", { token: "t", fetchImpl: f }), "");
+  assert.equal(await fetchProfileName(PSID, { token: "", fetchImpl: f }), "");
+  assert.equal(n, 0);
+  const name = await fetchProfileName(PSID, { token: "t", fetchImpl: f });
+  assert.ok(name.startsWith("Lan x") && name.length === 80);
+});
+
+test("endpoint: at most 20 name lookups, newest tickets first; a hung Graph call times out to no name", async () => {
+  const db = fakeDb();
+  for (let i = 0; i < 21; i++) {
+    db.rows.push({ id: `00000000-0000-4000-8000-0000000000${String(i).padStart(2, "0")}`, page_id: PAGE, psid: String(1000000 + i), reason: "human", summary: "", status: "open", created_at: new Date(Date.UTC(2026, 10, 14, 0, i)).toISOString() });
+  }
+  const seen = [];
+  try {
+    process.env.META_PAGE_ACCESS_TOKEN = "tok";
+    const r = await call(createHandler(db, { fetchImpl: async (url) => { seen.push(String(url)); return new Response(JSON.stringify({ first_name: "A" }), { status: 200 }); } }), { password: "pw" });
+    assert.equal(r.status, 200);
+    assert.equal(seen.length, 20);
+    assert.ok(!seen.some((u) => u.includes("/1000000?"))); // the oldest one is the one left out
+  } finally {
+    delete process.env.META_PAGE_ACCESS_TOKEN;
+    delete process.env.MESSENGER_TICKETS_ENABLED;
+    delete process.env.ADMIN_PASSWORD;
+  }
+  const { fetchProfileName } = await import("../utils/messenger/meta.js");
+  const hung = (url, init) => new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason)));
+  assert.equal(await fetchProfileName(PSID, { token: "t", fetchImpl: hung, timeoutMs: 20 }), "");
+});
+
+test("Admin page: 'Nhận xử lý' and 'Mở chat' open the inbox inside the click and copy the name; no data in the URL", () => {
+  const html = readFileSync(new URL("../orders.html", import.meta.url), "utf8");
+  assert.match(html, /const INBOX_URL = "https:\/\/business\.facebook\.com\/latest\/inbox\/all";/);
+  assert.match(html, /window\.open\(INBOX_URL, "_blank", "noopener"\)/);
+  assert.match(html, /take\.addEventListener\("click", \(\) => \{ openInbox\(t\); updateTicket\(t\.id, "in_progress"\); \}\)/);
+  assert.match(html, /chat\.addEventListener\("click", \(\) => openInbox\(t\)\)/);
+  assert.match(html, /navigator\.clipboard\.writeText\(t\.name\)/);
+});
+
 test("worker routes /api/messenger-tickets and answers 404 while the flag is off", async () => {
   const res = await worker.fetch(new Request("https://yeubep.shop/api/messenger-tickets"), { ASSETS: { fetch: async () => new Response("") } });
   assert.equal(res.status, 404);

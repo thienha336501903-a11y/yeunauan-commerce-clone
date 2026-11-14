@@ -41,6 +41,20 @@ export async function sendMessage(psid, message, { token, fetchImpl = fetch, tim
   }
 }
 
+// Admin tickets (14/11): the customer's Facebook name, so the Admin can find the chat in the Page inbox (Meta has no deep link).
+// "" on any failure: no permission (Meta's Business Asset User Profile Access), phone-only account, private name, timeout.
+export async function fetchProfileName(psid, { token, fetchImpl = fetch, timeoutMs = 3000 } = {}) {
+  if (!token || !/^\d{5,32}$/.test(String(psid || ""))) return "";
+  try {
+    const res = await fetchImpl(`${GRAPH}/${psid}?fields=first_name,last_name`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(timeoutMs) });
+    if (!res.ok) return "";
+    const body = await res.json().catch(() => ({}));
+    return [body?.first_name, body?.last_name].filter((v) => typeof v === "string" && v.trim()).join(" ").replace(/\s+/g, " ").trim().slice(0, 80);
+  } catch {
+    return "";
+  }
+}
+
 // G3: "typing..." while the AI answers. Best effort: a failure here never affects the reply.
 export async function sendTyping(psid, { token, fetchImpl = fetch, timeoutMs = 1500 } = {}) {
   if (!token) return;

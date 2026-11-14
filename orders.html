@@ -388,6 +388,14 @@
     let ticketCourses = [];
     const TICKET_STATUS = { open: "Chờ xử lý", in_progress: "Đang xử lý", done: "Đã xong" };
     const TICKET_LATE_MS = 2 * 60 * 60 * 1000;
+    // Meta has no link to one chat: open the inbox and put the customer's name on the clipboard for its search box.
+    const INBOX_URL = "https://business.facebook.com/latest/inbox/all";
+    function openInbox(t) {
+      if (t.name && navigator.clipboard) navigator.clipboard.writeText(t.name).catch(() => {});
+      window.open(INBOX_URL, "_blank", "noopener");
+      showToast(t.name ? "Đã chép tên \"" + t.name + "\". Dán vào ô tìm kiếm trong Hộp thư." : "Không có tên khách. Tìm theo giờ khách nhắn trong Hộp thư.");
+    }
+    const ticketTime = (iso) => new Date(iso).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" });
 
     function ticketEl(tag, className, text) {
       const el = document.createElement(tag);
@@ -410,12 +418,20 @@
         row.appendChild(ticketEl("span", "text-slate-500", new Date(t.created_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })));
         row.appendChild(ticketEl("span", "font-bold", TICKET_REASONS[t.reason] || t.reason));
         row.appendChild(ticketEl("span", "flex-1 min-w-[8rem] text-slate-700", t.summary || ""));
+        if (t.name) row.appendChild(ticketEl("span", "font-bold text-slate-800", t.name));
         row.appendChild(ticketEl("span", "font-mono text-slate-500", "…" + (t.psidTail || "")));
+        if (t.status !== "done" && t.updated_at) row.appendChild(ticketEl("span", "text-slate-500", "Hoạt động lúc " + ticketTime(t.updated_at)));
         row.appendChild(ticketEl("span", "font-bold text-slate-600", TICKET_STATUS[t.status] || t.status));
         if (t.status === "open") {
           const take = ticketEl("button", "px-3 py-1 rounded-lg bg-slate-100 font-bold hover:bg-slate-200", "Nhận xử lý");
-          take.addEventListener("click", () => updateTicket(t.id, "in_progress"));
+          // window.open must run inside the click itself, or the browser blocks the new tab.
+          take.addEventListener("click", () => { openInbox(t); updateTicket(t.id, "in_progress"); });
           row.appendChild(take);
+        }
+        if (t.status === "in_progress") {
+          const chat = ticketEl("button", "px-3 py-1 rounded-lg bg-slate-100 font-bold hover:bg-slate-200", "Mở chat");
+          chat.addEventListener("click", () => openInbox(t));
+          row.appendChild(chat);
         }
         if (t.status !== "done") {
           const finish = ticketEl("button", "px-3 py-1 rounded-lg bg-emerald-600 text-white font-bold hover:bg-emerald-700", "Hoàn thành");

@@ -2,12 +2,25 @@
 // routed by app.js through runCompatHandler, same (req, res) shape and Admin auth as api/orders.js.
 import { enforceSameOriginAdminRequest } from "../../../utils/admin-cors.js";
 import { supabase } from "../../../utils/supabase.js";
-import { getActiveTicket, isTicketId, listTickets, setTicketStatus } from "../../../utils/messenger/tickets.js";
+import { getActiveTicket, isTicketId, listTicketRows, setTicketStatus, toView } from "../../../utils/messenger/tickets.js";
+import { fetchProfileName } from "../../../utils/messenger/meta.js";
 import { loadCourses } from "./messenger.js";
 
 const SLUG = /^[a-z0-9_-]{1,100}$/;
+const NAME_LOOKUPS = 20;
 
-export function createHandler(db = supabase) {
+// Active tickets get the customer's Facebook name (the inbox is searched by name; Meta has no link to one chat).
+// Server side only: the UI gets the name and psidTail, never the full PSID. Names are not stored.
+async function ticketsWithNames(env, db, fetchImpl) {
+  const rows = await listTicketRows(db);
+  const token = env.META_PAGE_ACCESS_TOKEN;
+  // Newest first, so a backlog over the cap leaves the oldest tickets without a name, not the new ones.
+  const active = rows.filter((r) => r.status !== "done").reverse().slice(0, NAME_LOOKUPS);
+  const names = new Map(await Promise.all(active.map(async (r) => [r.id, await fetchProfileName(r.psid, { token, fetchImpl })])));
+  return rows.map((r) => ({ ...toView(r), ...(names.get(r.id) ? { name: names.get(r.id) } : {}) }));
+}
+
+export function createHandler(db = supabase, { fetchImpl = fetch } = {}) {
   return async function handler(req, res) {
     // Flag off: the endpoint does not exist (checked before auth so it reveals nothing).
     if (String(process.env.MESSENGER_TICKETS_ENABLED || "").trim() !== "1") return res.status(404).json({ error: "Not found" });
@@ -21,7 +34,7 @@ export function createHandler(db = supabase) {
       if (req.method === "GET") {
         // Sellable courses for the "send registration" picker; a failure only empties the picker.
         const courses = await loadCourses(env, db).then((list) => list.map(({ slug, title }) => ({ slug, title }))).catch(() => []);
-        return res.status(200).json({ tickets: await listTickets(db), courses });
+        return res.status(200).json({ tickets: await ticketsWithNames(env, db, fetchImpl), courses });
       }
       if (req.method === "POST") {
         const { id, status, action, slug } = req.body || {};
