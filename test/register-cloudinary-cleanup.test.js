@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-const source = fs.readFileSync(new URL('../api/register.js', import.meta.url), 'utf8');
+const source = fs.readFileSync(new URL('../utils/bill-order.js', import.meta.url), 'utf8');
 
 test('registration cleans a newly uploaded Cloudinary bill if order insert fails', () => {
   assert.match(source, /async function cleanupUnpersistedBill/);

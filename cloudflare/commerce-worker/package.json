@@ -6,6 +6,7 @@
     "build:assets": "node scripts/build-assets.mjs",
     "dev": "node scripts/build-assets.mjs && wrangler dev --config wrangler.toml",
     "dry-run": "node scripts/build-assets.mjs && wrangler deploy --dry-run --outdir dist/bundle --config wrangler.toml",
+    "dry-run:staging": "node scripts/build-assets.mjs && wrangler deploy --dry-run --outdir dist/bundle-stg --config wrangler.staging.toml",
     "smoke": "node scripts/build-assets.mjs && node scripts/local-smoke.mjs"
   },
   "devDependencies": {

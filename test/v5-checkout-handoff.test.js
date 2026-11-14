@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-const register = fs.readFileSync(new URL('../api/register.js', import.meta.url), 'utf8');
+const register = fs.readFileSync(new URL('../api/register.js', import.meta.url), 'utf8') + fs.readFileSync(new URL('../utils/bill-order.js', import.meta.url), 'utf8');
 const checkout = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
 test('registration returns an absolute Main LMS course-manager URL for non-Telegram modes', () => {

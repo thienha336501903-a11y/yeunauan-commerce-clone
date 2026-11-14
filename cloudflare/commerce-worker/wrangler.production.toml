@@ -37,9 +37,34 @@ V4_PUBLIC_URL = "https://v4.daubepnho.store"
 TELEGRAM_CLONER_URL = "https://reader.yeubep.shop"
 # Messenger sales model (Owner 03/11): public bill-upload checkout closed; Admin approval and /api/orders unchanged.
 PUBLIC_CHECKOUT_DISABLED = "1"
+MESSENGER_BOT_ENABLED = "0"
+# G-PROD-code (11/11): tickets need migrations 20261107100000 + 20261108100000 on Production first; AI uses [ai] below.
+# G-LIVE turns the three flags to "1" in one reviewed commit.
+MESSENGER_TICKETS_ENABLED = "0"
+MESSENGER_AI_ENABLED = "0"
+# The one Page shared with staging (Owner 10/11): only one of the two Workers may have its bot on.
+META_APP_ID = "2162114824732775"
+META_PAGE_ID = "1238655599320121"
+# Courses the bot may sell: the real course slug(s), set before G-LIVE. Never a TEST course (Owner 03/11: all current courses are TEST).
+MESSENGER_COURSE_SLUGS = ""
 
 # hoc runs on a route in the same zone: a URL fetch from this Worker would go to the origin (522 on staging, §134).
 # Every commerce -> lms call goes through this binding (utils/lms-fetch.js). Never deploy Production without it.
 [[services]]
 binding = "LMS"
 service = "systemb-lms"
+
+# Workers AI (Gemma 4) for MESSENGER_AI_ENABLED. Free plan: errors after the daily Neurons, the bot then answers without AI.
+[ai]
+binding = "AI"
+
+# Messenger bot (H4). Off until a separate Owner gate sets MESSENGER_BOT_ENABLED = "1".
+# Secrets (wrangler secret put, by name): META_APP_SECRET, META_VERIFY_TOKEN, META_PAGE_ACCESS_TOKEN.
+# MESSENGER_COURSE_SLUGS = optional comma list that only narrows the courses the bot may sell; empty or unset = follow the Admin switch "Bán qua Messenger".
+[[durable_objects.bindings]]
+name = "MESSENGER_CONVERSATIONS"
+class_name = "MessengerConversation"
+
+[[migrations]]
+tag = "h4-messenger-v1"
+new_sqlite_classes = ["MessengerConversation"]
