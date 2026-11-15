@@ -9,6 +9,9 @@ import { enforceSameOriginAdminRequest } from '../utils/admin-cors.js';
 import { resolveRequestRoute } from '../utils/agency-routing.js';
 import { getAgencyOrder } from '../utils/agency-commerce.js';
 
+import { createBillOrder } from '../utils/bill-order.js';
+
+const MANUAL_SOURCES = new Set(['page_ai', 'page_inbox', 'other']);
 const VALID_ORDER_STATUSES = new Set(['Chờ duyệt', 'Đã duyệt', 'Từ chối']);
 const TEST_TITLE_PREFIX = '__clone_factory_test';
 const TEST_SLUG_PATTERN = /^clone-factory-test(?:-|$)/;
@@ -46,7 +49,7 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true, order: result.order });
   }
 
-  if (!enforceSameOriginAdminRequest(req, res, ['GET', 'PUT', 'DELETE', 'OPTIONS'])) return;
+  if (!enforceSameOriginAdminRequest(req, res, ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])) return;
   const adminPassword = req.headers['x-admin-password'];
   const systemPassword = process.env.ADMIN_PASSWORD;
   if (!adminPassword || adminPassword !== systemPassword) return res.status(401).json({ error: 'Unauthorized: Mật khẩu Admin không chính xác hoặc trống.' });
@@ -68,6 +71,32 @@ export default async function handler(req, res) {
           telegram_user_id: o.telegram_user_id || null, telegram_username: o.telegram_username || '', telegram_first_name: o.telegram_first_name || '', telegram_join_status: o.telegram_join_status || '', telegram_join_requested_at: o.telegram_join_requested_at || '', telegram_join_decided_at: o.telegram_join_decided_at || ''
         };
       }));
+    }
+
+    // B1: the Admin creates a "Chờ duyệt" order by hand (Facebook sale: Gmail + bill photo arrive in the Page inbox).
+    // Approval stays the normal PUT. PUBLIC_CHECKOUT_DISABLED does not apply: this is the Admin path.
+    if (req.method === 'POST') {
+      const { action, course, gmail, billType, billData, billName, source, note } = req.body || {};
+      if (action !== 'manual_create') return res.status(400).json({ error: 'Hành động không hợp lệ' });
+      const cleanGmail = validateGmail(gmail);
+      if (!cleanGmail) return res.status(400).json({ error: 'Địa chỉ email không hợp lệ' });
+      if (!MANUAL_SOURCES.has(source)) return res.status(400).json({ error: 'Nguồn đơn không hợp lệ' });
+      const cleanNote = String(note ?? '').replace(/[\x00-\x1F\x7F]/g, ' ').trim();
+      if (cleanNote.length > 200) return res.status(400).json({ error: 'Ghi chú tối đa 200 ký tự' });
+      const courseSlug = String(course || '').trim().toLowerCase();
+      if (!/^[a-z0-9_-]+$/.test(courseSlug)) return res.status(400).json({ error: 'Mã khóa học không hợp lệ' });
+
+      const db = options.supabaseClient || supabase;
+      const { data: dup, error: dupErr } = await db.from('orders').select('id,status').eq('customer_email', cleanGmail).eq('course_slug', courseSlug).in('status', ['Chờ duyệt', 'Đã duyệt']).limit(1);
+      if (dupErr) throw dupErr;
+      if (dup?.length) return res.status(409).json({ error: 'duplicate', status: dup[0].status, orderId: dup[0].id });
+
+      const create = options.createBillOrder || createBillOrder;
+      const result = await create(
+        { gmail: cleanGmail, course: courseSlug, billName: billName || `manual-${Date.now()}`, billType, billData },
+        { rawExtra: { channel: 'manual', source, manualNote: cleanNote, createdBy: 'admin' } }
+      );
+      return res.status(result.status).json(result.body);
     }
 
     if (req.method === 'PUT') {
