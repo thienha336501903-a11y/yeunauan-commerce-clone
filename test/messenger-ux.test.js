@@ -371,8 +371,8 @@ test("UX-22 createBillOrder gets rawExtra.pageId = META_PAGE_ID; the bill still 
 });
 
 test("UX-23 menu: with 'Đơn của tôi' 4 buttons in the right order, without 3 as before; titles <= 20", () => {
-  assert.deepEqual(menuButtons("show", false), [["Đăng ký khóa học", "BUY"], ["Xem khóa đang mở bán", "LIST"], ["Đơn của tôi", "PENDING_ORDERS"], ["Chat với Admin", "ADMIN"]]);
-  assert.deepEqual(menuButtons("hide", true), MENU3);
+  assert.deepEqual(menuButtons("show", false), [["🎂 Đăng ký khóa học", "BUY"], ["📚 Khóa đang mở bán", "LIST"], ["⏳ Khóa chờ duyệt", "PENDING_ORDERS"], ["👩‍💼 Chat với Admin", "ADMIN"]]); // emoji labels (Owner 18/11)
+  assert.deepEqual(menuButtons("hide", true), [["🎂 Đăng ký khóa học", "BUY"], ["📚 Khóa đang mở bán", "LIST"], ["👩‍💼 Chat với Admin", "ADMIN"]]);
   assert.equal(MENU3.length, 3);
   for (const [t] of [...menuButtons("show", false), ...menuButtons("hide", false, [["Tiếp tục đăng ký", "CONTINUE_DRAFT"], ["Hủy đăng ký", "CANCEL_DRAFT"]])]) assert.ok(t.length <= 20, t);
 });
@@ -581,7 +581,7 @@ test("UX-44 course A with a pending order: card says so with 'Đơn của tôi';
   const a = els.find((e) => e.title === "Khóa A");
   const b = els.find((e) => e.title === "Khóa B");
   assert.equal(a.subtitle, "Bạn đã có đơn chờ duyệt");
-  assert.deepEqual(a.buttons.at(-1), { type: "postback", title: "Đơn của tôi", payload: "PENDING_ORDERS" });
+  assert.deepEqual(a.buttons.at(-1), { type: "postback", title: "⏳ Khóa chờ duyệt", payload: "PENDING_ORDERS" });
   assert.equal(b.buttons.at(-1).payload, "BUY:khoa_b");
   assert.equal(lastOf(await h.press("BUY:khoa-a")).text, "Bạn đã có đơn khóa này đang chờ Admin xác nhận.");
   assert.equal(h.orders.length, 0);

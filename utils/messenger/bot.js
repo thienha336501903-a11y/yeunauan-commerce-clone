@@ -52,7 +52,7 @@ const MENU = /^menu( a)?$/;
 const GREET = /^(da )?((hi+|hello|helo|hey|alo+|xin chao|chao)( (ban|shop|ad|admin|em|anh|chi))?|shop|ad|admin)( oi)?( a)?$/;
 const MAX_ORDERS = 10;
 // Typed form of the "Đơn chờ duyệt" button, matched against clean(text).
-const PENDING_TEXT = /^(don cua toi|don hang|kiem tra don|xem don)$/;
+const PENDING_TEXT = /^(don cua toi|don hang|kiem tra don|xem don|khoa cho duyet)$/; // + the 18/11 button label typed back
 // G-MC1-route: free text about an existing order (only used when the customer has orders; everything else may go to the AI).
 // "đơn" is matched with its accent when the text has accents, so "đón" or "đơn giản" never count; unaccented typing uses "don".
 // Cooking words ("thực đơn", "đơn vị", "kích hoạt men") are not orders.
@@ -110,20 +110,26 @@ const text = (t, quick = []) => (quick.length
 // Main menu with tickets on (V2): three buttons, plus "Đơn chờ duyệt" for a customer with a pending order (U6b).
 export const MENU3 = [["Đăng ký khóa học", "BUY"], ["Xem khóa đang mở bán", "LIST"], ["Chat với Admin", "ADMIN"]];
 // G-LIVE-ux (Owner 14/11): the button opens "Đơn của bạn" (pending and approved), so it is named for that.
-const PENDING_BTN = ["Đơn của tôi", "PENDING_ORDERS"];
+// Owner 18/11: shown only while the customer has a pending order, so it is named for that (opens the same view).
+const PENDING_BTN = ["⏳ Khóa chờ duyệt", "PENDING_ORDERS"];
+// Owner 18/11: emoji labels on the in-chat main menu only. The plain titles stay for Ice Breakers / Persistent Menu on Meta, which mirror them.
+const MENU_ICONS = { BUY: "🎂 Đăng ký khóa học", LIST: "📚 Khóa đang mở bán", ADMIN: "👩‍💼 Chat với Admin" };
+const iconBtn = ([title, payload]) => [MENU_ICONS[payload] || title, payload];
 const DRAFT_BTNS = [["Tiếp tục đăng ký", "CONTINUE_DRAFT"], ["Hủy đăng ký", "CANCEL_DRAFT"]];
 // The one builder of the main menu (B6). pendingMenu: "show" | "hide" | "unknown" (DB error: show only if the DO already holds an order id, B5).
 // featured (Owner 14/11): the sellable featured course from the DB. The first button then registers THAT course (BUY:<slug>,
 // so an old button keeps meaning the course it named); a title over 20 characters is never cut: the button says
 // FEATURED_SHORT and the full title is in the message text (featuredLine).
-export const FEATURED_SHORT = "Đăng ký khóa này";
+export const FEATURED_SHORT = "🎂 Đăng ký khóa này";
 const BUTTON_MAX = 20;
 export function menuButtons(pendingMenu, hasOrdersInDo, extra = [], featured = null) {
   const show = pendingMenu === "show" || (pendingMenu === "unknown" && Boolean(hasOrdersInDo));
   const title = featured ? featuredTitle(featured) : "";
   // UTF-16 length: never longer than Meta's count whatever unit it uses (an emoji counts 2 here), so no title is refused or cut.
-  const first = featured ? [title.length <= BUTTON_MAX ? title : FEATURED_SHORT, `BUY:${featured.slug}`] : MENU3[0];
-  return [...(show ? [first, MENU3[1], PENDING_BTN, MENU3[2]] : [first, MENU3[1], MENU3[2]]), ...extra];
+  const named = `🎂 ${title}`;
+  const first = featured ? [named.length <= BUTTON_MAX ? named : FEATURED_SHORT, `BUY:${featured.slug}`] : iconBtn(MENU3[0]);
+  const [list, admin] = [iconBtn(MENU3[1]), iconBtn(MENU3[2])];
+  return [...(show ? [first, list, PENDING_BTN, admin] : [first, list, admin]), ...extra];
 }
 // One line, NFC (a title pasted from macOS may be decomposed), HTML removed.
 const featuredTitle = (c) => plain(c.title).normalize("NFC").replace(/\s+/g, " ").trim() || c.slug;

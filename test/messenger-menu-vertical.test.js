@@ -1,7 +1,7 @@
 // Main menu as a button template (vertical buttons on phones) instead of a quick-reply row (MV-1..5).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { step, emptyState, menuMessage, MENU3 } from "../utils/messenger/bot.js";
+import { step, emptyState, menuMessage, menuButtons, MENU3 } from "../utils/messenger/bot.js";
 import { toEvent } from "../cloudflare/commerce-worker/src/messenger.js";
 
 const A = { slug: "khoa-a", title: "Khóa A", price: "100.000đ", bankName: "VCB", bankAccount: "0123", bankOwner: "X", transferNote: "A", qrImageUrl: "", imageUrl: "" };
@@ -13,7 +13,8 @@ test("MV-1 'menu' sends a button template: text, 3 postback buttons with the MEN
   const m = step(G, { kind: "text", text: "menu" }, ctx()).replies.at(-1);
   assert.equal(tpl(m).template_type, "button");
   assert.equal(tpl(m).text, "Bạn cần mình giúp gì?");
-  assert.deepEqual(tpl(m).buttons, MENU3.map(([title, payload]) => ({ type: "postback", title, payload })));
+  assert.deepEqual(tpl(m).buttons, menuButtons("hide", false).map(([title, payload]) => ({ type: "postback", title, payload }))); // emoji labels (Owner 18/11)
+  assert.deepEqual(tpl(m).buttons.map((b) => b.payload), MENU3.map(([, p]) => p));
   assert.equal(m.quick_replies, undefined);
 });
 

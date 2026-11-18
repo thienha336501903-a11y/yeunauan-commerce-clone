@@ -23,7 +23,7 @@ const hi = (c, st = G) => step(st, txt("hi"), c).replies.at(-1);
 test("FM-1 featured title <= 20 chars: button = exact title, payload BUY:<slug>; text has the featured line", () => {
   assert.ok([...SHORT.title].length <= 20);
   const m = hi(ctx([SHORT, OTHER]));
-  assert.deepEqual(buttons(m).map((q) => [q.title, q.payload]).slice(0, 3), [[SHORT.title, "BUY:khoa-ngan"], ["Xem khóa đang mở bán", "LIST"], ["Chat với Admin", "ADMIN"]]);
+  assert.deepEqual(buttons(m).map((q) => [q.title, q.payload]).slice(0, 3), [[`🎂 ${SHORT.title}`, "BUY:khoa-ngan"], ["📚 Khóa đang mở bán", "LIST"], ["👩‍💼 Chat với Admin", "ADMIN"]]); // emoji labels (Owner 18/11)
   assert.ok(textOf(m).includes(`Khóa nổi bật: ${SHORT.title}.`));
   assert.match(textOf(m), /Khóa nổi bật: Bánh mì\.\nBạn cần mình giúp gì\?$/);
 });
@@ -31,20 +31,21 @@ test("FM-1 featured title <= 20 chars: button = exact title, payload BUY:<slug>;
 test("FM-2 featured title > 20 chars: button 'Đăng ký khóa này', full title in the text, no ellipsis in any button", () => {
   assert.ok([...LONG_TITLE].length > 20);
   const m = hi(ctx([LONG, OTHER]));
-  assert.equal(FEATURED_SHORT, "Đăng ký khóa này");
-  assert.deepEqual([buttons(m)[0].title, buttons(m)[0].payload], ["Đăng ký khóa này", "BUY:khoa-dai"]);
+  assert.equal(FEATURED_SHORT, "🎂 Đăng ký khóa này");
+  assert.deepEqual([buttons(m)[0].title, buttons(m)[0].payload], ["🎂 Đăng ký khóa này", "BUY:khoa-dai"]);
   assert.ok(textOf(m).includes(`Khóa nổi bật: ${LONG_TITLE}.`));
-  assert.ok(buttons(m).every((q) => !q.title.includes("…") && [...q.title].length <= 20));
+  assert.ok(buttons(m).every((q) => !q.title.includes("…") && q.title.length <= 20));
 });
 
 test("FM-3 no featured course, or tickets off: old first button and no featured line", () => {
   // tickets off: the bot never builds this menu itself (legacy course quick replies), so render the placeholder directly
   const off = renderReplies([{ menu: { intro: "", extra: [], ask: true } }], { pendingMenu: "hide", doOrderIds: [] }, ctx([SHORT], { ticketsEnabled: false })).at(-1);
   for (const m of [hi(ctx([OTHER])), hi(ctx([])), off]) {
-    assert.deepEqual([buttons(m)[0].title, buttons(m)[0].payload], ["Đăng ký khóa học", "BUY"]);
+    assert.deepEqual([buttons(m)[0].title, buttons(m)[0].payload], ["🎂 Đăng ký khóa học", "BUY"]);
     assert.ok(!textOf(m).includes("Khóa nổi bật"));
   }
-  assert.deepEqual(menuButtons("hide", false), MENU3);
+  assert.deepEqual(menuButtons("hide", false), [["🎂 Đăng ký khóa học", "BUY"], ["📚 Khóa đang mở bán", "LIST"], ["👩‍💼 Chat với Admin", "ADMIN"]]);
+  assert.deepEqual(MENU3.map(([, p]) => p), ["BUY", "LIST", "ADMIN"]); // plain titles kept for Ice Breakers
   assert.equal(featuredLine(null), "");
 });
 
@@ -153,11 +154,11 @@ test("FM-10 ask:false text (greeting, busy): intro, blank line, featured line; n
 
 test("FM-11 title clean-up: emoji counted as 2 (UTF-16), multi-line and decomposed (macOS) titles become one NFC line; HTML removed", () => {
   const f = (title) => menuButtons("hide", false, [], { slug: "k", title })[0][0];
-  assert.equal(f("Bánh mì 🍞🍞🍞🍞🍞🍞"), "Bánh mì 🍞🍞🍞🍞🍞🍞"); // 8 + 12 = 20 UTF-16 units
-  assert.equal(f("Bánh mì 🍞🍞🍞🍞🍞🍞🍞"), FEATURED_SHORT); // 22 units: never cut
-  assert.equal(f("Bánh\nmì   Việt"), "Bánh mì Việt");
-  assert.equal(f("Bánh mì".normalize("NFD")), "Bánh mì");
-  assert.equal(f("<b>Bánh</b> mì"), "Bánh mì");
+  assert.equal(f("Bánh 🍞🍞🍞🍞🍞🍞"), "🎂 Bánh 🍞🍞🍞🍞🍞🍞"); // 3 + 5 + 12 = 20 UTF-16 units (cake prefix, Owner 18/11)
+  assert.equal(f("Bánh 🍞🍞🍞🍞🍞🍞🍞"), FEATURED_SHORT); // 22 units: never cut
+  assert.equal(f("Bánh\nmì   Việt"), "🎂 Bánh mì Việt");
+  assert.equal(f("Bánh mì".normalize("NFD")), "🎂 Bánh mì");
+  assert.equal(f("<b>Bánh</b> mì"), "🎂 Bánh mì");
   assert.equal(featuredLine({ slug: "k", title: "Bánh\nmì" }), "Khóa nổi bật: Bánh mì.\n");
   for (const t of ["Bánh mì Việt Nam cơ bản 🍞", "x".repeat(50)]) assert.ok(f(t).length <= 20, t);
 });
