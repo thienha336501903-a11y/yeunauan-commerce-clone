@@ -37,6 +37,6 @@ export default async function handler(req, res) {
   if (isPublicCheckoutDisabled()) {
     return res.status(409).json({ error: 'Khóa học đang tạm dừng nhận đăng ký.', code: 'sale_paused' });
   }
-  const result = await createBillOrder(req.body);
+  const result = await createBillOrder(req.body, { rejectDuplicate: true });
   return res.status(result.status).json(result.body);
 }

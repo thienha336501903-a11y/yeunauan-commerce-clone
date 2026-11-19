@@ -34,8 +34,17 @@ async function cleanupUnpersistedBill(publicId) {
 
 const reply = (status, body) => ({ status, body });
 
+// An order of this Gmail for this course that is still waiting or already approved (same rule as Admin "Tạo đơn thủ công").
+// shortcut: check-then-insert, two submits in the same instant can both pass; a unique index needs a migration (Owner gate).
+export async function findOpenOrder(db, email, courseSlug) {
+  const { data, error } = await db.from('orders').select('id,status').eq('customer_email', email).eq('course_slug', courseSlug).in('status', ['Chờ duyệt', 'Đã duyệt']).limit(1);
+  if (error) throw error;
+  return data?.[0] || null;
+}
+
 // rawExtra is merged into orders.raw_data (Messenger: { channel, psid }); callers pass only trusted keys.
-export async function createBillOrder(input, { rawExtra = {} } = {}) {
+// rejectDuplicate (website checkout): refuse a second open order of the same Gmail + course before the bill is uploaded.
+export async function createBillOrder(input, { rawExtra = {}, rejectDuplicate = false } = {}) {
   try {
     const runtime = cloneConfig();
     const { gmail, telegramNick, billName, billType, billData, course } = input || {};
@@ -95,6 +104,11 @@ export async function createBillOrder(input, { rawExtra = {} } = {}) {
     } else if (policy.requiresEmail) {
       if (!cleanEmail) return reply(400, { error: 'Vui lòng nhập Gmail của bạn' });
       if (!isValidEmail(cleanEmail)) return reply(400, { error: 'Địa chỉ email không hợp lệ' });
+    }
+    if (rejectDuplicate && cleanEmail && deliveryMode !== 'telegram') {
+      const open = await findOpenOrder(supabase, cleanEmail, courseSlug);
+      // One message for waiting and approved, no status in the body: the reply must not tell a stranger whether this Gmail paid.
+      if (open) return reply(409, { error: 'Gmail này đã có đăng ký khóa học này. Đơn đang chờ duyệt thì bạn chờ Admin nhé; đã được duyệt thì vào trang học viên để học. Cần đổi bill, bạn nhắn Page/Admin.', code: 'duplicate' });
     }
 
     const missingCloudinaryEnv = ['CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET'].filter(name => !process.env[name]);

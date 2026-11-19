@@ -20,6 +20,7 @@ const fake = http.createServer((req, res) => {
     if (u.pathname === "/rest/v1/rpc/resolve_agency_domain") return send(200, null);
     if (u.pathname === "/rest/v1/courses") return one ? send(200, COURSE) : send(200, [COURSE]);
     if (u.pathname === "/rest/v1/orders" && req.method === "POST") return send(201, []);
+    if (u.pathname === "/rest/v1/orders" && req.method === "GET") return send(200, []); // duplicate-order check: no open order
     if (u.pathname.includes("/image/upload")) {
       const fields = Object.fromEntries([...body.matchAll(/name="([^"]+)"\r\n\r\n([^\r]*)/g)].map((m) => [m[1], m[1] === "file" ? `<${m[2].length} chars>` : m[2]]));
       log.push("UPLOAD fields " + JSON.stringify(fields));
