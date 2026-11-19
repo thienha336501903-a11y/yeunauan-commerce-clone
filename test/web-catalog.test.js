@@ -24,3 +24,10 @@ test('WC-2 the course link sells only that course: page loads its own slug, sale
 test('WC-3 Admin copies the course registration link', () => {
   assert.match(read('admin.html'), /Sao chép link đăng ký/);
 });
+
+test('WC-4 course page serif font has Vietnamese stacked marks (DM Serif Display breaks "CHUYỂN", "TIỀN")', () => {
+  const page = read('index.html');
+  assert.doesNotMatch(page, /DM Serif Display|DM\+Serif/);
+  assert.match(page, /family=Playfair\+Display/);
+  assert.match(page, /font-family:"Playfair Display",Georgia,serif/);
+});
