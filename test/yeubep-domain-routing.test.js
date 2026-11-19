@@ -10,7 +10,7 @@ const admin = fs.readFileSync(new URL('../admin.html', import.meta.url), 'utf8')
 assert.match(page, /cloneRuntimeConfigPromise=fetch\('\/api\/config\?runtime=1'/);
 assert.match(page, /host===commerceHost\|\|host===`www\.\$\{commerceHost\}`/);
 assert.match(page, /!params\.has\('course'\)/);
-assert.match(page, /new URL\('\/my-courses\.html',config\.lmsPublicUrl\)/);
+assert.match(page, /location\.replace\('\/khoa-hoc\.html'\)/); // Owner 19/11: shop root = course list (it links students to the LMS)
 assert.match(page, /window\.LMS_PUBLIC_URL=data\.lmsPublicUrl\|\|window\.CLONE_RUNTIME_CONFIG/);
 assert.match(config, /String\(req\.query\?\.runtime \|\| ''\) === '1'/);
 assert.match(config, /lmsPublicUrl: runtime\.lmsPublicUrl/);

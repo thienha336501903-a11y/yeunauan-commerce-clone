@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Khóa học đang mở bán — Yêu học bánh</title>
+<meta name="robots" content="index,follow">
+<style>
+  body { margin: 0; background: #fff8f1; color: #241712; font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  main { max-width: 1040px; margin: 0 auto; padding: 28px 16px 64px; }
+  h1 { font-size: 1.7rem; line-height: 1.25; margin: 0 0 6px; }
+  .lead { color: #6b5a52; margin: 0 0 22px; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+  .card { background: #fff; border: 1px solid #f0e2d6; border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; }
+  .card img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: #f6ebe1; display: block; }
+  .body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .title { font-weight: 700; font-size: 1.05rem; margin: 0; }
+  .price { color: #b65c4b; font-weight: 700; margin: 0; }
+  .summary { color: #6b5a52; font-size: .92rem; margin: 0; flex: 1; }
+  .btn { display: block; text-align: center; background: #b65c4b; color: #fff; text-decoration: none; font-weight: 700; padding: 11px 14px; border-radius: 12px; margin-top: 8px; }
+  .btn:focus-visible, .student:focus-visible { outline: 3px solid #241712; outline-offset: 2px; }
+  .note { background: #fff; border: 1px solid #f0e2d6; border-radius: 14px; padding: 18px; }
+  .student { display: inline-block; margin-top: 26px; color: #b65c4b; font-weight: 700; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Khóa học đang mở bán</h1>
+  <p class="lead">Chọn khóa học để xem nội dung, học phí và hướng dẫn đăng ký.</p>
+  <div id="list" class="grid" aria-live="polite"><p class="note">Đang tải danh sách khóa học…</p></div>
+  <a id="student" class="student" href="#" hidden>Đã mua khóa học? Vào trang học →</a>
+</main>
+<script>
+(async () => {
+  const list = document.getElementById('list');
+  const note = (text) => { list.className = ''; list.replaceChildren(Object.assign(document.createElement('p'), { className: 'note', textContent: text })); };
+  fetch('/api/config?runtime=1', { cache: 'no-store' }).then((r) => r.json()).then((cfg) => {
+    if (!cfg?.lmsPublicUrl) return;
+    const a = document.getElementById('student');
+    a.href = new URL('/my-courses.html', cfg.lmsPublicUrl).toString();
+    a.hidden = false;
+  }).catch(() => {});
+  try {
+    const res = await fetch('/api/config?catalog=1');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'catalog');
+    if (data.closed || !data.courses?.length) return note('Hiện chưa có khóa học nào mở nhận đăng ký. Bạn quay lại sau nhé.');
+    list.replaceChildren(...data.courses.map((c) => {
+      const card = document.createElement('article');
+      card.className = 'card';
+      if (c.imageUrl) card.append(Object.assign(document.createElement('img'), { src: c.imageUrl, alt: c.title, loading: 'lazy' }));
+      const body = document.createElement('div');
+      body.className = 'body';
+      body.append(Object.assign(document.createElement('h2'), { className: 'title', textContent: c.title }));
+      if (c.price) body.append(Object.assign(document.createElement('p'), { className: 'price', textContent: 'Học phí: ' + c.price }));
+      body.append(Object.assign(document.createElement('p'), { className: 'summary', textContent: c.summary || '' }));
+      body.append(Object.assign(document.createElement('a'), { className: 'btn', href: '/?course=' + encodeURIComponent(c.slug), textContent: 'Xem và đăng ký' }));
+      card.append(body);
+      return card;
+    }));
+  } catch (e) {
+    note('Không tải được danh sách khóa học. Bạn tải lại trang giúp mình nhé.');
+  }
+})();
+</script>
+</body>
+</html>

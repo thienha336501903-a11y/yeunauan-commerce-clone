@@ -558,7 +558,7 @@ test("admin.html: two switches, copy rows for web link and campaign code, no m.m
   assert.match(html, /Bán qua Messenger/);
   assert.match(html, /Khóa nổi bật/);
   assert.match(html, /toggleMessengerFlag\('\$\{id\}', 'messengerSale'/);
-  assert.match(html, /Link web: \$\{link\}/);
+  assert.match(html, /Link đăng ký: \$\{link\}/); // Owner 19/11 label
   assert.match(html, /Mã chiến dịch Messenger: c__\$\{escapeAttr\(slug\)\}/);
   assert.doesNotMatch(html, /m\.me\//);
   assert.match(html, /course\.messengerSale === true/);

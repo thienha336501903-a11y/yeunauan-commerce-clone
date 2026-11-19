@@ -23,7 +23,7 @@ window.cloneRuntimeConfigPromise=fetch('/api/config?runtime=1',{cache:'no-store'
     const host=String(location.hostname||'').toLowerCase();
     const params=new URLSearchParams(location.search);
     if((host===commerceHost||host===`www.${commerceHost}`)&&!params.has('course')){
-      location.replace(new URL('/my-courses.html',config.lmsPublicUrl).toString());
+      location.replace('/khoa-hoc.html'); // Owner 19/11: the shop root lists the courses open for sale
     }
   }catch(error){console.warn('Clone runtime config unavailable',error)}
 })();

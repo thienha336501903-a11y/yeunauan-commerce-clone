@@ -135,6 +135,63 @@ async function handleV5AdminReadiness(req, res) {
   });
 }
 
+// One rule for the course page and the public catalog (Owner 19/11): null = sellable on the public web, else the 404 body.
+async function storefrontBlock(course) {
+  const courseSlug = course.slug;
+  const rawData = course.raw_data || {};
+  if (isSalePaused(course) || isPublicCheckoutDisabled()) {
+    return { error: `Khóa học đang tạm dừng nhận đăng ký với slug: ${courseSlug}`, code: 'sale_paused' };
+  }
+  const deliveryMode = normalizeDeliveryMode(course.delivery_mode);
+  if (deliveryMode === 'v4' && course.is_published !== true && rawData.v4SellBeforePublishAcknowledged !== true) {
+    return { error: `Khóa học V4 chưa sẵn sàng với slug: ${courseSlug}` };
+  }
+  if (deliveryMode === 'v5' && course.is_published === true) {
+    const readiness = await getV5Readiness(course.id);
+    if (!readiness.ready) {
+      console.warn('[config] V5 storefront blocked by canonical readiness:', courseSlug, readiness.reason);
+      return { error: `Khóa học V5 chưa sẵn sàng với slug: ${courseSlug}` };
+    }
+  }
+  return null;
+}
+
+const courseImageOf = (course) => {
+  const r = course.raw_data || {};
+  return course.image_url || r.imageUrl || r.posterUrl || r.posterImageUrl || r.thumbnail || r.heroUrl || r.heroImageUrl || r.coverUrl || '';
+};
+const plainText = (value, max) => String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+
+// Public list of courses open for sale (Owner 19/11). Only what the course page already shows publicly:
+// no bank account, no Telegram chat, no LMS link.
+export async function openCatalog(data, block = storefrontBlock) {
+  const rows = (data || []).filter((c) => c.active === true && validSlug(c.slug));
+  // A failed readiness lookup leaves only that course out (fail closed), not the whole list.
+  const blocks = await Promise.all(rows.map((c) => Promise.resolve().then(() => block(c)).catch(() => ({ error: 'unavailable' }))));
+  const open = rows.filter((c, i) => !blocks[i]
+    && (normalizeDeliveryMode(c.delivery_mode) !== 'telegram' || Boolean(String(c.telegram_chat_id || '').trim())));
+  const order = (c) => (c.sort_order !== null && c.sort_order !== '' && Number.isFinite(Number(c.sort_order)) ? Number(c.sort_order) : Infinity);
+  open.sort((a, b) => order(a) - order(b) || String(a.title || '').localeCompare(String(b.title || ''), 'vi'));
+  return open.map((c) => ({
+    slug: c.slug,
+    title: plainText(c.title, 120) || c.slug,
+    price: plainText(c.price, 40),
+    imageUrl: /^https:\/\//i.test(courseImageOf(c)) ? courseImageOf(c) : '',
+    summary: plainText(c.description, 160)
+  }));
+}
+
+async function handleCatalog(req, res) {
+  res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=60');
+  if (isPublicCheckoutDisabled()) return res.status(200).json({ closed: true, courses: [] });
+  const { data, error } = await supabase
+    .from('courses')
+    .select('id,slug,title,price,image_url,description,raw_data,delivery_mode,is_published,telegram_chat_id,sort_order,active')
+    .eq('active', true);
+  if (error) throw error;
+  return res.status(200).json({ closed: false, courses: await openCatalog(data) });
+}
+
 export default async function handler(req, res) {
   // Phase 5B: Host dispatch before running legacy handler
   const options = req.__options || {};
@@ -180,6 +237,9 @@ export default async function handler(req, res) {
       res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=60');
       return res.status(200).json(runtime);
     }
+    if (String(req.query?.catalog || '') === '1') {
+      return await handleCatalog(req, res);
+    }
     const courseSlug = req.query.course || 'donut';
     const { data: course, error } = await supabase
       .from('courses')
@@ -193,23 +253,10 @@ export default async function handler(req, res) {
     }
 
     const rawData = course.raw_data || {};
-    if (isSalePaused(course) || isPublicCheckoutDisabled()) {
-      return res.status(404).json({ error: `Khóa học đang tạm dừng nhận đăng ký với slug: ${courseSlug}`, code: 'sale_paused' });
-    }
-    const courseImage = course.image_url || rawData.imageUrl || rawData.posterUrl || rawData.posterImageUrl || rawData.thumbnail || rawData.heroUrl || rawData.heroImageUrl || rawData.coverUrl || '';
+    const blocked = await storefrontBlock(course);
+    if (blocked) return res.status(404).json(blocked);
+    const courseImage = courseImageOf(course);
     const deliveryMode = normalizeDeliveryMode(course.delivery_mode);
-    if (deliveryMode === 'v4' && course.is_published !== true && rawData.v4SellBeforePublishAcknowledged !== true) {
-      return res.status(404).json({ error: `Khóa học V4 chưa sẵn sàng với slug: ${courseSlug}` });
-    }
-    if (deliveryMode === 'v5') {
-      if (course.is_published === true) {
-        const readiness = await getV5Readiness(course.id);
-        if (!readiness.ready) {
-          console.warn('[config] V5 storefront blocked by canonical readiness:', courseSlug, readiness.reason);
-          return res.status(404).json({ error: `Khóa học V5 chưa sẵn sàng với slug: ${courseSlug}` });
-        }
-      }
-    }
 
     return res.status(200).json({
       course: course.slug,
