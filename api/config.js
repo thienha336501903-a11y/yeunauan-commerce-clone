@@ -135,7 +135,7 @@ async function handleV5AdminReadiness(req, res) {
   });
 }
 
-// One rule for the course page and the public catalog (Owner 19/11): null = sellable on the public web, else the 404 body.
+// Sale rule for a course's own registration link (Owner 19/11): null = sellable, else the 404 body. No public course list.
 async function storefrontBlock(course) {
   const courseSlug = course.slug;
   const rawData = course.raw_data || {};
@@ -160,37 +160,6 @@ const courseImageOf = (course) => {
   const r = course.raw_data || {};
   return course.image_url || r.imageUrl || r.posterUrl || r.posterImageUrl || r.thumbnail || r.heroUrl || r.heroImageUrl || r.coverUrl || '';
 };
-const plainText = (value, max) => String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
-
-// Public list of courses open for sale (Owner 19/11). Only what the course page already shows publicly:
-// no bank account, no Telegram chat, no LMS link.
-export async function openCatalog(data, block = storefrontBlock) {
-  const rows = (data || []).filter((c) => c.active === true && validSlug(c.slug));
-  // A failed readiness lookup leaves only that course out (fail closed), not the whole list.
-  const blocks = await Promise.all(rows.map((c) => Promise.resolve().then(() => block(c)).catch(() => ({ error: 'unavailable' }))));
-  const open = rows.filter((c, i) => !blocks[i]
-    && (normalizeDeliveryMode(c.delivery_mode) !== 'telegram' || Boolean(String(c.telegram_chat_id || '').trim())));
-  const order = (c) => (c.sort_order !== null && c.sort_order !== '' && Number.isFinite(Number(c.sort_order)) ? Number(c.sort_order) : Infinity);
-  open.sort((a, b) => order(a) - order(b) || String(a.title || '').localeCompare(String(b.title || ''), 'vi'));
-  return open.map((c) => ({
-    slug: c.slug,
-    title: plainText(c.title, 120) || c.slug,
-    price: plainText(c.price, 40),
-    imageUrl: /^https:\/\//i.test(courseImageOf(c)) ? courseImageOf(c) : '',
-    summary: plainText(c.description, 160)
-  }));
-}
-
-async function handleCatalog(req, res) {
-  res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=60');
-  if (isPublicCheckoutDisabled()) return res.status(200).json({ closed: true, courses: [] });
-  const { data, error } = await supabase
-    .from('courses')
-    .select('id,slug,title,price,image_url,description,raw_data,delivery_mode,is_published,telegram_chat_id,sort_order,active')
-    .eq('active', true);
-  if (error) throw error;
-  return res.status(200).json({ closed: false, courses: await openCatalog(data) });
-}
 
 export default async function handler(req, res) {
   // Phase 5B: Host dispatch before running legacy handler
@@ -236,9 +205,6 @@ export default async function handler(req, res) {
     if (String(req.query?.runtime || '') === '1') {
       res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=60');
       return res.status(200).json(runtime);
-    }
-    if (String(req.query?.catalog || '') === '1') {
-      return await handleCatalog(req, res);
     }
     const courseSlug = req.query.course || 'donut';
     const { data: course, error } = await supabase
