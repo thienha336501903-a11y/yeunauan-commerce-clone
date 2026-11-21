@@ -1,0 +1,14 @@
+{
+  "get_started": { "payload": "GET_STARTED" },
+  "persistent_menu": [
+    {
+      "locale": "default",
+      "composer_input_disabled": false,
+      "call_to_actions": [
+        { "type": "postback", "title": "Đăng ký khóa học", "payload": "BUY" },
+        { "type": "postback", "title": "Xem khóa đang mở bán", "payload": "LIST" },
+        { "type": "postback", "title": "Chat với Admin", "payload": "ADMIN" }
+      ]
+    }
+  ]
+}

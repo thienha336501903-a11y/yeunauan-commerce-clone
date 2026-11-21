@@ -5,7 +5,7 @@ import test from 'node:test';
 const coursesSource = fs.readFileSync(new URL('../api/courses.js', import.meta.url), 'utf8');
 const adminHtmlSource = fs.readFileSync(new URL('../admin.html', import.meta.url), 'utf8');
 const approvalSource = fs.readFileSync(new URL('../utils/v5-order-approval.js', import.meta.url), 'utf8');
-const registerSource = fs.readFileSync(new URL('../api/register.js', import.meta.url), 'utf8');
+const registerSource = fs.readFileSync(new URL('../api/register.js', import.meta.url), 'utf8') + fs.readFileSync(new URL('../utils/bill-order.js', import.meta.url), 'utf8');
 
 test('F-02 Test A: new V5 course shell creation defaults to active = false and is_published = false', () => {
   // Verifies that base.active is strictly body.active === true and is_published is false
@@ -33,6 +33,6 @@ test('F-03 Test D: v5ApprovalReadiness uses requireSale: false so pending orders
 });
 
 test('F-03 Test E: api/register.js registration boundary strictly requires courseRec.active === true', () => {
-  assert.match(registerSource, /if \(!courseRec \|\| courseRec\.active === false\) return res\.status\(404\)/);
-  assert.match(registerSource, /if \(deliveryMode === 'v5'\) \{\s*if \(courseRec\.active !== true\) \{\s*return res\.status\(409\)/);
+  assert.match(registerSource, /if \(!courseRec \|\| courseRec\.active === false\) return reply\(404/);
+  assert.match(registerSource, /if \(deliveryMode === 'v5'\) \{\s*if \(courseRec\.active !== true\) \{\s*return reply\(409/);
 });

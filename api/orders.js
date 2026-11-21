@@ -3,11 +3,15 @@ import { supabase } from '../utils/supabase.js';
 import { extractCloudinaryBillPublicId } from '../utils/cloudinary-public-id.js';
 import { syncV4EnrollmentToLms } from '../utils/v4-sync-helpers.js';
 import { approveV5Order, resyncV5Order, revokeV5Order } from '../utils/v5-order-approval.js';
+import { markNoticeManual, notifyApprovedOrder, saveApprovalNotice } from '../utils/messenger/notify.js';
 import { enforceSameOriginAdminRequest } from '../utils/admin-cors.js';
 
 import { resolveRequestRoute } from '../utils/agency-routing.js';
 import { getAgencyOrder } from '../utils/agency-commerce.js';
 
+import { createBillOrder } from '../utils/bill-order.js';
+
+const MANUAL_SOURCES = new Set(['page_ai', 'page_inbox', 'other']);
 const VALID_ORDER_STATUSES = new Set(['Chờ duyệt', 'Đã duyệt', 'Từ chối']);
 const TEST_TITLE_PREFIX = '__clone_factory_test';
 const TEST_SLUG_PATTERN = /^clone-factory-test(?:-|$)/;
@@ -45,7 +49,7 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true, order: result.order });
   }
 
-  if (!enforceSameOriginAdminRequest(req, res, ['GET', 'PUT', 'DELETE', 'OPTIONS'])) return;
+  if (!enforceSameOriginAdminRequest(req, res, ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])) return;
   const adminPassword = req.headers['x-admin-password'];
   const systemPassword = process.env.ADMIN_PASSWORD;
   if (!adminPassword || adminPassword !== systemPassword) return res.status(401).json({ error: 'Unauthorized: Mật khẩu Admin không chính xác hoặc trống.' });
@@ -69,6 +73,32 @@ export default async function handler(req, res) {
       }));
     }
 
+    // B1: the Admin creates a "Chờ duyệt" order by hand (Facebook sale: Gmail + bill photo arrive in the Page inbox).
+    // Approval stays the normal PUT. PUBLIC_CHECKOUT_DISABLED does not apply: this is the Admin path.
+    if (req.method === 'POST') {
+      const { action, course, gmail, billType, billData, billName, source, note } = req.body || {};
+      if (action !== 'manual_create') return res.status(400).json({ error: 'Hành động không hợp lệ' });
+      const cleanGmail = validateGmail(gmail);
+      if (!cleanGmail) return res.status(400).json({ error: 'Địa chỉ email không hợp lệ' });
+      if (!MANUAL_SOURCES.has(source)) return res.status(400).json({ error: 'Nguồn đơn không hợp lệ' });
+      const cleanNote = String(note ?? '').replace(/[\x00-\x1F\x7F]/g, ' ').trim();
+      if (cleanNote.length > 200) return res.status(400).json({ error: 'Ghi chú tối đa 200 ký tự' });
+      const courseSlug = String(course || '').trim().toLowerCase();
+      if (!/^[a-z0-9_-]+$/.test(courseSlug)) return res.status(400).json({ error: 'Mã khóa học không hợp lệ' });
+
+      const db = options.supabaseClient || supabase;
+      const { data: dup, error: dupErr } = await db.from('orders').select('id,status').eq('customer_email', cleanGmail).eq('course_slug', courseSlug).in('status', ['Chờ duyệt', 'Đã duyệt']).limit(1);
+      if (dupErr) throw dupErr;
+      if (dup?.length) return res.status(409).json({ error: 'duplicate', status: dup[0].status, orderId: dup[0].id });
+
+      const create = options.createBillOrder || createBillOrder;
+      const result = await create(
+        { gmail: cleanGmail, course: courseSlug, billName: billName || `manual-${Date.now()}`, billType, billData },
+        { rawExtra: { channel: 'manual', source, manualNote: cleanNote, createdBy: 'admin' } }
+      );
+      return res.status(result.status).json(result.body);
+    }
+
     if (req.method === 'PUT') {
       const { id, status, note, customer_name, customer_phone, gmail, action } = req.body || {};
       if (!id) return res.status(400).json({ error: 'Thiếu ID đơn hàng để cập nhật' });
@@ -76,6 +106,12 @@ export default async function handler(req, res) {
       const { data: existingOrder, error: fetchErr } = await supabase.from('orders').select('*').eq('id', id).maybeSingle();
       if (fetchErr) throw fetchErr;
       if (!existingOrder) return res.status(404).json({ error: 'Không tìm thấy đơn hàng' });
+      // G2: marks the Messenger notice as handled by hand. Changes nothing but raw_data.messengerNotify.manual.
+      if (action === 'messenger_notify_manual') {
+        const marked = await markNoticeManual(supabase, existingOrder, note);
+        if (!marked.ok) return res.status(marked.status).json({ error: marked.error });
+        return res.status(200).json({ success: true, data: { id, messengerNotify: marked.notice } });
+      }
       if (status !== undefined && !VALID_ORDER_STATUSES.has(status)) {
         return res.status(400).json({ error: 'Trạng thái đơn hàng không hợp lệ' });
       }
@@ -136,7 +172,19 @@ export default async function handler(req, res) {
         if (status === 'Đã duyệt') {
           const result = await approveV5Order(orderForSync, updateData);
           if (!result.ok) return res.status(result.statusCode || 409).json({ success: false, error: result.error, code: result.code, syncResults: result.syncResults || null });
-          return res.status(200).json({ success: true, data: { ...result.data, syncResults: result.syncResults } });
+          // G2: the approval is done; the notice can only add a warning, never undo it.
+          const approved = { ...orderForSync, ...(result.data || {}) };
+          let notice = null;
+          let noticeSaved = null;
+          try {
+            notice = await notifyApprovedOrder(approved);
+            if (notice) noticeSaved = await saveApprovalNotice(supabase, approved, { ...notice, approvedAt: new Date().toISOString() });
+          } catch {
+            notice = { status: 'unknown', reason: 'internal' };
+            noticeSaved = false;
+          }
+          const syncResults = notice ? { ...result.syncResults, messenger: notice.status, messengerNotice: notice, messengerNoticeSaved: noticeSaved } : result.syncResults;
+          return res.status(200).json({ success: true, data: { ...result.data, syncResults } });
         }
         if (existingOrder.status === 'Đã duyệt') {
           const result = await revokeV5Order(existingOrder, status, updateData);
