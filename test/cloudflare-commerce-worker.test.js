@@ -34,18 +34,54 @@ test("vercel.json security headers on static, api and 404 responses", async () =
   }
 });
 
-test("/?course= redirects like Vercel and keeps the query string", async () => {
-  let res = await call("/?course=abc&x=1");
+const open = async () => true; // course on sale (the real check is /api/config, covered below)
+const routeAt = (path, env = { ASSETS: fakeAssets() }, onSale = open) => route(new Request(`https://yeubep.shop${path}`), env, {}, { onSale });
+
+test("/?course= redirects like Vercel and keeps the query string (course on sale)", async () => {
+  let res = await routeAt("/?course=abc&x=1");
   assert.equal(res.status, 307);
   assert.equal(res.headers.get("location"), "/course-gate.html?course=abc&x=1");
-  res = await call("/?course=a%20b");
+  res = await routeAt("/?course=a%20b");
   assert.equal(res.headers.get("location"), "/course-gate.html?course=a%20b");
 });
 
-test("/ and /?course= (empty) serve index.html; other paths go to assets unchanged", async () => {
+test("/ serves index.html; other paths go to assets unchanged", async () => {
   const env = { ASSETS: fakeAssets() };
-  for (const path of ["/", "/?course=", "/admin.html", "/admin", "/package.json"]) await call(path, {}, env);
-  assert.deepEqual(env.ASSETS.seen, ["/index.html", "/index.html", "/admin.html", "/admin", "/package.json"]);
+  for (const path of ["/", "/admin.html", "/admin", "/package.json"]) await call(path, {}, env);
+  assert.deepEqual(env.ASSETS.seen, ["/index.html", "/admin.html", "/admin", "/package.json"]);
+});
+
+// Owner 20/11: Dừng bán makes the course link a blank page; Mở bán brings the same link back.
+test("SP-1 course not on sale: every course page is a blank 404, no-store, assets never read", async () => {
+  const paused = new Set(["khoa-a"]);
+  const onSale = async (_req, _url, slug) => !paused.has(slug);
+  const env = { ASSETS: fakeAssets() };
+  for (const path of ["/?course=khoa-a", "/index.html?course=khoa-a", "/course-gate.html?course=khoa-a", "/index.html?course=khoa-a&utm_source=fb", "/?course=", "/index.html?course=", "/course-gate.html?course=%20"]) {
+    const res = await routeAt(path, env, onSale);
+    assert.equal(res.status, 404, path);
+    assert.equal(await res.text(), "", path);
+    assert.equal(res.headers.get("cache-control"), "no-store", path);
+  }
+  assert.deepEqual(env.ASSETS.seen, []);
+  // B still on sale, and A again once Mở bán (same link)
+  assert.equal((await routeAt("/?course=khoa-b", env, onSale)).status, 307);
+  assert.equal((await routeAt("/index.html?course=khoa-b", env, onSale)).status, 200);
+  paused.delete("khoa-a");
+  assert.equal((await routeAt("/?course=khoa-a", env, onSale)).status, 307);
+  assert.equal((await routeAt("/course-gate.html?course=khoa-a", env, onSale)).status, 200);
+});
+
+test("SP-2 the check fails closed and only course pages are gated", async () => {
+  const boom = async () => { throw new Error("db down"); };
+  assert.equal((await routeAt("/index.html?course=khoa-a", undefined, boom)).status, 404);
+  const env = { ASSETS: fakeAssets() };
+  for (const path of ["/admin.html?course=khoa-a", "/orders.html?course=khoa-a", "/index.html"]) assert.equal((await routeAt(path, env, boom)).status, 200, path);
+  // the real check (/api/config, no DB in tests) never opens a course page
+  const res = await call("/index.html?course=khoa-a");
+  assert.equal(res.status, 404);
+  assert.equal(await res.text(), "");
+  for (const { key, value } of SECURITY) assert.equal(res.headers.get(key), value, key);
+  assert.equal(res.headers.get("cache-control"), "no-store");
 });
 
 test("unknown or nested /api paths are 404 and never reach assets", async () => {

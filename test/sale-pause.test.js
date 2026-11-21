@@ -50,8 +50,11 @@ test('course links are gated before the payment storefront', () => {
   assert.deepEqual(gateRedirect.has, [{ type: 'query', key: 'course', value: '(?<course>.+)' }]);
 
   const gate = read('course-gate.html');
-  assert.match(gate, /data\.code==='sale_paused'/);
-  assert.match(gate, /Khóa học hiện đang tạm dừng nhận đăng ký/);
+  assert.match(gate, /document\.body\.replaceChildren\(\)/); // Owner 20/11: closed course = blank page, no message
+  assert.doesNotMatch(gate, /tạm dừng nhận đăng ký/);
+  assert.match(read('index.html'), /if\(data\.code==='sale_paused'\)\{document\.title='';document\.body\.replaceChildren\(\);return\}/);
+  assert.match(read('index.html'), /addEventListener\('pageshow',e=>\{if\(e\.persisted\)location\.reload\(\)\}\)/);
+  assert.match(read('index.html'), /if\(!res\.ok\)\{document\.title='';document\.body\.replaceChildren\(\);return\}/);
   assert.match(gate, /window\.location\.replace\(`\/index\.html\$\{window\.location\.search\}`\)/);
   assert.doesNotMatch(gate, /\/api\/register/);
   assert.doesNotMatch(gate, /billData/);

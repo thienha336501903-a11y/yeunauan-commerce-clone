@@ -67,22 +67,9 @@
           return;
         }
 
-        if(data.code==='sale_paused'){
-          showState('Tạm dừng bán','Khóa học hiện đang tạm dừng nhận đăng ký','Hiện tại hệ thống không nhận thanh toán hoặc bill mới cho khóa học này. Học viên đã được cấp quyền học vẫn sử dụng cổng học viên bình thường.');
-          try{
-            const runtimeResponse=await fetch('/api/config?runtime=1',{cache:'no-store'});
-            if(runtimeResponse.ok){
-              const runtime=await runtimeResponse.json();
-              if(runtime.lmsPublicUrl){
-                studentLink.href=new URL('/my-courses.html',runtime.lmsPublicUrl).toString();
-                studentLink.classList.remove('hidden');
-              }
-            }
-          }catch(_error){}
-          return;
-        }
-
-        showState('Chưa mở đăng ký','Khóa học hiện chưa nhận đăng ký',data.error||'Vui lòng quay lại sau hoặc liên hệ Admin nếu bạn cần hỗ trợ.');
+        // Owner 20/11: a closed course (Dừng bán or not ready) is a blank page, no message. The Worker already answers 404 before this page.
+        document.title='';
+        document.body.replaceChildren();
       }catch(error){
         showState('Không kết nối được','Chưa kiểm tra được trạng thái khóa học','Vui lòng thử lại sau. Hệ thống chưa thực hiện bất kỳ giao dịch hoặc upload bill nào.');
       }
