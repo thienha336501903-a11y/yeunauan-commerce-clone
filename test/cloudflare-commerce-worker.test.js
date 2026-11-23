@@ -34,18 +34,54 @@ test("vercel.json security headers on static, api and 404 responses", async () =
   }
 });
 
-test("/?course= redirects like Vercel and keeps the query string", async () => {
-  let res = await call("/?course=abc&x=1");
+const open = async () => true; // course on sale (the real check is /api/config, covered below)
+const routeAt = (path, env = { ASSETS: fakeAssets() }, onSale = open) => route(new Request(`https://yeubep.shop${path}`), env, {}, { onSale });
+
+test("/?course= redirects like Vercel and keeps the query string (course on sale)", async () => {
+  let res = await routeAt("/?course=abc&x=1");
   assert.equal(res.status, 307);
   assert.equal(res.headers.get("location"), "/course-gate.html?course=abc&x=1");
-  res = await call("/?course=a%20b");
+  res = await routeAt("/?course=a%20b");
   assert.equal(res.headers.get("location"), "/course-gate.html?course=a%20b");
 });
 
-test("/ and /?course= (empty) serve index.html; other paths go to assets unchanged", async () => {
+test("/ serves index.html; other paths go to assets unchanged", async () => {
   const env = { ASSETS: fakeAssets() };
-  for (const path of ["/", "/?course=", "/admin.html", "/admin", "/package.json"]) await call(path, {}, env);
-  assert.deepEqual(env.ASSETS.seen, ["/index.html", "/index.html", "/admin.html", "/admin", "/package.json"]);
+  for (const path of ["/", "/admin.html", "/admin", "/package.json"]) await call(path, {}, env);
+  assert.deepEqual(env.ASSETS.seen, ["/index.html", "/admin.html", "/admin", "/package.json"]);
+});
+
+// Owner 20/11: Dừng bán makes the course link a blank page; Mở bán brings the same link back.
+test("SP-1 course not on sale: every course page is a blank 404, no-store, assets never read", async () => {
+  const paused = new Set(["khoa-a"]);
+  const onSale = async (_req, _url, slug) => !paused.has(slug);
+  const env = { ASSETS: fakeAssets() };
+  for (const path of ["/?course=khoa-a", "/index.html?course=khoa-a", "/course-gate.html?course=khoa-a", "/index.html?course=khoa-a&utm_source=fb", "/?course=", "/index.html?course=", "/course-gate.html?course=%20"]) {
+    const res = await routeAt(path, env, onSale);
+    assert.equal(res.status, 404, path);
+    assert.equal(await res.text(), "", path);
+    assert.equal(res.headers.get("cache-control"), "no-store", path);
+  }
+  assert.deepEqual(env.ASSETS.seen, []);
+  // B still on sale, and A again once Mở bán (same link)
+  assert.equal((await routeAt("/?course=khoa-b", env, onSale)).status, 307);
+  assert.equal((await routeAt("/index.html?course=khoa-b", env, onSale)).status, 200);
+  paused.delete("khoa-a");
+  assert.equal((await routeAt("/?course=khoa-a", env, onSale)).status, 307);
+  assert.equal((await routeAt("/course-gate.html?course=khoa-a", env, onSale)).status, 200);
+});
+
+test("SP-2 the check fails closed and only course pages are gated", async () => {
+  const boom = async () => { throw new Error("db down"); };
+  assert.equal((await routeAt("/index.html?course=khoa-a", undefined, boom)).status, 404);
+  const env = { ASSETS: fakeAssets() };
+  for (const path of ["/admin.html?course=khoa-a", "/orders.html?course=khoa-a", "/index.html"]) assert.equal((await routeAt(path, env, boom)).status, 200, path);
+  // the real check (/api/config, no DB in tests) never opens a course page
+  const res = await call("/index.html?course=khoa-a");
+  assert.equal(res.status, 404);
+  assert.equal(await res.text(), "");
+  for (const { key, value } of SECURITY) assert.equal(res.headers.get(key), value, key);
+  assert.equal(res.headers.get("cache-control"), "no-store");
 });
 
 test("unknown or nested /api paths are 404 and never reach assets", async () => {
@@ -120,6 +156,24 @@ test("Production config (H5 P1): no routes or workers.dev, checkout closed, LMS 
   assert.match(toml, /^VERCEL_ENV = "production"$/m);
   assert.match(toml, /^V5_LMS_PUBLIC_URL = "https:\/\/hoc\.yeubep\.shop"$/m);
   assert.match(toml, /\[\[services\]\]\nbinding = "LMS"\nservice = "systemb-lms"/);
+});
+
+test("Production config (G-PROD-code): Messenger ids, AI binding, flags; a live bot sells only listed non-TEST courses", () => {
+  const toml = readFileSync(new URL("../cloudflare/commerce-worker/wrangler.production.toml", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const v = (k) => toml.match(new RegExp(`^${k} = "([^"]*)"$`, "m"))?.[1];
+  assert.equal(v("META_APP_ID"), "2162114824732775");
+  assert.equal(v("META_PAGE_ID"), "1238655599320121");
+  assert.match(toml, /^\[ai\]\nbinding = "AI"$/m);
+  assert.match(toml, /\[\[durable_objects\.bindings\]\]\nname = "MESSENGER_CONVERSATIONS"\nclass_name = "MessengerConversation"/);
+  for (const k of ["MESSENGER_BOT_ENABLED", "MESSENGER_TICKETS_ENABLED", "MESSENGER_AI_ENABLED"]) assert.ok(["0", "1"].includes(v(k)), k);
+  assert.doesNotMatch(toml, /^META_(APP_SECRET|VERIFY_TOKEN|PAGE_ACCESS_TOKEN)\s*=/m); // secrets only via wrangler secret put
+  const slugs = String(v("MESSENGER_COURSE_SLUGS") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  // Owner 03/11: every current Production course is TEST; banh-mi-meili is the E2E course.
+  for (const s of slugs) {
+    assert.match(s.toLowerCase(), /^[a-z0-9_-]+$/, s); // loadCourses drops other slugs; an all-dropped list would sell every switched-on course
+    assert.doesNotMatch(s, /^(stg-|test|clone-factory|system-b-benchmark|banh-mi-meili$)/i, s);
+  }
+  if (v("MESSENGER_BOT_ENABLED") === "1") assert.ok(slugs.length > 0, "a live bot needs MESSENGER_COURSE_SLUGS");
 });
 
 test("worker source is never a static asset: assets dir is public/ and the build copies only root pages", async () => {

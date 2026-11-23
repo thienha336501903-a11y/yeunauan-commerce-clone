@@ -135,6 +135,32 @@ async function handleV5AdminReadiness(req, res) {
   });
 }
 
+// Sale rule for a course's own registration link (Owner 19/11): null = sellable, else the 404 body. No public course list.
+async function storefrontBlock(course) {
+  const courseSlug = course.slug;
+  const rawData = course.raw_data || {};
+  if (isSalePaused(course) || isPublicCheckoutDisabled()) {
+    return { error: `Khóa học đang tạm dừng nhận đăng ký với slug: ${courseSlug}`, code: 'sale_paused' };
+  }
+  const deliveryMode = normalizeDeliveryMode(course.delivery_mode);
+  if (deliveryMode === 'v4' && course.is_published !== true && rawData.v4SellBeforePublishAcknowledged !== true) {
+    return { error: `Khóa học V4 chưa sẵn sàng với slug: ${courseSlug}` };
+  }
+  if (deliveryMode === 'v5' && course.is_published === true) {
+    const readiness = await getV5Readiness(course.id);
+    if (!readiness.ready) {
+      console.warn('[config] V5 storefront blocked by canonical readiness:', courseSlug, readiness.reason);
+      return { error: `Khóa học V5 chưa sẵn sàng với slug: ${courseSlug}` };
+    }
+  }
+  return null;
+}
+
+const courseImageOf = (course) => {
+  const r = course.raw_data || {};
+  return course.image_url || r.imageUrl || r.posterUrl || r.posterImageUrl || r.thumbnail || r.heroUrl || r.heroImageUrl || r.coverUrl || '';
+};
+
 export default async function handler(req, res) {
   // Phase 5B: Host dispatch before running legacy handler
   const options = req.__options || {};
@@ -180,7 +206,7 @@ export default async function handler(req, res) {
       res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=60');
       return res.status(200).json(runtime);
     }
-    const courseSlug = req.query.course || 'donut';
+    const courseSlug = String(req.query.course || ''); // no default course (Owner: each course sold by its own link)
     const { data: course, error } = await supabase
       .from('courses')
       .select('*')
@@ -193,23 +219,10 @@ export default async function handler(req, res) {
     }
 
     const rawData = course.raw_data || {};
-    if (isSalePaused(course) || isPublicCheckoutDisabled()) {
-      return res.status(404).json({ error: `Khóa học đang tạm dừng nhận đăng ký với slug: ${courseSlug}`, code: 'sale_paused' });
-    }
-    const courseImage = course.image_url || rawData.imageUrl || rawData.posterUrl || rawData.posterImageUrl || rawData.thumbnail || rawData.heroUrl || rawData.heroImageUrl || rawData.coverUrl || '';
+    const blocked = await storefrontBlock(course);
+    if (blocked) return res.status(404).json(blocked);
+    const courseImage = courseImageOf(course);
     const deliveryMode = normalizeDeliveryMode(course.delivery_mode);
-    if (deliveryMode === 'v4' && course.is_published !== true && rawData.v4SellBeforePublishAcknowledged !== true) {
-      return res.status(404).json({ error: `Khóa học V4 chưa sẵn sàng với slug: ${courseSlug}` });
-    }
-    if (deliveryMode === 'v5') {
-      if (course.is_published === true) {
-        const readiness = await getV5Readiness(course.id);
-        if (!readiness.ready) {
-          console.warn('[config] V5 storefront blocked by canonical readiness:', courseSlug, readiness.reason);
-          return res.status(404).json({ error: `Khóa học V5 chưa sẵn sàng với slug: ${courseSlug}` });
-        }
-      }
-    }
 
     return res.status(200).json({
       course: course.slug,
@@ -230,6 +243,6 @@ export default async function handler(req, res) {
     });
   } catch (error) {
     console.error('[config]', error);
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: 'Lỗi hệ thống. Vui lòng thử lại sau.' });
   }
 }

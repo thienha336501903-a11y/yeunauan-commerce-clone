@@ -18,6 +18,8 @@ import telegramSetup from "../../../api/telegram-setup.js";
 import telegramWebhook from "../../../api/telegram-webhook.js";
 import upload from "../../../api/upload.js";
 import { setLmsBinding } from "../../../utils/lms-fetch.js";
+import { messengerWebhook } from "./messenger.js";
+import messengerTickets from "./messenger-tickets.js";
 
 export const API_HANDLERS = {
   "approve-all": approveAll,
@@ -48,6 +50,21 @@ function courseRedirect(url) {
   return new Response(null, { status: COURSE_RULE.permanent ? 308 : 307, headers: { Location: location } });
 }
 
+// Owner 20/11: a course link whose course is not on sale (Dừng bán, inactive, not ready, web closed) is a blank 404.
+// Decided here with the same rule as /api/config, before any HTML, so no name, image, price or bank data reaches the page.
+const COURSE_PAGES = new Set(["/", "/index.html", "/course-gate.html"]);
+async function courseOnSale(request, url, slug) {
+  const check = new Request(new URL(`/api/config?course=${encodeURIComponent(slug)}`, url), { headers: request.headers });
+  return (await runCompatHandler(config, check, { maxBodyBytes: MAX_BODY_BYTES })).status === 200;
+}
+export async function closedCoursePage(request, url, onSale = courseOnSale) {
+  if (!COURSE_PAGES.has(url.pathname) || !url.searchParams.has("course")) return null;
+  const slug = String(url.searchParams.get("course") || "").trim();
+  // Empty ?course= would fall back to the page's default course; a failed check (DB down) is closed too.
+  if (slug && await onSale(request, url, slug).catch(() => false)) return null;
+  return new Response(null, { status: 404, headers: { "Cache-Control": "no-store" } });
+}
+
 function withSecurityHeaders(response) {
   const out = new Response(response.body, response);
   for (const { key, value } of SECURITY_HEADERS) out.headers.set(key, value);
@@ -60,14 +77,20 @@ function notFound() {
   return new Response("Not Found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
 }
 
-export async function route(request, env) {
+export async function route(request, env, ctx, { onSale } = {}) {
   const url = new URL(request.url);
+  // Messenger bot webhook (H4): Worker-only, signed by Meta; see messenger.js.
+  if (url.pathname === "/api/messenger-webhook") return messengerWebhook(request, env, ctx);
+  // Admin ticket list (M-A): Worker-only too; 404 unless MESSENGER_TICKETS_ENABLED = "1".
+  if (url.pathname === "/api/messenger-tickets") return runCompatHandler(messengerTickets, request, { maxBodyBytes: MAX_BODY_BYTES, __env: env });
   const api = /^\/api\/([a-z0-9-]+)\/?$/.exec(url.pathname);
   if (api) {
     const handler = Object.hasOwn(API_HANDLERS, api[1]) ? API_HANDLERS[api[1]] : null;
     return handler ? runCompatHandler(handler, request, { maxBodyBytes: MAX_BODY_BYTES }) : notFound();
   }
   if (url.pathname.startsWith("/api/")) return notFound();
+  const closed = await closedCoursePage(request, url, onSale);
+  if (closed) return closed;
   const redirect = courseRedirect(url);
   if (redirect) return redirect;
   // html_handling = "none" (wrangler.toml) keeps Vercel's exact URLs; only "/" maps to index.html.
@@ -75,7 +98,7 @@ export async function route(request, env) {
   return env.ASSETS.fetch(request);
 }
 
-export async function handleRequest(request, env) {
+export async function handleRequest(request, env, ctx) {
   setLmsBinding(env.LMS);
-  return withSecurityHeaders(await route(request, env));
+  return withSecurityHeaders(await route(request, env, ctx));
 }

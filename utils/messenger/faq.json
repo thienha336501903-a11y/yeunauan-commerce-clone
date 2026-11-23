@@ -1,0 +1,12 @@
+[
+  { "id": "faq-register", "category": "Hướng dẫn chung", "question": "Đăng ký thế nào?", "keywords": ["dang ky", "dk the nao", "mua the nao", "cach mua"], "answer": "Chọn khoá, gửi Gmail dùng để học, chuyển khoản theo thông tin bot gửi, gửi ảnh bill; Admin kiểm tra rồi cấp quyền học.", "status": "draft" },
+  { "id": "faq-after-pay", "category": "Hướng dẫn chung", "question": "Chuyển khoản xong làm gì?", "keywords": ["chuyen khoan xong", "da chuyen khoan", "gui bill", "chuyen xong"], "answer": "Gửi ảnh bill vào đây. Sau khi Admin xác nhận, bot nhắn link vào học.", "status": "draft" },
+  { "id": "faq-device", "category": "Bán khoá", "question": "Học bằng thiết bị gì?", "keywords": ["thiet bi", "dien thoai", "may tinh", "hoc bang gi"], "answer": "", "status": "draft" },
+  { "id": "faq-format", "category": "Bán khoá", "question": "Học online hay offline?", "keywords": ["online", "offline", "hinh thuc hoc"], "answer": "", "status": "draft" },
+  { "id": "faq-access", "category": "Chính sách", "question": "Xem lại được bao lâu?", "keywords": ["xem lai", "bao lau", "thoi han", "tron doi"], "answer": "", "status": "draft" },
+  { "id": "faq-login", "category": "Tự phục vụ", "question": "Mua rồi vào học ở đâu?", "keywords": ["vao hoc", "dang nhap", "mua roi", "link hoc"], "answer": "Vào https://hoc.yeubep.shop/my-courses.html, đăng nhập Google bằng đúng Gmail đã gửi khi mua.", "status": "draft" },
+  { "id": "faq-wrong-account", "category": "Tự phục vụ", "question": "Đăng nhập không thấy khoá?", "keywords": ["khong thay khoa", "khong thay", "sai tai khoan", "khong vao duoc"], "answer": "Kiểm tra đúng tài khoản Google đã gửi khi mua; nếu vẫn không thấy, bấm \"Gặp Admin\".", "status": "draft" },
+  { "id": "faq-video", "category": "Tự phục vụ", "question": "Video không chạy?", "keywords": ["video", "khong chay", "khong xem duoc", "bi loi video"], "answer": "Mở bằng Chrome/Safari (không mở trong Zalo/Facebook), tải lại trang; vẫn lỗi thì bấm \"Gặp Admin\".", "status": "draft" },
+  { "id": "faq-contact", "category": "Hướng dẫn chung", "question": "Liên hệ người thật?", "keywords": ["lien he", "nguoi that"], "answer": "Bấm \"Gặp Admin\", Admin sẽ trả lời trực tiếp trong Messenger.", "status": "draft" },
+  { "id": "faq-refund", "category": "Chính sách", "question": "Hoàn tiền?", "keywords": ["hoan tien", "tra tien", "refund"], "answer": "", "status": "draft" }
+]

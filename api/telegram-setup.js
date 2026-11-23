@@ -33,10 +33,8 @@ export default async function handler(req, res) {
       ? webhookBaseUrl + '?x-vercel-protection-bypass=' + encodeURIComponent(protectionBypass)
       : webhookBaseUrl;
     const bot = await telegramApi('getMe');
-    const rights = telegramBotAdminRights();
-
-    await telegramApi('setMyDefaultAdministratorRights', { rights, for_channels: false });
-    await telegramApi('setMyDefaultAdministratorRights', { rights, for_channels: true });
+    await telegramApi('setMyDefaultAdministratorRights', { rights: telegramBotAdminRights(), for_channels: false });
+    await telegramApi('setMyDefaultAdministratorRights', { rights: telegramBotAdminRights({ forChannel: true }), for_channels: true });
 
     const webhook = await telegramApi('setWebhook', {
       url: webhookUrl,

@@ -46,7 +46,7 @@ test("M0E Commerce sync helper is Main-LMS-only and marks portal retirement expl
 });
 
 test("M0E Commerce registration returns learners to Main LMS", () => {
-  const register = read("api/register.js");
+  const register = read("api/register.js") + read("utils/bill-order.js");
   const index = read("index.html");
   assert.match(register, /managerPath = runtime\.lmsPublicUrl/);
   assert.doesNotMatch(register, /legacy student Portal/);

@@ -1,0 +1,12 @@
+{
+  "ice_breakers": [
+    {
+      "locale": "default",
+      "call_to_actions": [
+        { "question": "Đăng ký khóa học", "payload": "BUY" },
+        { "question": "Xem khóa đang mở bán", "payload": "LIST" },
+        { "question": "Chat với Admin", "payload": "ADMIN" }
+      ]
+    }
+  ]
+}

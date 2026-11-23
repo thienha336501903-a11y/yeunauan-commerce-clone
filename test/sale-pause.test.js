@@ -22,8 +22,8 @@ test('only an explicit boolean true pauses sales', () => {
 test('all public sale entry points enforce the independent pause flag', () => {
   assert.match(read('api/config.js'), /if \(isSalePaused\(course\)( \|\| isPublicCheckoutDisabled\(\))?\)/);
   assert.match(read('api/hero.js'), /isSalePaused\(course\)/);
-  assert.match(read('api/register.js'), /if \(isSalePaused\(courseRec\)\)/);
-  assert.match(read('api/register.js'), /code: 'sale_paused'/);
+  assert.match((read('api/register.js') + read('utils/bill-order.js')), /if \(isSalePaused\(courseRec\)\)/);
+  assert.match((read('api/register.js') + read('utils/bill-order.js')), /code: 'sale_paused'/);
 });
 
 test('admin course updates validate and merge the pause flag into raw_data', () => {
@@ -50,8 +50,11 @@ test('course links are gated before the payment storefront', () => {
   assert.deepEqual(gateRedirect.has, [{ type: 'query', key: 'course', value: '(?<course>.+)' }]);
 
   const gate = read('course-gate.html');
-  assert.match(gate, /data\.code==='sale_paused'/);
-  assert.match(gate, /Khóa học hiện đang tạm dừng nhận đăng ký/);
+  assert.match(gate, /document\.body\.replaceChildren\(\)/); // Owner 20/11: closed course = blank page, no message
+  assert.doesNotMatch(gate, /tạm dừng nhận đăng ký/);
+  assert.match(read('index.html'), /if\(data\.code==='sale_paused'\)\{document\.title='';document\.body\.replaceChildren\(\);return\}/);
+  assert.match(read('index.html'), /addEventListener\('pageshow',e=>\{if\(e\.persisted\)location\.reload\(\)\}\)/);
+  assert.match(read('index.html'), /if\(!res\.ok\)\{document\.title='';document\.body\.replaceChildren\(\);return\}/);
   assert.match(gate, /window\.location\.replace\(`\/index\.html\$\{window\.location\.search\}`\)/);
   assert.doesNotMatch(gate, /\/api\/register/);
   assert.doesNotMatch(gate, /billData/);
