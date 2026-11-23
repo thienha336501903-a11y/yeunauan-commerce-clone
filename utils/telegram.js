@@ -105,13 +105,15 @@ export async function verifyCourseConnectToken(token) {
   return expandUuid(match[1]);
 }
 
-export function telegramBotAdminRights() {
+// Groups: ask for "ban users" so a revoked student can be removed. Channels: left off so the
+// chat picker keeps working; removing a channel subscriber is not verified (Admin removes by hand).
+export function telegramBotAdminRights({ forChannel = false } = {}) {
   return {
     is_anonymous: false,
     can_manage_chat: true,
     can_delete_messages: false,
     can_manage_video_chats: false,
-    can_restrict_members: false,
+    can_restrict_members: !forChannel,
     can_promote_members: false,
     can_change_info: false,
     can_invite_users: true,
@@ -121,9 +123,9 @@ export function telegramBotAdminRights() {
   };
 }
 
-function telegramSelectingUserRights() {
+function telegramSelectingUserRights(opts) {
   return {
-    ...telegramBotAdminRights(),
+    ...telegramBotAdminRights(opts),
     can_promote_members: true
   };
 }
@@ -134,14 +136,11 @@ export async function sendCourseChatPicker({ adminChatId, course, requestId }) {
     throw new Error('Telegram request_id không hợp lệ');
   }
 
-  const botRights = telegramBotAdminRights();
-  const userRights = telegramSelectingUserRights();
-  const requestCommon = {
-    user_administrator_rights: userRights,
-    bot_administrator_rights: botRights,
-    request_title: true,
-    request_username: true
-  };
+  const requestCommon = { request_title: true, request_username: true };
+  const rightsFor = forChannel => ({
+    user_administrator_rights: telegramSelectingUserRights({ forChannel }),
+    bot_administrator_rights: telegramBotAdminRights({ forChannel })
+  });
 
   return telegramApi('sendMessage', {
     chat_id: String(adminChatId),
@@ -153,6 +152,7 @@ export async function sendCourseChatPicker({ adminChatId, course, requestId }) {
           request_chat: {
             request_id: baseRequestId,
             chat_is_channel: false,
+            ...rightsFor(false),
             ...requestCommon
           }
         }],
@@ -161,6 +161,7 @@ export async function sendCourseChatPicker({ adminChatId, course, requestId }) {
           request_chat: {
             request_id: baseRequestId + 1,
             chat_is_channel: true,
+            ...rightsFor(true),
             ...requestCommon
           }
         }]
@@ -185,7 +186,8 @@ export async function verifyBotInvitePermission(chatId) {
   const member = await telegramApi('getChatMember', { chat_id: String(chatId), user_id: bot.id });
   const isAdmin = member?.status === 'administrator' || member?.status === 'creator';
   const canInvite = member?.status === 'creator' || member?.can_invite_users === true;
-  return { ok: Boolean(isAdmin && canInvite), bot, member };
+  const canRestrict = member?.status === 'creator' || member?.can_restrict_members === true;
+  return { ok: Boolean(isAdmin && canInvite), canRestrict: Boolean(isAdmin && canRestrict), bot, member };
 }
 
 export async function createOrderInvite({ chatId, orderId, courseSlug, ttlHours = 72 }) {
@@ -218,13 +220,33 @@ export async function declineTelegramJoin(chatId, userId) {
   return telegramApi('declineChatJoinRequest', { chat_id: String(chatId), user_id: Number(userId) });
 }
 
-export async function answerTelegramCallback(callbackQueryId, text) {
-  return telegramApi('answerCallbackQuery', { callback_query_id: callbackQueryId, text, show_alert: false });
+// 'member' | 'administrator' | 'creator' | 'restricted' | 'left' | 'kicked', or null when Telegram cannot tell.
+export async function getTelegramMemberStatus(chatId, userId) {
+  try {
+    const member = await telegramApi('getChatMember', { chat_id: String(chatId), user_id: Number(userId) });
+    return member?.status || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function unbanTelegramMember(chatId, userId) {
+  return telegramApi('unbanChatMember', { chat_id: String(chatId), user_id: Number(userId), only_if_banned: true });
+}
+
+// Removes a member and lifts the ban at once, so a later paid order can invite them again.
+export async function removeTelegramMember(chatId, userId) {
+  await telegramApi('banChatMember', { chat_id: String(chatId), user_id: Number(userId), revoke_messages: false });
+  return unbanTelegramMember(chatId, userId);
+}
+
+export async function answerTelegramCallback(callbackQueryId, text, showAlert = false) {
+  return telegramApi('answerCallbackQuery', { callback_query_id: callbackQueryId, text: String(text || '').slice(0, 200), show_alert: Boolean(showAlert) });
 }
 
 export async function notifyAdminJoinRequest(order, from) {
   const cfg = await getTelegramRuntimeConfig();
-  if (!cfg.adminChatId) return null;
+  if (!cfg.adminChatId) throw new Error('TELEGRAM_ADMIN_CHAT_ID chưa được cấu hình');
   const username = from?.username ? '@' + from.username : '(không có username)';
   const lines = [
     '📥 YÊU CẦU VÀO KHÓA TELEGRAM',
@@ -233,7 +255,10 @@ export async function notifyAdminJoinRequest(order, from) {
     `Nick Telegram khách khai báo: ${order.telegram_claimed_username || '(không có)'}`,
     `Telegram thực tế: ${from?.first_name || ''} ${username}`,
     `Order: ${order.id}`,
-    `Bill: ${order.proof_image_url || '(không có)'}`
+    `Bill: ${order.proof_image_url || '(không có)'}`,
+    ...(order.duplicateApprovedOrderId ? ['', `⚠️ Telegram này đã có đơn ĐÃ DUYỆT cho khóa này: ${order.duplicateApprovedOrderId}. Kiểm tra trước khi duyệt thêm.`] : []),
+    '',
+    'Kiểm tra bill + sao kê trước khi bấm DUYỆT. Nick khai báo phải khớp Telegram thực tế.'
   ];
   return telegramApi('sendMessage', {
     chat_id: cfg.adminChatId,

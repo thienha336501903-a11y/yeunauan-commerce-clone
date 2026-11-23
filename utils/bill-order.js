@@ -14,7 +14,7 @@ const MAX_BILL_BYTES = 5 * 1024 * 1024;
 const ALLOWED_BILL_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const normalizeEmail = email => String(email || '').trim().toLowerCase();
 const isValidEmail = email => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !/[^\x00-\x7F]/.test(email);
-const normalizeTelegramNick = value => String(value || '').trim().replace(/\s+/g, ' ');
+const normalizeTelegramNick = value => String(value || '').trim().replace(/\s+/g, ' ').replace(/^@+/, '');
 const isValidTelegramNick = value => value.length >= 2 && value.length <= 64 && !/[\x00-\x1F\x7F]/.test(value);
 const normalizeBase64 = value => String(value || '').replace(/\s+/g, '');
 const isValidBase64 = value => value.length > 0 && value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
@@ -39,6 +39,19 @@ export async function findOpenOrder(db, email, courseSlug) {
   const { data, error } = await db.from('orders').select('id,status').eq('customer_email', email).eq('course_slug', courseSlug).in('status', ['Chờ duyệt', 'Đã duyệt']).limit(1);
   if (error) throw error;
   return data?.[0] || null;
+}
+
+// Telegram course: same nick (case-insensitive, without "@") + course with an open order. The nick is only what the
+// customer typed; the Admin still compares it with the real Telegram account before approving.
+export async function findOpenTelegramOrder(db, nick, courseSlug) {
+  // Wildcard characters become "_" (any one char) so the DB never reads nick text as a pattern; the exact
+  // case-insensitive compare is done here.
+  const want = String(nick).toLowerCase();
+  const pattern = want.replace(/[\\%_*]/g, '_');
+  const { data, error } = await db.from('orders').select('id,status,telegram_claimed_username').eq('delivery_mode', 'telegram').ilike('telegram_claimed_username', pattern).eq('course_slug', courseSlug).in('status', ['Chờ duyệt', 'Đã duyệt']).limit(20);
+  if (error) throw error;
+  const hit = (data || []).find(o => String(o.telegram_claimed_username || '').replace(/^@+/, '').toLowerCase() === want);
+  return hit ? { id: hit.id, status: hit.status } : null;
 }
 
 // rawExtra is merged into orders.raw_data (Messenger: { channel, psid }); callers pass only trusted keys.
@@ -103,6 +116,9 @@ export async function createBillOrder(input, { rawExtra = {}, rejectDuplicate = 
     } else if (policy.requiresEmail) {
       if (!cleanEmail) return reply(400, { error: 'Vui lòng nhập Gmail của bạn' });
       if (!isValidEmail(cleanEmail)) return reply(400, { error: 'Địa chỉ email không hợp lệ' });
+    }
+    if (rejectDuplicate && deliveryMode === 'telegram' && await findOpenTelegramOrder(supabase, cleanTelegramNick, courseSlug)) {
+      return reply(409, { error: 'Nick Telegram này đã có đăng ký khóa học này. Đơn đang chờ duyệt thì bạn chờ Admin nhé. Mất link mời hoặc link hết hạn: nhắn Page/Admin để được gửi link mới.', code: 'duplicate' });
     }
     if (rejectDuplicate && cleanEmail && deliveryMode !== 'telegram') {
       const open = await findOpenOrder(supabase, cleanEmail, courseSlug);

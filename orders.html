@@ -1020,6 +1020,7 @@
                     </div>
                     ${order.channel === 'facebook' ? `<span class="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-100 text-blue-700">Facebook</span>` : ''}${order.channel === 'website' ? `<span class="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-700">Website</span>` : ''}
                     ${order.channel === 'manual' ? `<span class="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-700">Thủ công${order.source ? ' · ' + escapeHtml(MANUAL_SOURCE_LABEL[order.source] || order.source) : ''}${order.manualNote ? ' · ' + escapeHtml(order.manualNote) : ''}</span>` : ''}
+                    ${telegramInfoHtml(order)}
                     ${(order.customer_name || order.customer_phone) ? `
                       <div class="text-xs text-slate-500 mt-1">
                         ${order.customer_name ? `<span>Name: ${escapeHtml(order.customer_name)}</span>` : ''}
@@ -1236,6 +1237,7 @@
                           <div class="text-xs text-slate-500 space-y-1 mb-3">
                             ${order.channel === 'facebook' ? `<span class="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-100 text-blue-700">Facebook</span>` : ''}${order.channel === 'website' ? `<span class="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-700">Website</span>` : ''}
                             ${order.channel === 'manual' ? `<span class="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-700">Thủ công${order.source ? ' · ' + escapeHtml(MANUAL_SOURCE_LABEL[order.source] || order.source) : ''}${order.manualNote ? ' · ' + escapeHtml(order.manualNote) : ''}</span>` : ''}
+                            ${telegramInfoHtml(order)}
                             <p><span class="font-semibold">Thời gian:</span> ${time}</p>
                             ${order.customer_name ? `<p><span class="font-semibold">Học viên:</span> ${escapeHtml(order.customer_name)}</p>` : ''}
                             ${order.customer_phone ? `<p><span class="font-semibold">SĐT:</span> <span class="font-mono">${escapeHtml(order.customer_phone)}</span></p>` : ''}
@@ -1459,6 +1461,42 @@
       return escapeHtml(JSON.stringify(String(value ?? "")));
     }
 
+    // Telegram course order: claimed nick vs the real account that asked to join, and the join step.
+    const TELEGRAM_JOIN_LABEL = {
+      invite_creating: "Đang tạo link mời", invite_ready: "Đã có link, chờ khách xin vào", invite_error: "Lỗi tạo link mời",
+      requested: "Khách đã xin vào, chờ duyệt", approving: "Đang duyệt", approve_failed: "Duyệt lỗi, chờ khách xin lại",
+      approved: "Đã vào nhóm", declining: "Đang từ chối", declined: "Đã từ chối", revoking: "Đang thu hồi", revoked: "Đã thu hồi, đã xoá khỏi nhóm"
+    };
+    function telegramInfoHtml(order) {
+      if (String(order.delivery_mode || "").toLowerCase() !== "telegram") return "";
+      const join = order.telegram_join_status || "";
+      const actual = order.telegram_user_id
+        ? `${escapeHtml(order.telegram_first_name || "")} ${order.telegram_username ? "@" + escapeHtml(order.telegram_username) : "(không username)"} · id ${escapeHtml(order.telegram_user_id)}`
+        : "chưa có";
+      const expires = order.telegram_invite_expires_at ? new Date(order.telegram_invite_expires_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "";
+      const canReissue = order.status === "Chờ duyệt" && !["requested", "approving", "declining", "revoking"].includes(join);
+      return `<div class="mt-1.5 text-[10px] text-slate-600 font-semibold leading-relaxed max-w-[240px]">
+        <span class="inline-block px-2 py-0.5 rounded-full font-extrabold bg-sky-100 text-sky-700">Telegram</span>
+        <div>Nick khai báo: <strong>${escapeHtml(order.telegram_claimed_username || "")}</strong></div>
+        <div>Telegram xin vào: <strong>${actual}</strong></div>
+        <div>Bước: <strong>${escapeHtml(TELEGRAM_JOIN_LABEL[join] || join || "-")}</strong></div>
+        ${expires && order.status === "Chờ duyệt" ? `<div>Link hết hạn: ${escapeHtml(expires)}</div>` : ""}
+        ${order.status === "Chờ duyệt" && order.telegram_invite_link ? `<button onclick="copyText(${jsArg(order.telegram_invite_link)})" class="text-sky-700 underline">Copy link mời</button>` : ""}
+        ${canReissue ? `<button onclick="telegramReissue(${jsArg(order.id)})" class="ml-2 text-sky-700 underline">Tạo link mời mới</button>` : ""}
+      </div>`;
+    }
+    async function telegramReissue(id) {
+      if (!confirm("Tạo link mời mới cho đơn Telegram này? Link cũ sẽ bị huỷ.")) return;
+      showLoader("Đang tạo link mời Telegram...");
+      try {
+        const response = await fetch("/api/orders", { method: "PUT", headers: { "Content-Type": "application/json", "X-Admin-Password": currentAdminPassword }, body: JSON.stringify({ id, action: "telegram_reissue_invite" }) });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) { alert(data.error || "Không tạo được link mời"); return; }
+        prompt("Link mời mới (gửi cho khách qua Telegram):", data?.data?.telegram_invite_link || "");
+        loadOrders();
+      } catch { alert("Lỗi kết nối máy chủ"); } finally { hideLoader(); }
+    }
+
     // C2-2: a bill link is only ever an https URL (Cloudinary); anything else (javascript:, data:) is dropped.
     function safeBillUrl(url) {
       const text = String(url || "");
@@ -1466,6 +1504,19 @@
     }
 
     async function updateOrderStatus(id, newStatus) {
+      const tgOrder = allOrders.find(o => o.id === id && String(o.delivery_mode || "").toLowerCase() === "telegram");
+      if (tgOrder) {
+        const ask = newStatus === "Đã duyệt"
+          ? `Duyệt cho Telegram "${tgOrder.telegram_first_name || ""} ${tgOrder.telegram_username ? "@" + tgOrder.telegram_username : ""}" vào nhóm?
+Nick khách khai báo: ${tgOrder.telegram_claimed_username || ""}
+Đã kiểm bill + sao kê?`
+          : newStatus === "Từ chối" && tgOrder.status === "Đã duyệt"
+            ? "THU HỒI: xoá học viên này khỏi nhóm/kênh Telegram và chuyển đơn sang Từ chối?"
+            : `Chuyển đơn Telegram sang [${newStatus}]?`;
+        if (!confirm(ask)) { renderOrders(); renderPendingGrouped(); return; }
+        await executeStatusUpdate(id, newStatus);
+        return;
+      }
       if (newStatus === "Đã duyệt") {
         const order = allOrders.find(o => o.id === id);
         if (order) {

@@ -10,6 +10,7 @@ import { resolveRequestRoute } from '../utils/agency-routing.js';
 import { getAgencyOrder } from '../utils/agency-commerce.js';
 
 import { createBillOrder } from '../utils/bill-order.js';
+import { telegramAdminAction } from '../utils/telegram-order.js';
 
 const MANUAL_SOURCES = new Set(['page_ai', 'page_inbox', 'other']);
 const VALID_ORDER_STATUSES = new Set(['Chờ duyệt', 'Đã duyệt', 'Từ chối']);
@@ -150,8 +151,13 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true, data: { ...updatedOrder, syncResults } });
       }
 
-      if (deliveryMode === 'telegram' && status !== undefined && status !== existingOrder.status) {
-        return res.status(409).json({ error: 'Đơn Telegram phải được duyệt hoặc từ chối trong bot Telegram để quyền gia nhập và trạng thái đơn luôn đồng bộ.' });
+      // Telegram: approve / decline / revoke / new invite go through Telegram first, then the order (utils/telegram-order.js).
+      if (deliveryMode === 'telegram' && (action === 'telegram_reissue_invite' || (status !== undefined && status !== existingOrder.status))) {
+        if ([note, customer_name, customer_phone, gmail].some(v => v !== undefined)) {
+          return res.status(400).json({ error: 'Đổi trạng thái đơn Telegram riêng; sửa ghi chú/thông tin ở lần lưu khác.', code: 'telegram_mixed_update' });
+        }
+        const result = await telegramAdminAction(existingOrder, { status, action });
+        return res.status(result.statusCode).json(result.body);
       }
 
       const updateData = { updated_at: new Date().toISOString() };
