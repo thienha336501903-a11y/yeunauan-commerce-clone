@@ -206,7 +206,7 @@ export default async function handler(req, res) {
       res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=60');
       return res.status(200).json(runtime);
     }
-    const courseSlug = req.query.course || 'donut';
+    const courseSlug = String(req.query.course || ''); // no default course (Owner: each course sold by its own link)
     const { data: course, error } = await supabase
       .from('courses')
       .select('*')
@@ -243,6 +243,6 @@ export default async function handler(req, res) {
     });
   } catch (error) {
     console.error('[config]', error);
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: 'Lỗi hệ thống. Vui lòng thử lại sau.' });
   }
 }

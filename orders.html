@@ -1018,7 +1018,7 @@
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
                       </button>
                     </div>
-                    ${order.channel === 'facebook' ? `<span class="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-100 text-blue-700">Facebook</span>` : ''}
+                    ${order.channel === 'facebook' ? `<span class="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-100 text-blue-700">Facebook</span>` : ''}${order.channel === 'website' ? `<span class="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-700">Website</span>` : ''}
                     ${order.channel === 'manual' ? `<span class="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-700">Thủ công${order.source ? ' · ' + escapeHtml(MANUAL_SOURCE_LABEL[order.source] || order.source) : ''}${order.manualNote ? ' · ' + escapeHtml(order.manualNote) : ''}</span>` : ''}
                     ${(order.customer_name || order.customer_phone) ? `
                       <div class="text-xs text-slate-500 mt-1">
@@ -1234,7 +1234,7 @@
 
                           <!-- Details -->
                           <div class="text-xs text-slate-500 space-y-1 mb-3">
-                            ${order.channel === 'facebook' ? `<span class="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-100 text-blue-700">Facebook</span>` : ''}
+                            ${order.channel === 'facebook' ? `<span class="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-100 text-blue-700">Facebook</span>` : ''}${order.channel === 'website' ? `<span class="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-700">Website</span>` : ''}
                             ${order.channel === 'manual' ? `<span class="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-700">Thủ công${order.source ? ' · ' + escapeHtml(MANUAL_SOURCE_LABEL[order.source] || order.source) : ''}${order.manualNote ? ' · ' + escapeHtml(order.manualNote) : ''}</span>` : ''}
                             <p><span class="font-semibold">Thời gian:</span> ${time}</p>
                             ${order.customer_name ? `<p><span class="font-semibold">Học viên:</span> ${escapeHtml(order.customer_name)}</p>` : ''}

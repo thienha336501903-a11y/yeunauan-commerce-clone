@@ -12,7 +12,6 @@ import { isSalePaused } from './sale-state.js';
 
 const MAX_BILL_BYTES = 5 * 1024 * 1024;
 const ALLOWED_BILL_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
-const DEFAULT_COURSE_SLUG = 'banhmi4k';
 const normalizeEmail = email => String(email || '').trim().toLowerCase();
 const isValidEmail = email => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !/[^\x00-\x7F]/.test(email);
 const normalizeTelegramNick = value => String(value || '').trim().replace(/\s+/g, ' ');
@@ -52,7 +51,7 @@ export async function createBillOrder(input, { rawExtra = {}, rejectDuplicate = 
     const cleanTelegramNick = normalizeTelegramNick(telegramNick);
     const cleanBillType = String(billType || '').trim().toLowerCase();
     const cleanBillData = normalizeBase64(billData);
-    const courseSlug = String(course || DEFAULT_COURSE_SLUG).trim().toLowerCase();
+    const courseSlug = String(course || '').trim().toLowerCase(); // no default course: missing slug is refused below
 
     if (!billName || !cleanBillType || !cleanBillData) return reply(400, { error: 'Thiếu dữ liệu' });
     if (!ALLOWED_BILL_TYPES.has(cleanBillType)) return reply(400, { error: 'Chỉ nhận file JPG, PNG hoặc WEBP' });
