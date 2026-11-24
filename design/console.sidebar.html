@@ -1,0 +1,48 @@
+<aside class="yb-sidebar" id="ybSidebar" aria-label="Điều hướng quản trị">
+  <div class="yb-brand">
+    <div class="yb-mark" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 13.9A4 4 0 0 1 7 6a5 5 0 0 1 10 0 4 4 0 0 1 1 7.9V20H6z"/><path d="M6 17h12"/></svg></div>
+    <div><b>Yêu học bánh</b><small>Console</small></div>
+  </div>
+  <nav class="yb-nav">
+    <h6>Bán hàng</h6>
+    <a href="orders.html" data-nav="orders"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M8 15h3"/></svg>Đơn hàng &amp; học viên</a>
+    <a href="admin.html" data-nav="courses"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z"/><path d="M8 7h6M8 11h6"/></svg>Khóa học &amp; mở bán</a>
+    <div id="ybLmsLinks" hidden>
+      <h6>Học tập</h6>
+      <a data-lms="v4PublicUrl" data-path="/v5-admin.html" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="m10 9 5 2.5-5 2.5z"/><path d="M8 21h8"/></svg>Nội dung V5<svg class="yb-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 4h6v6M10 14 20 4M20 14v6H4V4h6"/></svg></a>
+      <a data-lms="lmsPublicUrl" data-path="/admin.html" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M17 11h4M19 9v4"/></svg>Học viên LMS<svg class="yb-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 4h6v6M10 14 20 4M20 14v6H4V4h6"/></svg></a>
+      <a data-lms="lmsPublicUrl" data-path="/my-courses.html" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-5 9 5-9 5z"/><path d="M7 11.5V16c0 1.5 2.2 3 5 3s5-1.5 5-3v-4.5"/></svg>Cổng học viên<svg class="yb-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 4h6v6M10 14 20 4M20 14v6H4V4h6"/></svg></a>
+    </div>
+    <h6>Hỗ trợ</h6>
+    <a href="https://business.facebook.com/latest/inbox/all" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>Hộp thư Facebook<svg class="yb-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 4h6v6M10 14 20 4M20 14v6H4V4h6"/></svg></a>
+    <a href="chinh-sach.html" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6z"/></svg>Chính sách</a>
+  </nav>
+  <div class="yb-side-foot"><button type="button" id="ybLogout"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></svg>Đăng xuất</button></div>
+</aside>
+<div class="yb-scrim" id="ybScrim"></div>
+<script>
+  // Shell only: active link, mobile drawer, LMS links from /api/config?runtime=1, logout (same key the page uses).
+  (function () {
+    var page = document.body.getAttribute('data-page');
+    document.querySelectorAll('.yb-nav a[data-nav]').forEach(function (a) { if (a.dataset.nav === page) a.setAttribute('aria-current', 'page'); });
+    var toggle = function (open) { document.body.classList.toggle('yb-nav-open', open); };
+    document.addEventListener('click', function (e) {
+      if (e.target.closest('#ybMenuBtn')) toggle(!document.body.classList.contains('yb-nav-open'));
+      else if (e.target.closest('#ybScrim') || e.target.closest('.yb-nav a')) toggle(false);
+    });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') toggle(false); });
+    document.getElementById('ybLogout').addEventListener('click', function () {
+      try { sessionStorage.removeItem('admin_password'); } catch (e) {}
+      location.reload();
+    });
+    fetch('/api/config?runtime=1', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (cfg) {
+      if (!cfg) return;
+      var shown = false;
+      document.querySelectorAll('#ybLmsLinks a[data-lms]').forEach(function (a) {
+        var base = String(cfg[a.dataset.lms] || '').replace(/\/$/, '');
+        if (/^https:\/\//.test(base)) { a.href = base + a.dataset.path; shown = true; } else a.remove();
+      });
+      document.getElementById('ybLmsLinks').hidden = !shown;
+    }).catch(function () {});
+  })();
+</script>

@@ -16,7 +16,103 @@
     });
   </script>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- YB:HEAD -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+<script>
+  // Yêu học bánh Console design tokens. The old pink/slate utilities are remapped here, so page markup and
+  // page scripts keep their classes and logic. Edit design/console.*.html, then: node scripts/sync-design.mjs
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          pink: { 50: '#fbf5f1', 100: '#f5e6dc', 200: '#ebcbb6', 300: '#dda688', 400: '#cc7d58', 500: '#b8613b', 600: '#9f4e2c', 700: '#833f25', 800: '#693322', 900: '#562b1e' },
+          green: { 50: '#f2f6ee', 100: '#e2ecd9', 200: '#c6d9b5', 300: '#a2c08a', 400: '#7ea463', 500: '#5f8a47', 600: '#4c743a', 700: '#3d5d30', 800: '#324b29', 900: '#2a3f23' },
+          emerald: { 50: '#f0f6f1', 100: '#dcebe0', 200: '#bad7c2', 300: '#8fbc9c', 400: '#669f78', 500: '#4a845d', 600: '#3a6c4b', 700: '#30573e', 800: '#284633', 900: '#223a2b' },
+          rose: { 50: '#fcf3f1', 100: '#f8e1dc', 200: '#f0c2b8', 300: '#e49a8b', 400: '#d4705e', 500: '#c2503e', 600: '#a83f31', 700: '#8c3329', 800: '#732b24', 900: '#5f2620' },
+          slate: { 50: '#f8f6f2', 100: '#f1ede6', 200: '#e5dfd5', 300: '#d3cbbe', 400: '#a69d90', 500: '#7a7166', 600: '#5c544b', 700: '#453f38', 800: '#2b2622', 900: '#1d1916', 950: '#120f0d' }
+        },
+        fontFamily: { sans: ['"Be Vietnam Pro"', 'system-ui', 'sans-serif'] },
+        fontWeight: { black: '700', extrabold: '650' },
+        borderRadius: { '2xl': '0.75rem', '3xl': '1rem' }
+      }
+    }
+  };
+</script>
+<style>
+  :root {
+    --yb-bg: #f6f3ee; --yb-surface: #ffffff; --yb-ink: #1d1916; --yb-muted: #7a7166; --yb-line: #e8e2d8;
+    --yb-accent: #9f4e2c; --yb-accent-soft: #f5e6dc; --yb-side: #1f1a17; --yb-side-ink: #d9d0c4; --yb-side-muted: #8c8276;
+    --yb-radius: 1rem; --yb-shadow: 0 1px 2px rgba(29, 25, 22, .04), 0 6px 24px -12px rgba(29, 25, 22, .12);
+    --yb-side-w: 252px;
+  }
+  body.yb { background: var(--yb-bg) !important; color: var(--yb-ink); font-family: "Be Vietnam Pro", system-ui, sans-serif; padding-bottom: 0 !important; -webkit-font-smoothing: antialiased; }
+  body.yb h1, body.yb h2, body.yb h3, body.yb h4, body.yb .font-outfit { font-family: "Be Vietnam Pro", system-ui, sans-serif; letter-spacing: -0.01em; }
+  body.yb .yb-title { font-family: "Playfair Display", Georgia, serif; font-weight: 700; letter-spacing: -0.01em; }
+
+  /* Shell */
+  .yb-app { min-height: 100vh; }
+  .yb-sidebar { position: fixed; inset: 0 auto 0 0; width: var(--yb-side-w); background: var(--yb-side); color: var(--yb-side-ink); display: flex; flex-direction: column; z-index: 40; transition: transform .25s ease; }
+  .yb-brand { display: flex; align-items: center; gap: .75rem; padding: 1.4rem 1.25rem 1.1rem; border-bottom: 1px solid rgba(255,255,255,.06); }
+  .yb-mark { width: 38px; height: 38px; border-radius: 11px; background: linear-gradient(140deg, #c8754c, #8a3f22); display: grid; place-items: center; color: #fff6ee; box-shadow: inset 0 1px 0 rgba(255,255,255,.18); }
+  .yb-brand b { display: block; font-family: "Playfair Display", Georgia, serif; font-size: 1.05rem; color: #fbf3ea; font-weight: 700; line-height: 1.1; }
+  .yb-brand small { font-size: .68rem; letter-spacing: .14em; text-transform: uppercase; color: var(--yb-side-muted); }
+  .yb-nav { flex: 1; overflow-y: auto; padding: .75rem .75rem 1rem; }
+  .yb-nav h6 { margin: 1rem .6rem .4rem; font-size: .66rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--yb-side-muted); }
+  .yb-nav a { display: flex; align-items: center; gap: .7rem; padding: .6rem .7rem; border-radius: .6rem; color: var(--yb-side-ink); font-size: .875rem; font-weight: 500; text-decoration: none; transition: background .15s, color .15s; }
+  .yb-nav a svg { width: 18px; height: 18px; flex: none; opacity: .8; }
+  .yb-nav a:hover { background: rgba(255,255,255,.06); color: #fff; }
+  .yb-nav a[aria-current="page"] { background: rgba(200,117,76,.18); color: #fff; box-shadow: inset 2px 0 0 #d38a62; }
+  .yb-nav a .yb-ext { margin-left: auto; width: 12px; height: 12px; opacity: .45; }
+  .yb-side-foot { padding: .9rem 1rem 1.1rem; border-top: 1px solid rgba(255,255,255,.06); }
+  .yb-side-foot button { width: 100%; display: flex; align-items: center; justify-content: center; gap: .5rem; padding: .55rem; border-radius: .6rem; background: rgba(255,255,255,.05); color: var(--yb-side-ink); font-size: .8rem; font-weight: 500; }
+  .yb-side-foot button:hover { background: rgba(255,255,255,.1); color: #fff; }
+  .yb-main { margin-left: var(--yb-side-w); min-height: 100vh; display: flex; flex-direction: column; }
+  .yb-topbar { position: sticky; top: 0; z-index: 30; background: rgba(246,243,238,.86); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid var(--yb-line); }
+  .yb-topbar-in { max-width: 1240px; margin: 0 auto; padding: 1.1rem 2rem; display: flex; align-items: center; gap: 1rem; }
+  .yb-crumb { font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; color: var(--yb-muted); font-weight: 600; }
+  .yb-topbar h1 { font-size: 1.65rem; line-height: 1.15; color: var(--yb-ink); margin-top: .15rem; }
+  .yb-topbar p { font-size: .85rem; color: var(--yb-muted); margin-top: .2rem; }
+  .yb-menu-btn { display: none; width: 40px; height: 40px; border-radius: .7rem; border: 1px solid var(--yb-line); background: #fff; place-items: center; color: var(--yb-ink); flex: none; }
+  body.yb .yb-main > main { max-width: 1240px !important; width: 100%; margin: 0 auto; padding: 1.75rem 2rem 3rem !important; }
+  .yb-scrim { display: none; }
+
+  /* Surfaces and controls on top of the page's Tailwind markup */
+  body.yb .bg-white.rounded-3xl, body.yb .bg-white.rounded-2xl { box-shadow: var(--yb-shadow); }
+  body.yb .border-slate-100 { border-color: var(--yb-line) !important; }
+  body.yb .shadow-sm { box-shadow: var(--yb-shadow) !important; }
+  body.yb input:not([type=checkbox]):not([type=radio]), body.yb select, body.yb textarea { font-family: inherit; }
+  body.yb button, body.yb a { -webkit-tap-highlight-color: transparent; }
+  body.yb table thead tr { background: #faf8f4 !important; }
+  body.yb table thead th { color: var(--yb-muted) !important; font-weight: 600 !important; letter-spacing: .08em; }
+  body.yb table tbody tr:hover { background: #fbf8f3 !important; }
+  body.yb .to-rose-400 { --tw-gradient-to: #e0b192 var(--tw-gradient-to-position) !important; }
+  body.yb .hover\:to-rose-300:hover { --tw-gradient-to: #e9c4aa var(--tw-gradient-to-position) !important; }
+  body.yb #orderContainer table td:nth-child(3) { min-width: 170px; }
+  body.yb #orderContainer table td:nth-child(4) { min-width: 220px; }
+  body.yb .custom-gradient { background: linear-gradient(135deg, #2b211b 0%, #4a2a1c 55%, #7a3a20 100%) !important; }
+
+  /* Login */
+  body.yb #loginOverlay { background: radial-gradient(1200px 600px at 15% 10%, rgba(200,117,76,.28), transparent 60%), linear-gradient(160deg, #1f1a17, #2c211b 60%, #3a2419) !important; }
+  body.yb #loginCard { border-radius: 1.25rem !important; padding: 2.5rem 2.25rem !important; box-shadow: 0 30px 80px -20px rgba(0,0,0,.55) !important; }
+  body.yb #loginCard h2 { font-family: "Playfair Display", Georgia, serif !important; font-weight: 700; font-size: 1.9rem; }
+  body.yb #loginCard .bg-pink-500 { background: linear-gradient(140deg, #c8754c, #8a3f22) !important; box-shadow: none !important; }
+
+  @media (max-width: 1023px) {
+    .yb-sidebar { transform: translateX(-100%); box-shadow: 0 0 40px rgba(0,0,0,.35); }
+    body.yb-nav-open .yb-sidebar { transform: none; }
+    body.yb-nav-open .yb-scrim { display: block; position: fixed; inset: 0; background: rgba(18,15,13,.45); z-index: 35; }
+    .yb-main { margin-left: 0; }
+    .yb-menu-btn { display: grid; }
+    .yb-topbar-in { padding: .8rem 1rem; }
+    .yb-topbar h1 { font-size: 1.3rem; }
+    .yb-topbar p { display: none; }
+    body.yb .yb-main > main { padding: 1rem 1rem 2.5rem !important; }
+  }
+  @media (prefers-reduced-motion: reduce) { .yb-sidebar { transition: none; } }
+</style>
+<!-- /YB:HEAD -->
   <style>
     body {
       font-family: 'Manrope', sans-serif;
@@ -38,7 +134,7 @@
     }
   </style>
 </head>
-<body class="bg-slate-50 text-slate-800 min-h-screen pb-16">
+<body class="yb bg-slate-50 text-slate-800 min-h-screen pb-16" data-page="courses">
 
   <!-- GLOBAL LOADER OVERLAY -->
   <div id="globalLoader" class="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
@@ -87,30 +183,59 @@
   <!-- MAIN DASHBOARD CONTENT -->
   <div id="dashboardContent" class="opacity-0 transition-opacity duration-500">
     
-    <!-- HEADER -->
-    <header class="custom-gradient text-white py-12 px-4 shadow-xl relative overflow-hidden mb-8">
-      <div class="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(219,39,119,0.15),transparent_40%)]"></div>
-      <div class="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6 relative z-10">
-        <div>
-          <div class="flex items-center gap-2 mb-2">
-            <span class="w-3 h-3 rounded-full bg-pink-500 animate-pulse"></span>
-            <span class="text-xs uppercase font-extrabold tracking-widest text-pink-300">Hệ thống điều khiển</span>
-          </div>
-          <h1 class="text-4xl font-black tracking-tight">Quản Trị Khóa Học</h1>
-          <p class="text-slate-300 mt-2">Quản lý nội dung, mức học phí, và cấu hình thanh toán của các khóa học.</p>
-        </div>
-        
-        <!-- Navigation Tabs -->
-        <div class="flex bg-white/10 p-1.5 rounded-2xl backdrop-blur-md border border-white/10">
-          <a href="admin.html" class="bg-white text-slate-900 px-6 py-3 rounded-xl font-bold text-sm shadow transition">
-            Khóa Học
-          </a>
-          <a href="orders.html" class="text-white hover:bg-white/5 px-6 py-3 rounded-xl font-bold text-sm transition">
-            Học Viên
-          </a>
-        </div>
-      </div>
-    </header>
+    <div class="yb-app">
+    <!-- YB:SIDEBAR -->
+<aside class="yb-sidebar" id="ybSidebar" aria-label="Điều hướng quản trị">
+  <div class="yb-brand">
+    <div class="yb-mark" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 13.9A4 4 0 0 1 7 6a5 5 0 0 1 10 0 4 4 0 0 1 1 7.9V20H6z"/><path d="M6 17h12"/></svg></div>
+    <div><b>Yêu học bánh</b><small>Console</small></div>
+  </div>
+  <nav class="yb-nav">
+    <h6>Bán hàng</h6>
+    <a href="orders.html" data-nav="orders"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M8 15h3"/></svg>Đơn hàng &amp; học viên</a>
+    <a href="admin.html" data-nav="courses"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z"/><path d="M8 7h6M8 11h6"/></svg>Khóa học &amp; mở bán</a>
+    <div id="ybLmsLinks" hidden>
+      <h6>Học tập</h6>
+      <a data-lms="v4PublicUrl" data-path="/v5-admin.html" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="m10 9 5 2.5-5 2.5z"/><path d="M8 21h8"/></svg>Nội dung V5<svg class="yb-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 4h6v6M10 14 20 4M20 14v6H4V4h6"/></svg></a>
+      <a data-lms="lmsPublicUrl" data-path="/admin.html" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M17 11h4M19 9v4"/></svg>Học viên LMS<svg class="yb-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 4h6v6M10 14 20 4M20 14v6H4V4h6"/></svg></a>
+      <a data-lms="lmsPublicUrl" data-path="/my-courses.html" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-5 9 5-9 5z"/><path d="M7 11.5V16c0 1.5 2.2 3 5 3s5-1.5 5-3v-4.5"/></svg>Cổng học viên<svg class="yb-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 4h6v6M10 14 20 4M20 14v6H4V4h6"/></svg></a>
+    </div>
+    <h6>Hỗ trợ</h6>
+    <a href="https://business.facebook.com/latest/inbox/all" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>Hộp thư Facebook<svg class="yb-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 4h6v6M10 14 20 4M20 14v6H4V4h6"/></svg></a>
+    <a href="chinh-sach.html" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6z"/></svg>Chính sách</a>
+  </nav>
+  <div class="yb-side-foot"><button type="button" id="ybLogout"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></svg>Đăng xuất</button></div>
+</aside>
+<div class="yb-scrim" id="ybScrim"></div>
+<script>
+  // Shell only: active link, mobile drawer, LMS links from /api/config?runtime=1, logout (same key the page uses).
+  (function () {
+    var page = document.body.getAttribute('data-page');
+    document.querySelectorAll('.yb-nav a[data-nav]').forEach(function (a) { if (a.dataset.nav === page) a.setAttribute('aria-current', 'page'); });
+    var toggle = function (open) { document.body.classList.toggle('yb-nav-open', open); };
+    document.addEventListener('click', function (e) {
+      if (e.target.closest('#ybMenuBtn')) toggle(!document.body.classList.contains('yb-nav-open'));
+      else if (e.target.closest('#ybScrim') || e.target.closest('.yb-nav a')) toggle(false);
+    });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') toggle(false); });
+    document.getElementById('ybLogout').addEventListener('click', function () {
+      try { sessionStorage.removeItem('admin_password'); } catch (e) {}
+      location.reload();
+    });
+    fetch('/api/config?runtime=1', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (cfg) {
+      if (!cfg) return;
+      var shown = false;
+      document.querySelectorAll('#ybLmsLinks a[data-lms]').forEach(function (a) {
+        var base = String(cfg[a.dataset.lms] || '').replace(/\/$/, '');
+        if (/^https:\/\//.test(base)) { a.href = base + a.dataset.path; shown = true; } else a.remove();
+      });
+      document.getElementById('ybLmsLinks').hidden = !shown;
+    }).catch(function () {});
+  })();
+</script>
+<!-- /YB:SIDEBAR -->
+    <div class="yb-main">
+    <header class="yb-topbar"><div class="yb-topbar-in"><button type="button" id="ybMenuBtn" class="yb-menu-btn" aria-label="Mở menu"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div><div class="yb-crumb">Bán hàng</div><h1 class="yb-title">Khóa học &amp; mở bán</h1><p>Thông tin khóa, học phí, thanh toán và trạng thái mở bán của từng link.</p></div></div></header>
 
     <!-- CONTENT WRAPPER -->
     <main class="max-w-6xl mx-auto px-4">
@@ -155,6 +280,8 @@
       </div>
 
     </main>
+    </div>
+    </div>
   </div>
 
   <!-- COURSE MODAL (ADD & EDIT) -->
@@ -1048,16 +1175,16 @@
         <defs>
           <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
             <stop offset="0" stop-color="#fff7ed"/>
-            <stop offset="1" stop-color="#fce7f3"/>
+            <stop offset="1" stop-color="#f1e3d6"/>
           </linearGradient>
         </defs>
         <rect width="900" height="520" fill="url(#bg)"/>
-        <circle cx="710" cy="90" r="115" fill="#f9a8d4" opacity="0.25"/>
-        <circle cx="140" cy="440" r="130" fill="#fb923c" opacity="0.18"/>
+        <circle cx="710" cy="90" r="115" fill="#dda688" opacity="0.25"/>
+        <circle cx="140" cy="440" r="130" fill="#c8a27a" opacity="0.18"/>
         <rect x="310" y="170" width="280" height="180" rx="34" fill="#ffffff" opacity="0.82"/>
-        <path d="M365 308l52-64 45 46 36-38 70 56" fill="none" stroke="#be185d" stroke-width="18" stroke-linecap="round" stroke-linejoin="round" opacity="0.72"/>
-        <circle cx="515" cy="218" r="22" fill="#be185d" opacity="0.65"/>
-        <text x="450" y="405" text-anchor="middle" font-family="Arial, sans-serif" font-size="32" font-weight="800" fill="#831843">Ảnh khóa học</text>
+        <path d="M365 308l52-64 45 46 36-38 70 56" fill="none" stroke="#9f4e2c" stroke-width="18" stroke-linecap="round" stroke-linejoin="round" opacity="0.72"/>
+        <circle cx="515" cy="218" r="22" fill="#9f4e2c" opacity="0.65"/>
+        <text x="450" y="405" text-anchor="middle" font-family="Georgia, serif" font-size="30" font-weight="700" fill="#5b3424">Ảnh khóa học</text>
       </svg>
     `);
 
