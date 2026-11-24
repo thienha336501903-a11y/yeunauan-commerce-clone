@@ -38,3 +38,14 @@ test('CD-4 sidebar script: logout clears only the Admin password key; LMS links 
   assert.match(side, /if \(\/\^https:\\\/\\\/\/\.test\(base\)\)/);
   assert.doesNotMatch(side, /innerHTML/);
 });
+
+test('CD-5 two themes: variables per theme, theme set before paint with guarded storage, switch only toggles data-theme', () => {
+  const head = read('design/console.head.html');
+  assert.match(head, /:root \{[\s\S]*--p-500: 18 173 145;/); // Bạc hà
+  assert.match(head, /:root\[data-theme="ember"\] \{[\s\S]*--p-500: 242 86 31;/); // Than & Cam
+  assert.match(head, /try \{ t = localStorage\.getItem\('yb-theme'\) \|\| 'mint'; \} catch \(e\) \{\}/);
+  assert.match(head, /t === 'ember' \? 'ember' : 'mint'/); // unknown stored value falls back to mint
+  const side = read('design/console.sidebar.html');
+  assert.equal((side.match(/data-theme-pick="(mint|ember)"/g) || []).length, 2);
+  assert.match(side, /try \{ localStorage\.setItem\('yb-theme', b\.dataset\.themePick\); \} catch \(e\) \{\}/);
+});
