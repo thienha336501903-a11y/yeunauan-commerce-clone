@@ -19,6 +19,7 @@ export default async function handler(req, res) {
   if (!cfg.botToken || !cfg.webhookSecret || !cfg.adminChatId || cfg.adminUserIds.length === 0) {
     return res.status(409).json({ error: 'Thiếu cấu hình Telegram runtime', config: cfg });
   }
+  let step = 'config';
   try {
     const runtime = await getTelegramRuntimeConfig();
     const proto = String(req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim();
@@ -32,10 +33,19 @@ export default async function handler(req, res) {
     const webhookUrl = isPreview
       ? webhookBaseUrl + '?x-vercel-protection-bypass=' + encodeURIComponent(protectionBypass)
       : webhookBaseUrl;
+    step = 'getMe';
     const bot = await telegramApi('getMe');
-    await telegramApi('setMyDefaultAdministratorRights', { rights: telegramBotAdminRights(), for_channels: false });
-    await telegramApi('setMyDefaultAdministratorRights', { rights: telegramBotAdminRights({ forChannel: true }), for_channels: true });
+    // Default rights only pre-fill the "add bot as admin" dialog; a rate limit here must not block the webhook.
+    const warnings = [];
+    for (const forChannel of [false, true]) {
+      try {
+        await telegramApi('setMyDefaultAdministratorRights', { rights: telegramBotAdminRights({ forChannel }), for_channels: forChannel });
+      } catch (error) {
+        warnings.push(`setMyDefaultAdministratorRights(${forChannel ? 'channel' : 'group'}): ${error.message || error}`);
+      }
+    }
 
+    step = 'setWebhook';
     const webhook = await telegramApi('setWebhook', {
       url: webhookUrl,
       secret_token: runtime.webhookSecret,
@@ -48,9 +58,10 @@ export default async function handler(req, res) {
       webhookUrl: webhookBaseUrl,
       previewProtectionBypass: isPreview,
       webhook,
-      allowedUpdates: ['message', 'chat_join_request', 'callback_query']
+      allowedUpdates: ['message', 'chat_join_request', 'callback_query'],
+      warnings
     });
   } catch (error) {
-    return res.status(502).json({ error: error.message || String(error) });
+    return res.status(502).json({ error: error.message || String(error), step });
   }
 }

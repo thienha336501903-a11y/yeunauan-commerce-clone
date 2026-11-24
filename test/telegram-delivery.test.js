@@ -342,3 +342,30 @@ test('TG-15 wiring: register refuses a duplicate nick before upload; groups get 
   assert.equal((page.match(/\$\{telegramInfoHtml\(order\)\}/g) || []).length, 2);
   assert.match(page, /action: "telegram_reissue_invite"/);
 });
+
+test('TG-21 setup: a rate-limited default-rights call does not block setWebhook; a setWebhook failure names the step', async () => {
+  const { default: setup } = await import('../api/telegram-setup.js');
+  const run = async () => {
+    process.env.ADMIN_PASSWORD = 'pw';
+    const res = fakeRes();
+    try { await setup({ method: 'POST', headers: { host: 'shop.example.test', 'x-admin-password': 'pw' }, body: {} }, res); } finally { delete process.env.ADMIN_PASSWORD; }
+    return res;
+  };
+  reset();
+  tgFail.setMyDefaultAdministratorRights = 'Too Many Requests: retry after 32';
+  let res = await run();
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(methods(), ['getMe', 'setMyDefaultAdministratorRights', 'setMyDefaultAdministratorRights', 'setWebhook']);
+  assert.equal(tgCalls[3].payload.url, 'https://shop.example.test/api/telegram-webhook');
+  assert.equal(tgCalls[3].payload.secret_token, 'tg-secret');
+  assert.equal(res.body.warnings.length, 2);
+  assert.deepEqual(tgCalls.slice(1, 3).map(c => c.payload.for_channels), [false, true]);
+  assert.equal(tgCalls[2].payload.rights.can_restrict_members, false);
+
+  reset();
+  tgFail.setWebhook = 'Too Many Requests: retry after 5';
+  res = await run();
+  assert.equal(res.statusCode, 502);
+  assert.equal(res.body.step, 'setWebhook');
+  assert.match(res.body.error, /retry after 5/);
+});
