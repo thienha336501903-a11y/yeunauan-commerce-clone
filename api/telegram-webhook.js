@@ -5,7 +5,9 @@ import {
   answerTelegramCallback,
   getTelegramWebhookSecret,
   isAllowedTelegramAdmin,
+  markTelegramDecision,
   notifyAdminJoinRequest,
+  telegramDecisionLabel,
   sendCourseChatPicker,
   sendTelegramPrivateMessage,
   verifyBotInvitePermission,
@@ -206,15 +208,41 @@ async function handleJoinRequest(join, updateId) {
 async function handleDecisionButton(cb) {
   const answer = async (text, alert = false) => { try { await answerTelegramCallback(cb.id, text, alert); } catch {} };
   if (!(await isAllowedTelegramAdmin(cb.from?.id))) return answer('Bạn không có quyền duyệt đơn.', true);
-  const match = /^(tgapprove|tgdecline):([0-9a-f-]{36})$/i.exec(String(cb.data || ''));
+  const match = /^(tgapprove|tgdecline|tgdone):([0-9a-f-]{36})$/i.exec(String(cb.data || ''));
   if (!match) return answer('Nút không hợp lệ.');
-  const { data: order, error } = await supabase.from('orders').select('*').eq('id', match[2]).eq('delivery_mode', 'telegram').maybeSingle();
-  if (error) throw error;
+  const action = match[1].toLowerCase();
+  const load = async () => {
+    const { data, error } = await supabase.from('orders').select('*').eq('id', match[2]).eq('delivery_mode', 'telegram').maybeSingle();
+    if (error) throw error;
+    return data;
+  };
+  // The buttons change only to what the DB says now; an edit failure is logged and repaired by the next press.
+  const mark = async order => {
+    try { await markTelegramDecision(cb.message, order); } catch (error) {
+      if (!/message is not modified/i.test(error.message || '')) console.error('TELEGRAM_DECISION_MARK_ERROR:', error);
+    }
+  };
+  // Decided already (bot, orders.html, another Admin, a resent callback, or the display-only button): show, never act.
+  const showDecided = async order => {
+    await answer(`Đơn này đã xử lý: ${telegramDecisionLabel(order) || order.status}.`, action !== 'tgdone');
+    await mark(order);
+  };
+
+  const order = await load();
   if (!order) return answer('Không tìm thấy đơn.', true);
-  if (order.status !== 'Chờ duyệt') return answer(`Đơn này đã xử lý: ${order.status}.`, true);
-  const result = match[1].toLowerCase() === 'tgapprove' ? await approveTelegramOrder(order) : await declineTelegramOrder(order);
-  if (!result.ok) return answer(result.error, true);
-  return answer(match[1].toLowerCase() === 'tgapprove' ? 'Đã duyệt học viên vào khóa Telegram.' : 'Đã từ chối yêu cầu tham gia.');
+  if (action === 'tgdone' || order.status !== 'Chờ duyệt') {
+    if (telegramDecisionLabel(order)) return showDecided(order);
+    return answer(`Đơn đang ở trạng thái: ${order.status}.`, true);
+  }
+  const result = action === 'tgapprove' ? await approveTelegramOrder(order) : await declineTelegramOrder(order);
+  if (!result.ok) {
+    // Lost a race to another click or Admin: if that one finished, show its result.
+    const now = await load().catch(() => null);
+    if (now && telegramDecisionLabel(now)) return showDecided(now);
+    return answer(result.error, true);
+  }
+  await answer(action === 'tgapprove' ? 'Đã duyệt học viên vào khóa Telegram.' : 'Đã từ chối yêu cầu tham gia.');
+  return mark(result.data);
 }
 
 export default async function handler(req, res) {

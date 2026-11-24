@@ -369,3 +369,82 @@ test('TG-21 setup: a rate-limited default-rights call does not block setWebhook;
   assert.equal(res.body.step, 'setWebhook');
   assert.match(res.body.error, /retry after 5/);
 });
+
+// Admin notice buttons: after a confirmed decision the notice keeps its text and shows one display-only status button.
+const MSG = { message_id: 42, chat: { id: 777 } };
+const pressOn = (action, from = 777) => ({ update_id: 98, callback_query: { id: 'cb2', from: { id: from }, data: `${action}:${ORDER}`, message: MSG } });
+const edits = () => tgCalls.filter(c => c.method === 'editMessageReplyMarkup');
+const shownButtons = call => call.payload.reply_markup.inline_keyboard.flat().map(b => [b.text, b.callback_data]);
+
+test('TG-22 DUYỆT ok -> notice shows only ✅ ĐÃ DUYỆT THÀNH CÔNG (display button); pressing it or a resent DUYỆT never approves again', async () => {
+  reset({ telegram_user_id: 5, telegram_join_status: 'requested' });
+  await hook(pressOn('tgapprove'));
+  assert.deepEqual(methods(), ['approveChatJoinRequest', 'revokeChatInviteLink', 'answerCallbackQuery', 'editMessageReplyMarkup']);
+  assert.equal(edits()[0].payload.chat_id, 777);
+  assert.equal(edits()[0].payload.message_id, 42);
+  assert.deepEqual(shownButtons(edits()[0]), [['✅ ĐÃ DUYỆT THÀNH CÔNG', `tgdone:${ORDER}`]]);
+  assert.equal(edits()[0].payload.text, undefined); // message text (customer, order id, bill) is not touched
+  const decidedAt = row().telegram_join_decided_at;
+
+  for (const action of ['tgdone', 'tgapprove', 'tgdecline']) {
+    tgCalls = [];
+    await hook(pressOn(action));
+    assert.ok(!methods().some(m => /approveChatJoinRequest|declineChatJoinRequest|banChatMember/.test(m)), action);
+    assert.deepEqual(methods(), ['answerCallbackQuery', 'editMessageReplyMarkup'], action);
+  }
+  assert.equal(row().status, 'Đã duyệt');
+  assert.equal(row().telegram_join_decided_at, decidedAt);
+});
+
+test('TG-23 TỪ CHỐI ok -> ❌ ĐÃ TỪ CHỐI; a failed approval keeps both buttons and shows no success', async () => {
+  reset({ telegram_user_id: 5, telegram_join_status: 'requested' });
+  await hook(pressOn('tgdecline'));
+  assert.equal(row().status, 'Từ chối');
+  assert.deepEqual(shownButtons(edits()[0]), [['❌ ĐÃ TỪ CHỐI', `tgdone:${ORDER}`]]);
+
+  reset({ telegram_user_id: 5, telegram_join_status: 'requested' });
+  tgFail.approveChatJoinRequest = 'Too Many Requests: retry after 5';
+  await hook(pressOn('tgapprove'));
+  assert.equal(edits().length, 0);
+  assert.equal(row().status, 'Chờ duyệt');
+  assert.equal(row().telegram_join_status, 'approve_failed');
+  const ans = tgCalls.find(c => c.method === 'answerCallbackQuery').payload;
+  assert.match(ans.text, /không duyệt được/);
+  assert.doesNotMatch(ans.text, /Đã duyệt/);
+});
+
+test('TG-24 decided in orders.html or by another Admin: the old notice button only syncs its status; revoked shows ⛔', async () => {
+  reset({ telegram_user_id: 5, telegram_join_status: 'requested' });
+  assert.equal((await put({ id: ORDER, status: 'Đã duyệt' })).statusCode, 200);
+  tgCalls = [];
+  await hook(pressOn('tgdecline', 777));
+  assert.deepEqual(methods(), ['answerCallbackQuery', 'editMessageReplyMarkup']);
+  assert.deepEqual(shownButtons(edits()[0]), [['✅ ĐÃ DUYỆT THÀNH CÔNG', `tgdone:${ORDER}`]]);
+  assert.equal(row().status, 'Đã duyệt');
+
+  reset({ status: 'Từ chối', telegram_user_id: 5, telegram_join_status: 'revoked' });
+  await hook(pressOn('tgapprove'));
+  assert.deepEqual(shownButtons(edits()[0]), [['⛔ ĐÃ THU HỒI QUYỀN', `tgdone:${ORDER}`]]);
+  assert.equal(row().status, 'Từ chối');
+});
+
+test('TG-25 parallel presses from two Admins: Telegram approves once, both notices end on ✅; edit failure does not re-approve', async () => {
+  process.env.TELEGRAM_ADMIN_USER_IDS = '777,888';
+  try {
+    reset({ telegram_user_id: 5, telegram_join_status: 'requested' });
+    await Promise.all([hook(pressOn('tgapprove', 777)), hook(pressOn('tgapprove', 888)), hook(pressOn('tgapprove', 777))]);
+    assert.equal(methods().filter(m => m === 'approveChatJoinRequest').length, 1);
+    assert.equal(row().status, 'Đã duyệt');
+    assert.ok(edits().length >= 1);
+    for (const e of edits()) assert.deepEqual(shownButtons(e), [['✅ ĐÃ DUYỆT THÀNH CÔNG', `tgdone:${ORDER}`]]);
+
+    reset({ telegram_user_id: 5, telegram_join_status: 'requested' });
+    tgFail.editMessageReplyMarkup = 'Bad Request: message to edit not found';
+    const res = await hook(pressOn('tgapprove'));
+    assert.equal(res.statusCode, 200); // no 500: Telegram does not resend the press
+    assert.equal(row().status, 'Đã duyệt');
+    tgCalls = [];
+    await hook(pressOn('tgapprove'));
+    assert.equal(methods().filter(m => m === 'approveChatJoinRequest').length, 0);
+  } finally { process.env.TELEGRAM_ADMIN_USER_IDS = '777'; }
+});

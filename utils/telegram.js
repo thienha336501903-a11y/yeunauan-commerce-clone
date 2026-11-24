@@ -244,6 +244,25 @@ export async function answerTelegramCallback(callbackQueryId, text, showAlert = 
   return telegramApi('answerCallbackQuery', { callback_query_id: callbackQueryId, text: String(text || '').slice(0, 200), show_alert: Boolean(showAlert) });
 }
 
+// Final label for a decided order, or null while it still waits. Revoke marks the order rejected with join status 'revoked'.
+export function telegramDecisionLabel(order) {
+  if (order?.status === 'Đã duyệt') return '✅ ĐÃ DUYỆT THÀNH CÔNG';
+  if (order?.status === 'Từ chối') return order.telegram_join_status === 'revoked' ? '⛔ ĐÃ THU HỒI QUYỀN' : '❌ ĐÃ TỪ CHỐI';
+  return null;
+}
+
+// Replaces DUYỆT/TỪ CHỐI on the Admin's notice with one display-only button (tgdone: never acts). Message text stays.
+export async function markTelegramDecision(message, order) {
+  const label = telegramDecisionLabel(order);
+  if (!label || !message?.chat?.id || !message.message_id) return false;
+  await telegramApi('editMessageReplyMarkup', {
+    chat_id: message.chat.id,
+    message_id: message.message_id,
+    reply_markup: { inline_keyboard: [[{ text: label, callback_data: `tgdone:${order.id}` }]] }
+  });
+  return true;
+}
+
 export async function notifyAdminJoinRequest(order, from) {
   const cfg = await getTelegramRuntimeConfig();
   if (!cfg.adminChatId) throw new Error('TELEGRAM_ADMIN_CHAT_ID chưa được cấu hình');
