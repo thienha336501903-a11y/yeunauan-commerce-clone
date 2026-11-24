@@ -4,7 +4,7 @@ Phạm vi: `admin.html` (Khóa học & mở bán), `orders.html` (Đơn hàng & 
 
 ## Design System (một nguồn)
 
-- `design/console.head.html`: font (Be Vietnam Pro, Lexend), `tailwind.config` (nền trắng/bạc hà, teal thay hồng, phụ xanh dương và vàng; bo góc; độ đậm chữ) và CSS shell.
+- `design/console.head.html`: font Plus Jakarta Sans, `tailwind.config` (nền trắng + dải bạc hà, teal thay hồng, chữ xanh đậm, vàng nhấn; bo góc lớn; chữ 800) và CSS shell.
 - `design/console.sidebar.html`: sidebar, menu điện thoại, link LMS lấy từ `/api/config?runtime=1`, Đăng xuất.
 - `node scripts/sync-design.mjs` chép 2 khối vào các trang giữa marker `<!-- YB:HEAD -->` / `<!-- YB:SIDEBAR -->`. Worker chỉ phục vụ `*.html` ở gốc nên phải chép vào trang. `test/console-design.test.js` báo lỗi nếu trang lệch nguồn.
 - Thêm trang mới vào Console: thêm 2 marker + `<body class="yb" data-page="...">`, thêm tên trang vào `DESIGN_PAGES`, chạy sync.
