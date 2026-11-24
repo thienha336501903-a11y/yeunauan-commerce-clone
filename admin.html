@@ -21,8 +21,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script>
-  // Theme first, before paint: "mint" (Bạc hà, default) or "ember" (Than & Cam). Per-browser choice only.
-  (function () { var t = 'mint'; try { t = localStorage.getItem('yb-theme') || 'mint'; } catch (e) {} document.documentElement.setAttribute('data-theme', t === 'ember' ? 'ember' : 'mint'); })();
+  // Theme first, before paint: "mint" (Bạc hà, default), "ember" (Than & Cam) or "crystal" (Pha lê). Per-browser choice only.
+  (function () { var t = 'mint'; try { t = localStorage.getItem('yb-theme') || 'mint'; } catch (e) {} document.documentElement.setAttribute('data-theme', t === 'ember' || t === 'crystal' ? t : 'mint'); })();
   // Yêu học bánh Console design tokens. The old pink/slate utilities point at CSS variables, so each theme only
   // swaps variables; page markup and scripts keep their classes and logic. Edit design/console.*.html, then:
   // node scripts/sync-design.mjs
@@ -82,6 +82,25 @@
     --yb-login-bg: radial-gradient(700px 420px at 15% 10%, rgba(242,86,31,.20), transparent 60%), #111111;
   }
 
+  /* Theme: Pha lê (crystal) — minimal light, system font, blue pill buttons, frosted bars */
+  :root[data-theme="crystal"] {
+    --p-50: 238 246 255; --p-100: 214 233 253; --p-200: 173 210 251; --p-300: 118 178 246; --p-400: 52 136 236;
+    --p-500: 0 113 227; --p-600: 0 102 204; --p-700: 0 84 170; --p-800: 0 68 138; --p-900: 0 54 110;
+    --s-50: 250 250 252; --s-100: 245 245 247; --s-200: 232 232 237; --s-300: 210 210 215; --s-400: 162 162 168; --s-500: 110 110 115;
+    --s-600: 84 84 89; --s-700: 66 66 69; --s-800: 44 44 46; --s-900: 29 29 31; --s-950: 0 0 0;
+    --yb-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", "Inter"; --yb-r3: 1.125rem; --yb-head-w: 600; --yb-track: -0.022em;
+    --yb-bg: #f5f5f7; --yb-ink: #1d1d1f; --yb-muted: #6e6e73; --yb-line: transparent; --yb-soft: #f5f5f7; --yb-soft-line: #d2d2d7;
+    --yb-accent: #0071e3; --yb-accent-d: #0066cc; --yb-dark: #1d1d1f; --yb-dark-h: #333336; --yb-sun: #ffcc00;
+    --yb-btn: linear-gradient(#0071e3, #0071e3); --yb-btn-glow: none;
+    --yb-shadow: 0 2px 12px rgba(0,0,0,.05);
+    --yb-side-bg: rgba(251,251,253,.8); --yb-side-line: rgba(0,0,0,.08); --yb-side-ink: #1d1d1f; --yb-side-icon: #6e6e73; --yb-side-label: #86868b;
+    --yb-side-hover: rgba(0,0,0,.04); --yb-side-hover-ink: #1d1d1f; --yb-side-active: rgba(0,0,0,.07);
+    --yb-side-active-ink: #1d1d1f; --yb-side-active-bar: transparent; --yb-brand-ink: #1d1d1f;
+    --yb-top-bg: rgba(251,251,253,.8); --yb-top-line: rgba(0,0,0,.08); --yb-top-pad: 1.6rem 2.25rem 1.3rem; --yb-title: 2.1rem; --yb-thead: #f5f5f7;
+    --yb-bar-from: #0071e3; --yb-bar-to: #6cb4ff; --yb-bar-hover: #0066cc;
+    --yb-login-bg: #f5f5f7;
+  }
+
   body.yb { background: var(--yb-bg) !important; color: var(--yb-ink); font-family: var(--yb-font), system-ui, sans-serif; padding-bottom: 0 !important; -webkit-font-smoothing: antialiased; }
   body.yb h1, body.yb h2, body.yb h3, body.yb h4, body.yb .font-outfit { font-family: var(--yb-font), system-ui, sans-serif; letter-spacing: var(--yb-track); color: var(--yb-ink); }
   body.yb .yb-title { font-weight: var(--yb-head-w); letter-spacing: calc(var(--yb-track) - .01em); }
@@ -107,14 +126,40 @@
   .yb-nav a[aria-current="page"] svg { color: var(--yb-side-active-ink); }
   .yb-nav a .yb-ext { margin-left: auto; width: 12px; height: 12px; opacity: .45; }
   .yb-side-foot { padding: 1rem; border-top: 1px solid var(--yb-side-line); display: grid; gap: .65rem; }
-  .yb-theme { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border-radius: .8rem; background: var(--yb-side-hover); border: 1px solid var(--yb-side-line); }
-  .yb-theme button { display: flex; align-items: center; justify-content: center; gap: .4rem; padding: .45rem .3rem; border-radius: .6rem; font-size: .72rem; font-weight: 700; color: var(--yb-side-ink); background: transparent; }
+  .yb-theme { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 4px; border-radius: .8rem; background: var(--yb-side-hover); border: 1px solid var(--yb-side-line); }
+  .yb-theme button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .25rem; padding: .45rem .2rem; border-radius: .6rem; font-size: .66rem; line-height: 1.1; font-weight: 700; color: var(--yb-side-ink); background: transparent; }
   .yb-theme button i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
   .yb-theme button[aria-pressed="true"] { background: var(--yb-side-bg); color: var(--yb-brand-ink); box-shadow: 0 1px 3px rgba(0,0,0,.18); }
   [data-theme="ember"] .yb-theme button[aria-pressed="true"] { background: #262626; }
   .yb-side-foot #ybLogout { width: 100%; display: flex; align-items: center; justify-content: center; gap: .5rem; padding: .7rem; border-radius: .8rem; background: var(--yb-dark); color: #fff; font-size: .82rem; font-weight: 700; }
   [data-theme="ember"] .yb-side-foot #ybLogout { background: rgba(255,255,255,.06); }
   .yb-side-foot #ybLogout:hover { background: var(--yb-dark-h); }
+  /* crystal: frosted bars, pill controls, no borders, blue links */
+  [data-theme="crystal"] .yb-sidebar, [data-theme="crystal"] .yb-topbar { backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px); }
+  [data-theme="crystal"] .yb-topbar { position: sticky; top: 0; z-index: 30; }
+  [data-theme="crystal"] .yb-mark { background: #1d1d1f; box-shadow: none; border-radius: 11px; }
+  [data-theme="crystal"] .yb-brand small { color: var(--yb-muted); letter-spacing: .12em; }
+  [data-theme="crystal"] .yb-nav a { border-radius: .6rem; font-weight: 500; }
+  [data-theme="crystal"] .yb-nav a[aria-current="page"] { font-weight: 600; }
+  [data-theme="crystal"] .yb-nav a[aria-current="page"] svg { color: var(--yb-accent); }
+  [data-theme="crystal"] .yb-crumb { background: transparent; border: 0; padding: 0; letter-spacing: .02em; text-transform: none; font-size: .85rem; font-weight: 600; color: var(--yb-accent); }
+  [data-theme="crystal"] .yb-crumb::before { display: none; }
+  [data-theme="crystal"] .yb-topbar h1 { margin-top: .2rem; }
+  [data-theme="crystal"] .yb-theme button[aria-pressed="true"] { background: #fff; }
+  [data-theme="crystal"] .yb-side-foot #ybLogout { background: #1d1d1f; border-radius: 999px; font-weight: 500; }
+  [data-theme="crystal"] body.yb button.bg-pink-600, [data-theme="crystal"] body.yb a.bg-pink-600, [data-theme="crystal"] body.yb button.bg-slate-900,
+  [data-theme="crystal"] body.yb button.bg-green-600, [data-theme="crystal"] body.yb button.bg-green-500, [data-theme="crystal"] body.yb button.bg-rose-500 { border-radius: 999px !important; font-weight: 500 !important; letter-spacing: 0 !important; text-transform: none !important; }
+  [data-theme="crystal"] body.yb .bg-white.rounded-3xl, [data-theme="crystal"] body.yb .bg-white.rounded-2xl { border-color: transparent !important; }
+  [data-theme="crystal"] body.yb .yb-kpi { background: #f5f5f7; border-color: transparent; }
+  [data-theme="crystal"] body.yb .yb-kpi b { color: var(--yb-ink); font-weight: 600; }
+  [data-theme="crystal"] body.yb .yb-kpi span { letter-spacing: .02em; text-transform: none; font-size: .75rem; font-weight: 500; }
+  [data-theme="crystal"] body.yb .yb-kpi.is-dark { background: #1d1d1f; }
+  [data-theme="crystal"] body.yb .yb-kpi.is-dark b { color: #fff; }
+  [data-theme="crystal"] body.yb .yb-kpi.is-dark span { color: #a1a1a6; }
+  [data-theme="crystal"] body.yb .yb-live { color: #fff; background: var(--yb-accent); box-shadow: none; letter-spacing: .04em; }
+  [data-theme="crystal"] body.yb #loginCard { box-shadow: 0 4px 30px rgba(0,0,0,.08) !important; }
+  [data-theme="crystal"] body.yb #loginCard button[type=submit] { border-radius: 999px !important; font-weight: 500; text-transform: none !important; letter-spacing: 0 !important; }
+  [data-theme="crystal"] body.yb #loginCard .bg-pink-500 { background: #1d1d1f !important; }
   .yb-main { margin-left: var(--yb-side-w); min-height: 100vh; display: flex; flex-direction: column; }
   .yb-topbar { position: relative; z-index: 2; background: var(--yb-top-bg); border-bottom: 1px solid var(--yb-top-line); }
   .yb-topbar-in { max-width: 1240px; margin: 0 auto; padding: var(--yb-top-pad); display: flex; align-items: flex-start; gap: 1rem; }
@@ -291,6 +336,7 @@
     <div class="yb-theme" role="group" aria-label="Giao diện">
       <button type="button" data-theme-pick="mint" aria-pressed="false"><i style="background:#12ad91"></i>Bạc hà</button>
       <button type="button" data-theme-pick="ember" aria-pressed="false"><i style="background:#f2561f"></i>Than &amp; Cam</button>
+      <button type="button" data-theme-pick="crystal" aria-pressed="false"><i style="background:#0071e3"></i>Pha lê</button>
     </div>
     <button type="button" id="ybLogout"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></svg>Đăng xuất</button></div>
 </aside>

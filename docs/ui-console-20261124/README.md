@@ -5,7 +5,7 @@ Phạm vi: `admin.html` (Khóa học & mở bán), `orders.html` (Đơn hàng & 
 ## Design System (một nguồn)
 
 - `design/console.head.html`: font Plus Jakarta Sans, `tailwind.config` (nền trắng + dải bạc hà, teal thay hồng, chữ xanh đậm, vàng nhấn; bo góc lớn; chữ 800) và CSS shell.
-- Hai giao diện: **Bạc hà** (mặc định) và **Than & Cam** (sidebar đen, nhấn cam, font Inter). Màu Tailwind trỏ vào biến CSS `--p-*`/`--s-*`; mỗi giao diện là một bộ biến dưới `:root` / `:root[data-theme="ember"]`. Nút chuyển ở cuối sidebar; lựa chọn lưu theo trình duyệt (`localStorage` `yb-theme`), áp trước khi vẽ trang.
+- Ba giao diện: **Bạc hà** (mặc định), **Than & Cam** (sidebar đen, nhấn cam, font Inter) và **Pha lê** (tối giản sáng, font hệ thống, nút xanh bo tròn, thanh kính mờ). Màu Tailwind trỏ vào biến CSS `--p-*`/`--s-*`; mỗi giao diện là một bộ biến dưới `:root`, `:root[data-theme="ember"]`, `:root[data-theme="crystal"]`. Nút chuyển ở cuối sidebar; lựa chọn lưu theo trình duyệt (`localStorage` `yb-theme`), áp trước khi vẽ trang.
 - `design/console.sidebar.html`: sidebar, menu điện thoại, link LMS lấy từ `/api/config?runtime=1`, Đăng xuất.
 - `node scripts/sync-design.mjs` chép 2 khối vào các trang giữa marker `<!-- YB:HEAD -->` / `<!-- YB:SIDEBAR -->`. Worker chỉ phục vụ `*.html` ở gốc nên phải chép vào trang. `test/console-design.test.js` báo lỗi nếu trang lệch nguồn.
 - Thêm trang mới vào Console: thêm 2 marker + `<body class="yb" data-page="...">`, thêm tên trang vào `DESIGN_PAGES`, chạy sync.
