@@ -22,4 +22,4 @@ Mở `http://localhost:4317/orders.html`, mật khẩu `preview-local`. Chạy h
 
 ## Rollback
 
-Nhánh `feat/ui-premium-20261124` (worktree `D:\SYSTEMB_WT\cf-commerce-ui`) tách từ `1c0a600`, chưa push, chưa deploy. Bỏ: `git worktree remove D:\SYSTEMB_WT\cf-commerce-ui` rồi `git branch -D feat/ui-premium-20261124` trong `cf-commerce-h4`. Đã deploy sau này: quay lại bản Worker trước bằng `wrangler rollback <version>`.
+Nhánh `feat/ui-premium-20261124` (worktree `D:\SYSTEMB_WT\cf-commerce-ui`) tách từ `1c0a600`, đã push. Staging 24/11: `22d66059` (`a58af1b`, tông nâu); rollback staging `e04f1fee`. Bỏ nhánh: `git worktree remove D:\SYSTEMB_WT\cf-commerce-ui` rồi `git branch -D feat/ui-premium-20261124` trong `cf-commerce-h4`. Đã deploy sau này: quay lại bản Worker trước bằng `wrangler rollback <version>`.
