@@ -234,7 +234,7 @@ async function handleDecisionButton(cb) {
     if (telegramDecisionLabel(order)) return showDecided(order);
     return answer(`Đơn đang ở trạng thái: ${order.status}.`, true);
   }
-  const result = action === 'tgapprove' ? await approveTelegramOrder(order) : await declineTelegramOrder(order);
+  const result = action === 'tgapprove' ? await approveTelegramOrder(order, { by: 'bot' }) : await declineTelegramOrder(order, { by: 'bot' });
   if (!result.ok) {
     // Lost a race to another click or Admin: if that one finished, show its result.
     const now = await load().catch(() => null);

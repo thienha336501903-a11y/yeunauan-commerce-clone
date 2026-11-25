@@ -41,6 +41,13 @@ async function save(db, id, patch) {
   return data;
 }
 
+// Audit trail kept on the order (raw_data.telegram_history, last 20): who did what, when, and the result.
+function withHistory(order, entry) {
+  const raw = order?.raw_data && typeof order.raw_data === 'object' ? order.raw_data : {};
+  const past = Array.isArray(raw.telegram_history) ? raw.telegram_history.slice(-19) : [];
+  return { ...raw, telegram_history: [...past, { at: nowIso(), ...entry }] };
+}
+
 function busyBlocked(order) {
   return BUSY.has(order.telegram_join_status) && !isStale(order);
 }
@@ -55,7 +62,7 @@ async function joinedAlready(order, tg) {
 }
 const JOINED_MSG = 'Khách ĐÃ (hoặc có thể đã) ở trong nhóm sau lần duyệt trước. Bấm Duyệt để ghi đơn, hoặc Duyệt rồi Từ chối để thu hồi; Telegram không trả lời thì thử lại sau.';
 
-export async function approveTelegramOrder(order, { db = supabase, tg = telegram } = {}) {
+export async function approveTelegramOrder(order, { db = supabase, tg = telegram, by = 'admin_web' } = {}) {
   if (order.status !== WAITING) return fail(409, `Đơn đang ở trạng thái "${order.status}", không duyệt được.`, 'telegram_not_waiting');
   if (!order.telegram_user_id || !order.telegram_chat_id) return fail(409, 'Khách chưa bấm link mời để xin vào nhóm. Chờ khách gửi yêu cầu tham gia rồi mới duyệt.', 'telegram_no_request');
   const resumable = (order.telegram_join_status === 'approving' && isStale(order)) || order.telegram_join_status === 'approve_failed';
@@ -83,7 +90,8 @@ export async function approveTelegramOrder(order, { db = supabase, tg = telegram
 
   const patch = {
     status: APPROVED, telegram_join_status: 'approved', telegram_join_decided_at: nowIso(),
-    sync_lms_status: 'SKIPPED_TELEGRAM', sync_portal_status: 'SKIPPED_TELEGRAM', sync_error: null
+    sync_lms_status: 'SKIPPED_TELEGRAM', sync_portal_status: 'SKIPPED_TELEGRAM', sync_error: null,
+    raw_data: withHistory(claimed, { action: 'approve', by })
   };
   let saved = null;
   for (let attempt = 0; attempt < 2 && !saved; attempt += 1) {
@@ -95,7 +103,7 @@ export async function approveTelegramOrder(order, { db = supabase, tg = telegram
 }
 
 // Rejects an order that is not approved yet: declines a pending join request and kills the invite link.
-export async function declineTelegramOrder(order, { db = supabase, tg = telegram } = {}) {
+export async function declineTelegramOrder(order, { db = supabase, tg = telegram, by = 'admin_web' } = {}) {
   if (order.status !== WAITING) return fail(409, `Đơn đang ở trạng thái "${order.status}".`, 'telegram_not_waiting');
   if (busyBlocked(order)) return fail(409, 'Đơn đang được xử lý, thử lại sau 2 phút.', 'telegram_busy');
   if (await joinedAlready(order, tg)) return fail(409, JOINED_MSG, 'telegram_already_member');
@@ -115,35 +123,44 @@ export async function declineTelegramOrder(order, { db = supabase, tg = telegram
   try { await tg.revokeTelegramInvite(order.telegram_chat_id, order.telegram_invite_link); } catch (error) { console.error('TELEGRAM_INVITE_REVOKE_ERROR:', error); }
   const saved = await save(db, order.id, {
     status: REJECTED, telegram_join_status: 'declined', telegram_join_decided_at: nowIso(),
-    sync_lms_status: 'SKIPPED_TELEGRAM', sync_portal_status: 'SKIPPED_TELEGRAM', sync_error: null
+    sync_lms_status: 'SKIPPED_TELEGRAM', sync_portal_status: 'SKIPPED_TELEGRAM', sync_error: null,
+    raw_data: withHistory(claimed, { action: 'decline', by })
   });
   return { ok: true, data: saved };
 }
 
 // Takes back access of an approved order: removes the member from the group, then marks the order rejected.
-export async function revokeTelegramOrder(order, { db = supabase, tg = telegram } = {}) {
+// Done only when Telegram says the member is out (left/kicked); a member still inside keeps the order approved.
+// Channel without the ban right: the Admin removes the member by hand, presses again, and this re-checks.
+export async function revokeTelegramOrder(order, { db = supabase, tg = telegram, by = 'admin_web' } = {}) {
   if (order.status !== APPROVED) return fail(409, 'Chỉ thu hồi được đơn đã duyệt.', 'telegram_not_approved');
   if (!order.telegram_user_id || !order.telegram_chat_id) return fail(409, 'Đơn không có tài khoản Telegram đã vào nhóm.', 'telegram_no_member');
   if (busyBlocked(order)) return fail(409, 'Đơn đang được xử lý, thử lại sau 2 phút.', 'telegram_busy');
   const claimed = await claim(db, order, 'revoking');
   if (!claimed) return fail(409, 'Đơn vừa được xử lý ở nơi khác. Tải lại danh sách.', 'telegram_busy');
 
-  try {
-    await tg.removeTelegramMember(order.telegram_chat_id, order.telegram_user_id);
-  } catch (error) {
-    // Channel (bot has no ban right) or member already gone: Admin removed them by hand -> the revoke is done.
-    const status = await tg.getTelegramMemberStatus(order.telegram_chat_id, order.telegram_user_id);
-    // Ban worked but unban failed: lift the ban so a later paid order can invite them again.
-    if (status === 'kicked') {
-      try { await tg.unbanTelegramMember(order.telegram_chat_id, order.telegram_user_id); } catch (unbanError) { console.error('TELEGRAM_UNBAN_ERROR:', unbanError); }
-    }
-    if (!OUT_OF_CHAT.has(status)) {
-      await save(db, order.id, { telegram_join_status: 'approved', sync_error: 'Telegram thu hồi: ' + errText(error) });
-      return fail(502, 'Telegram không xoá được học viên khỏi nhóm: ' + errText(error) + '. Cấp cho bot quyền "Cấm thành viên" (Ban users) trong nhóm, hoặc xoá tay rồi bấm lại.', 'telegram_api_error');
-    }
+  let removeError = null;
+  try { await tg.removeTelegramMember(order.telegram_chat_id, order.telegram_user_id); } catch (error) { removeError = error; }
+  const member = await tg.getTelegramMemberStatus(order.telegram_chat_id, order.telegram_user_id);
+  // Ban worked but unban failed: lift the ban so a later paid order can invite them again.
+  if (member === 'kicked') {
+    try { await tg.unbanTelegramMember(order.telegram_chat_id, order.telegram_user_id); } catch (unbanError) { console.error('TELEGRAM_UNBAN_ERROR:', unbanError); }
+  }
+  const out = OUT_OF_CHAT.has(member) || (!removeError && member !== null && !IN_CHAT.has(member));
+  if (!out) {
+    const why = removeError ? errText(removeError) : (member === null ? 'Telegram không trả lời trạng thái thành viên' : 'học viên vẫn còn trong nhóm/kênh');
+    await save(db, order.id, {
+      telegram_join_status: 'approved', sync_error: 'Telegram thu hồi: ' + why,
+      raw_data: withHistory(claimed, { action: 'revoke_failed', by, member: member || 'unknown', error: why.slice(0, 200) })
+    });
+    return fail(409, member === null
+      ? 'Chưa xác nhận được học viên đã rời nhóm/kênh (Telegram không trả lời). Đơn vẫn ĐÃ DUYỆT. Thử lại sau ít phút.'
+      : 'Học viên VẪN CÒN trong nhóm/kênh, chưa thu hồi. Bot chưa có quyền "Cấm thành viên" (Ban users): xoá học viên bằng tay trong Telegram rồi bấm "Thu hồi quyền học" lần nữa để hệ thống kiểm tra lại.',
+    member === null ? 'telegram_member_unknown' : 'telegram_still_member');
   }
   const saved = await save(db, order.id, {
-    status: REJECTED, telegram_join_status: 'revoked', telegram_join_decided_at: nowIso(), sync_error: null
+    status: REJECTED, telegram_join_status: 'revoked', sync_error: null,
+    raw_data: withHistory(claimed, { action: 'revoke', by, member, manual: Boolean(removeError) })
   });
   return { ok: true, data: saved };
 }
@@ -180,6 +197,7 @@ export async function reissueTelegramInvite(order, { db = supabase, tg = telegra
 export async function telegramAdminAction(order, { status, action } = {}, deps) {
   let result;
   if (action === 'telegram_reissue_invite') result = await reissueTelegramInvite(order, deps);
+  else if (action === 'telegram_revoke') result = await revokeTelegramOrder(order, deps);
   else if (status === APPROVED) result = await approveTelegramOrder(order, deps);
   else if (status === REJECTED) result = order.status === APPROVED ? await revokeTelegramOrder(order, deps) : await declineTelegramOrder(order, deps);
   else result = fail(409, 'Đơn Telegram chỉ đổi được sang "Đã duyệt" hoặc "Từ chối" (Từ chối đơn đã duyệt = xoá khỏi nhóm).', 'telegram_status_unsupported');

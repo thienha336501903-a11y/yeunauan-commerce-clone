@@ -204,6 +204,8 @@
   .yb-kpi.is-sun b { color: #c08a00; }
   .yb-kpi.is-dark { background: var(--yb-dark); border-color: var(--yb-dark); }
   .yb-kpi.is-dark b { color: #fff; font-size: 1.45rem; }
+  /* Wide tables scroll sideways inside their card; the last column (status + actions) stays pinned and readable. */
+  .yb-sticky-end { position: sticky; right: 0; z-index: 2; box-shadow: -10px 0 14px -12px rgb(15 23 42 / .28); }
   .yb-kpi.is-dark span { color: rgb(var(--p-200)); }
   .yb-live { font-size: .62rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: #5c4300; background: var(--yb-sun); border-radius: 999px; padding: .22rem .6rem; box-shadow: 0 8px 18px -10px rgba(242,183,5,.9); }
   [data-theme="ember"] .yb-live { color: #fff; background: var(--yb-accent); box-shadow: none; }
@@ -1184,16 +1186,16 @@
       }
 
       container.innerHTML = `
-        <table class="w-full text-left text-sm border-collapse">
+        <table class="w-full min-w-[1080px] text-left text-sm border-collapse">
           <thead>
-            <tr class="bg-slate-50 text-slate-400 border-b border-slate-100 uppercase text-[10px] font-extrabold tracking-wider">
+            <tr class="bg-slate-50 text-slate-400 border-b border-slate-100 uppercase text-[10px] font-extrabold tracking-wider whitespace-nowrap">
               <th class="p-4">Thời gian</th>
               <th class="p-4">Độ ưu tiên</th>
               <th class="p-4">Khóa học</th>
               <th class="p-4">Học viên / Gmail</th>
               <th class="p-4">Hóa đơn</th>
-              <th class="p-4 w-60">Ghi chú nội bộ</th>
-              <th class="p-4 text-center">Trạng thái duyệt</th>
+              <th class="p-4 min-w-[12rem]">Ghi chú nội bộ</th>
+              <th class="p-4 text-center yb-sticky-end bg-slate-50">Trạng thái duyệt</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-100">
@@ -1245,7 +1247,7 @@
               }
 
               return `
-                <tr class="hover:bg-slate-50/50 transition duration-150">
+                <tr class="group hover:bg-slate-50 transition duration-150">
                   <!-- Thời gian -->
                   <td class="p-4 whitespace-nowrap text-slate-500 font-medium">
                     ${time}
@@ -1340,8 +1342,8 @@
                     </div>
                   </td>
                   
-                  <!-- Trạng thái / Actions -->
-                  <td class="p-4 text-center">
+                  <!-- Trạng thái / Actions: pinned right so it stays visible when the table scrolls sideways -->
+                  <td class="p-4 text-center whitespace-nowrap yb-sticky-end bg-white group-hover:bg-slate-50">
                     <select 
                       onchange="updateOrderStatus('${order.id}', this.value)"
                       class="rounded-full px-3 py-1.5 text-xs font-black transition shadow-sm outline-none cursor-pointer border ${
@@ -1354,6 +1356,7 @@
                       <option value="Đã duyệt" class="bg-white text-green-800 font-bold" ${status === 'Đã duyệt' ? 'selected' : ''}>Đã duyệt</option>
                       <option value="Từ chối" class="bg-white text-rose-800 font-bold" ${status === 'Từ chối' ? 'selected' : ''}>Từ chối</option>
                     </select>
+                    ${telegramRevokeButtonHtml(order)}
                     ${isCloneFactoryTest ? `
                       <button type="button" onclick="cleanupCloneFactoryTestOrder('${order.id}')" class="block mx-auto mt-2 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[9px] font-black text-rose-700 hover:bg-rose-100">Xóa dữ liệu test</button>
                     ` : ''}
@@ -1740,7 +1743,52 @@
         ${expires && order.status === "Chờ duyệt" ? `<div>Link hết hạn: ${escapeHtml(expires)}</div>` : ""}
         ${order.status === "Chờ duyệt" && order.telegram_invite_link ? `<button onclick="copyText(${jsArg(order.telegram_invite_link)})" class="text-sky-700 underline">Copy link mời</button>` : ""}
         ${canReissue ? `<button onclick="telegramReissue(${jsArg(order.id)})" class="ml-2 text-sky-700 underline">Tạo link mời mới</button>` : ""}
+        ${telegramHistoryHtml(order)}
       </div>`;
+    }
+    const TELEGRAM_HISTORY_LABEL = { approve: "Duyệt", decline: "Từ chối", revoke: "Thu hồi quyền học", revoke_failed: "Thu hồi chưa xong" };
+    const TELEGRAM_BY_LABEL = { bot: "bot", admin_web: "trang Admin" };
+    function telegramHistoryHtml(order) {
+      const items = Array.isArray(order.telegram_history) ? order.telegram_history.slice(-4).reverse() : [];
+      if (!items.length) return "";
+      return `<details class="mt-1"><summary class="cursor-pointer text-slate-500">Lịch sử xử lý (${items.length})</summary><ul class="mt-1 space-y-0.5">${items.map(h => {
+        const at = h.at ? new Date(h.at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "";
+        const extra = h.action === "revoke" && h.manual ? " · Admin xoá tay, đã kiểm tra lại" : h.action === "revoke_failed" ? " · " + (h.error || "") : "";
+        return `<li><span class="text-slate-400">${escapeHtml(at)}</span> · ${escapeHtml(TELEGRAM_HISTORY_LABEL[h.action] || h.action || "")} (${escapeHtml(TELEGRAM_BY_LABEL[h.by] || h.by || "")})${escapeHtml(extra)}</li>`;
+      }).join("")}</ul></details>`;
+    }
+    // Approved Telegram order: one clear "take access back" action (same server path as status -> Từ chối, verified by Telegram).
+    function telegramRevokeButtonHtml(order) {
+      if (String(order.delivery_mode || "").toLowerCase() !== "telegram" || order.status !== "Đã duyệt" || !order.telegram_user_id) return "";
+      const busy = order.telegram_join_status === "revoking";
+      return `<button type="button" onclick="telegramRevoke(${jsArg(order.id)})" ${busy ? "disabled" : ""} class="yb-revoke-btn block mx-auto mt-2 rounded-full border border-rose-200 bg-rose-50 px-3 py-1.5 text-[11px] font-extrabold text-rose-700 hover:bg-rose-100 disabled:opacity-50 disabled:cursor-wait">${busy ? "Đang thu hồi…" : "Thu hồi quyền học"}</button>`;
+    }
+    let telegramRevokeRunning = false;
+    async function telegramRevoke(id) {
+      const order = allOrders.find(o => o.id === id);
+      if (!order || telegramRevokeRunning) return;
+      const who = `${order.telegram_first_name || ""} ${order.telegram_username ? "@" + order.telegram_username : ""}`.trim() || "học viên";
+      if (!confirm(`THU HỒI QUYỀN HỌC Telegram của "${who}"?
+
+Hệ thống sẽ xoá học viên khỏi nhóm/kênh, rồi hỏi Telegram để chắc học viên đã ra. Chỉ khi Telegram xác nhận, đơn mới chuyển sang "Từ chối".`)) return;
+      telegramRevokeRunning = true;
+      showLoader("Đang thu hồi quyền học Telegram...");
+      try {
+        const response = await fetch("/api/orders", { method: "PUT", headers: { "Content-Type": "application/json", "X-Admin-Password": currentAdminPassword }, body: JSON.stringify({ id, action: "telegram_revoke" }) });
+        const data = await response.json().catch(() => ({}));
+        if (response.ok) { showToast("Đã thu hồi: Telegram xác nhận học viên không còn trong nhóm/kênh."); }
+        else if (data.code === "telegram_still_member") {
+          alert(`CHƯA THU HỒI XONG — học viên vẫn còn trong nhóm/kênh.
+
+Làm tay:
+1. Mở nhóm/kênh trong Telegram → Thành viên / Người đăng ký.
+2. Tìm "${who}" → Xoá khỏi kênh (Remove).
+3. Quay lại đây bấm "Thu hồi quyền học" lần nữa: hệ thống kiểm tra lại với Telegram rồi mới đánh dấu xong.
+
+Chi tiết: ${data.error || ""}`);
+        } else { alert(data.error || "Không thu hồi được"); }
+        loadOrders();
+      } catch { alert("Lỗi kết nối máy chủ"); } finally { telegramRevokeRunning = false; hideLoader(); }
     }
     async function telegramReissue(id) {
       if (!confirm("Tạo link mời mới cho đơn Telegram này? Link cũ sẽ bị huỷ.")) return;

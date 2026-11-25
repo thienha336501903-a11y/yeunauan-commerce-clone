@@ -152,7 +152,7 @@ export default async function handler(req, res) {
       }
 
       // Telegram: approve / decline / revoke / new invite go through Telegram first, then the order (utils/telegram-order.js).
-      if (deliveryMode === 'telegram' && (action === 'telegram_reissue_invite' || (status !== undefined && status !== existingOrder.status))) {
+      if (deliveryMode === 'telegram' && (['telegram_reissue_invite', 'telegram_revoke'].includes(action) || (status !== undefined && status !== existingOrder.status))) {
         if ([note, customer_name, customer_phone, gmail].some(v => v !== undefined)) {
           return res.status(400).json({ error: 'Đổi trạng thái đơn Telegram riêng; sửa ghi chú/thông tin ở lần lưu khác.', code: 'telegram_mixed_update' });
         }

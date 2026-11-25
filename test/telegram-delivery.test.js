@@ -207,15 +207,17 @@ test('TG-11 revoke an approved order: member removed (ban + unban), order reject
   tgFail.banChatMember = 'Bad Request: not enough rights to restrict/unrestrict chat member';
   memberStatus = 'member';
   const failed = await put({ id: ORDER, status: 'Từ chối' });
-  assert.equal(failed.statusCode, 502);
+  assert.equal(failed.statusCode, 409);
+  assert.equal(failed.body.code, 'telegram_still_member');
   assert.match(failed.body.error, /Ban users/);
   assert.equal(row().status, 'Đã duyệt');
   assert.equal(row().telegram_join_status, 'approved');
 
   delete tgFail.banChatMember;
+  memberStatus = 'left'; // what Telegram reports after ban + unban
   tgCalls = [];
   assert.equal((await put({ id: ORDER, status: 'Từ chối' })).statusCode, 200);
-  assert.deepEqual(methods(), ['banChatMember', 'unbanChatMember']);
+  assert.deepEqual(methods(), ['banChatMember', 'unbanChatMember', 'getChatMember']);
   assert.equal(tgCalls[1].payload.only_if_banned, true);
   assert.equal(row().status, 'Từ chối');
   assert.equal(row().telegram_join_status, 'revoked');
@@ -292,7 +294,7 @@ test('TG-18 channel: bot cannot ban, Admin removed the member by hand -> revoke 
   reset({ status: 'Đã duyệt', telegram_user_id: 5, telegram_join_status: 'approved' });
   tgFail.banChatMember = 'Bad Request: not enough rights';
   memberStatus = 'member';
-  assert.equal((await put({ id: ORDER, status: 'Từ chối' })).statusCode, 502);
+  assert.equal((await put({ id: ORDER, status: 'Từ chối' })).statusCode, 409);
   assert.equal(row().status, 'Đã duyệt');
   memberStatus = 'left';
   assert.equal((await put({ id: ORDER, status: 'Từ chối' })).statusCode, 200);
@@ -447,4 +449,51 @@ test('TG-25 parallel presses from two Admins: Telegram approves once, both notic
     await hook(pressOn('tgapprove'));
     assert.equal(methods().filter(m => m === 'approveChatJoinRequest').length, 0);
   } finally { process.env.TELEGRAM_ADMIN_USER_IDS = '777'; }
+});
+
+test('TG-26 "Thu hồi quyền học" action: verified out before done, never success while the member is inside, history kept, no double revoke', async () => {
+  const revoke = async () => {
+    process.env.ADMIN_PASSWORD = 'pw'; process.env.LEGACY_HOST_ALLOWLIST = 'legacy.example.test';
+    const res = fakeRes();
+    try { await ordersHandler({ method: 'PUT', headers: { host: 'legacy.example.test', 'x-admin-password': 'pw' }, body: { id: ORDER, action: 'telegram_revoke' }, query: {} }, res); } finally { delete process.env.ADMIN_PASSWORD; delete process.env.LEGACY_HOST_ALLOWLIST; }
+    return res;
+  };
+  reset({ status: 'Đã duyệt', telegram_user_id: 5, telegram_join_status: 'approved', telegram_join_decided_at: '2026-11-24T13:54:22.784Z', raw_data: { billName: 'b.png' } });
+  // Ban "succeeded" but Telegram still lists the member: not done.
+  memberStatus = 'member';
+  let res = await revoke();
+  assert.equal(res.statusCode, 409);
+  assert.equal(res.body.code, 'telegram_still_member');
+  assert.equal(row().status, 'Đã duyệt');
+  // Telegram does not answer the member check: not done either.
+  memberStatus = null;
+  res = await revoke();
+  assert.equal(res.statusCode, 409);
+  assert.match(res.body.error, /Chưa xác nhận/);
+  assert.equal(res.body.code, 'telegram_member_unknown');
+  assert.equal(row().status, 'Đã duyệt');
+  // Channel: no ban right, Admin removed by hand, presses again -> re-checked, done.
+  tgFail.banChatMember = 'Bad Request: not enough rights';
+  memberStatus = 'left';
+  res = await revoke();
+  assert.equal(res.statusCode, 200);
+  assert.equal(row().status, 'Từ chối');
+  assert.equal(row().telegram_join_status, 'revoked');
+  assert.equal(row().telegram_join_decided_at, '2026-11-24T13:54:22.784Z'); // approval time kept
+  assert.equal(row().raw_data.billName, 'b.png');
+  assert.deepEqual(row().raw_data.telegram_history.map(h => [h.action, h.by]), [['revoke_failed', 'admin_web'], ['revoke_failed', 'admin_web'], ['revoke', 'admin_web']]);
+  assert.equal(row().raw_data.telegram_history[2].manual, true);
+  // Pressing again: already revoked, Telegram not called.
+  tgCalls = [];
+  assert.equal((await revoke()).statusCode, 409);
+  assert.deepEqual(methods(), []);
+});
+
+test('TG-27 approve / decline write who decided into the order history', async () => {
+  reset({ telegram_user_id: 5, telegram_join_status: 'requested' });
+  await hook(button('tgapprove'));
+  assert.deepEqual(row().raw_data.telegram_history.map(h => [h.action, h.by]), [['approve', 'bot']]);
+  reset({ telegram_user_id: 5, telegram_join_status: 'requested' });
+  await put({ id: ORDER, status: 'Từ chối' });
+  assert.deepEqual(row().raw_data.telegram_history.map(h => [h.action, h.by]), [['decline', 'admin_web']]);
 });
