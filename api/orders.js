@@ -151,6 +151,7 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true, data: { ...updatedOrder, syncResults } });
       }
 
+      if (action === 'telegram_revoke' && deliveryMode !== 'telegram') return res.status(400).json({ error: 'Chỉ đơn Telegram mới có thao tác thu hồi Telegram.', code: 'telegram_action_wrong_order' });
       // Telegram: approve / decline / revoke / new invite go through Telegram first, then the order (utils/telegram-order.js).
       if (deliveryMode === 'telegram' && (['telegram_reissue_invite', 'telegram_revoke'].includes(action) || (status !== undefined && status !== existingOrder.status))) {
         if ([note, customer_name, customer_phone, gmail].some(v => v !== undefined)) {

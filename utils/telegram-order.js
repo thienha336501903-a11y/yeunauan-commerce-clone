@@ -35,8 +35,10 @@ async function claim(db, order, busyStatus) {
   return data;
 }
 
-async function save(db, id, patch) {
-  const { data, error } = await db.from('orders').update({ ...patch, updated_at: nowIso() }).eq('id', id).select().maybeSingle();
+async function save(db, id, patch, onlyIfJoinStatus) {
+  let query = db.from('orders').update({ ...patch, updated_at: nowIso() }).eq('id', id);
+  if (onlyIfJoinStatus) query = query.eq('telegram_join_status', onlyIfJoinStatus); // still ours: a stale re-claim did not take over
+  const { data, error } = await query.select().maybeSingle();
   if (error) throw error;
   return data;
 }
@@ -161,7 +163,8 @@ export async function revokeTelegramOrder(order, { db = supabase, tg = telegram,
   const saved = await save(db, order.id, {
     status: REJECTED, telegram_join_status: 'revoked', sync_error: null,
     raw_data: withHistory(claimed, { action: 'revoke', by, member, manual: Boolean(removeError) })
-  });
+  }, 'revoking');
+  if (!saved) return fail(409, 'Đơn vừa được xử lý ở nơi khác. Tải lại danh sách.', 'telegram_busy');
   return { ok: true, data: saved };
 }
 
