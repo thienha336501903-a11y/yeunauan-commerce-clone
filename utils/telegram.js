@@ -105,8 +105,8 @@ export async function verifyCourseConnectToken(token) {
   return expandUuid(match[1]);
 }
 
-// Groups: ask for "ban users" so a revoked student can be removed. Channels: left off so the
-// chat picker keeps working; removing a channel subscriber is not verified (Admin removes by hand).
+// Groups and channels: ask for "ban users" so a revoked student is removed by the bot (channel verified on
+// staging 25/11). restrict:false is the fallback picker when Telegram refuses that right.
 export function telegramBotAdminRights({ restrict = true } = {}) {
   return {
     is_anonymous: false,

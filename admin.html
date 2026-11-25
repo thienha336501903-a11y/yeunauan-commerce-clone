@@ -720,7 +720,7 @@
           <label class="block text-xs uppercase font-extrabold text-slate-500 tracking-wider mb-2">Trạng thái bán</label>
           <div class="flex items-center min-h-11 rounded-xl bg-slate-50 border border-slate-200 px-4 py-3">
             <label class="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" id="courseActiveInput" checked class="sr-only peer">
+              <input type="checkbox" id="courseActiveInput" class="sr-only peer">
               <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-600"></div>
               <span class="ml-3 text-sm font-bold text-slate-700">Đang bán trên Storefront</span>
             </label>
@@ -995,7 +995,8 @@
         const salePaused = course.salePaused === true;
         const messengerSale = course.messengerSale === true;
         const messengerFeatured = course.messengerFeatured === true;
-        const selling = active && !salePaused;
+        const telegramMissing = course.deliveryMode === 'telegram' && !course.telegramConnected;
+        const selling = active && !salePaused && !telegramMissing;
         const isPublished = course.is_published === true;
         const originalLessonEntryVisible = course.originalLessonEntryVisible !== false;
         const sortOrder = course.sort_order || 0;
@@ -1039,7 +1040,8 @@
                 <div class="mb-4 flex flex-wrap gap-2">
                   <span class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${course.deliveryMode === 'v4' ? 'bg-violet-100 text-violet-700' : course.deliveryMode === 'v5' ? 'bg-emerald-100 text-emerald-700' : course.deliveryMode === 'telegram' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-600'}">${course.deliveryMode === 'v4' ? 'LMS V4' : course.deliveryMode === 'v5' ? 'LMS V5' : course.deliveryMode === 'telegram' ? 'TELEGRAM' : 'LMS CŨ'}</span>
                   ${course.deliveryMode === 'v4' ? `<span class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black ${isPublished ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">Nội dung: ${isPublished ? 'Đã Publish' : 'Draft'}</span>` : course.deliveryMode === 'v5' ? `<span id="v5-state-${id}" class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black bg-slate-100 text-slate-600">V5: đang kiểm tra...</span>` : ''}
-                  <span class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black ${selling ? 'bg-green-100 text-green-700' : salePaused ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}">Bán: ${selling ? 'Đang bán' : salePaused ? 'Tạm dừng' : 'Đã tắt hệ thống'}</span>
+                  <span class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black ${selling ? 'bg-green-100 text-green-700' : salePaused ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}">Bán: ${selling ? 'Đang bán' : salePaused ? 'Tạm dừng' : telegramMissing && active ? 'Chưa kết nối Telegram' : 'Đã tắt hệ thống'}</span>
+                  ${telegramMissing ? `<span class="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-black bg-amber-100 text-amber-700">Telegram: chưa kết nối kênh</span>` : ''}
                 </div>
 
                 <!-- Trạng thái đồng bộ -->
@@ -2218,7 +2220,7 @@
         document.getElementById("modalTitle").innerText = "Thêm Khóa Học Mới";
         form.reset();
         document.getElementById("courseId").value = "";
-        document.getElementById("courseActiveInput").checked = true;
+        document.getElementById("courseActiveInput").checked = false; // new course = draft; open sale once it is ready (Telegram: after connecting)
         document.getElementById("courseSortOrderInput").value = 0;
         document.getElementById("courseExpectedStartDateInput").value = "";
         const deliveryModeInput = document.getElementById("courseDeliveryModeInput");

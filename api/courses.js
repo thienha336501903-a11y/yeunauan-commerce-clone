@@ -6,6 +6,9 @@ import { handleV4Workflow } from '../utils/v4-workflow.js';
 import { getV5Readiness } from '../utils/v5-readiness.js';
 import { enforceSameOriginAdminRequest } from '../utils/admin-cors.js';
 import { resolveRequestRoute } from '../utils/agency-routing.js';
+import { telegramNotConnected } from '../utils/sale-state.js';
+
+const TELEGRAM_NOT_CONNECTED = { error: 'Khóa Telegram chưa kết nối group/channel. Lưu ở trạng thái Tắt bán, bấm Kết nối Telegram, rồi mới bật bán.', code: 'telegram_not_connected' };
 
 const normalizeExpectedStartDate = value => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim()) ? String(value).trim() : null;
 const validDateInput = value => String(value || '').trim() === '' || /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
@@ -363,7 +366,7 @@ export default async function handler(req, res) {
           base.active = body.active === true;
           base.is_published = false;
         } else {
-          base.active = body.active !== undefined ? body.active === true : true;
+          base.active = body.active === true; // new course = draft (off sale) unless the Admin opens sale explicitly
           if (body.is_published !== undefined) base.is_published = body.is_published === true;
         }
 
@@ -376,6 +379,7 @@ export default async function handler(req, res) {
         if (deliveryMode === 'v4') {
           base.raw_data.v4SellBeforePublishAcknowledged = base.active === true && body.allowSellingUnpublishedV4 === true;
         }
+        if (base.active === true && telegramNotConnected(base)) return res.status(409).json(TELEGRAM_NOT_CONNECTED);
         base.id = id || crypto.randomUUID();
         const result = await supabase.from('courses').insert(base).select().single();
         if (result.error) throw result.error;
@@ -432,12 +436,18 @@ export default async function handler(req, res) {
         if (deliveryMode === 'v5') delete base.is_published;
 
         if (deliveryMode === 'telegram') {
-          if (!hasTelegramChatId) base.telegram_chat_id = existing.telegram_chat_id || null;
-          if (!hasTelegramChatTitle) base.telegram_chat_title = existing.telegram_chat_title || null;
+          // The channel is set only by the bot (webhook). An empty chat id from a form or a stale tab never clears it.
+          if (!hasTelegramChatId || !telegramChatId) {
+            base.telegram_chat_id = existing.telegram_chat_id || null;
+            base.telegram_chat_title = existing.telegram_chat_title || null;
+          } else if (!hasTelegramChatTitle) base.telegram_chat_title = existing.telegram_chat_title || null;
         } else {
           base.telegram_chat_id = null;
           base.telegram_chat_title = null;
         }
+
+        // Opening sale on a Telegram course needs its group/channel; a course already on sale stays editable.
+        if (base.active === true && (existing.active !== true || existingMode !== deliveryMode) && telegramNotConnected(base)) return res.status(409).json(TELEGRAM_NOT_CONNECTED);
 
         if (deliveryMode === 'v4' && base.is_published === true) {
           const readyCheck = await validateV4ReadySource(slug);

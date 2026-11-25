@@ -73,6 +73,11 @@ async function fakeFetch(url, init = {}) {
   if (method === 'PATCH') {
     const patch = JSON.parse(init.body);
     for (const r of hit) Object.assign(r, patch);
+  } else if (method === 'POST') {
+    const body = JSON.parse(init.body);
+    const inserted = (Array.isArray(body) ? body : [body]).map(r => ({ ...r }));
+    rows.push(...inserted);
+    out = inserted;
   } else if (method !== 'GET') throw new Error('fake PostgREST: ' + method);
   const limit = Number(u.searchParams.get('limit')) || out.length;
   out = out.slice(0, limit).map(r => ({ ...r }));
@@ -519,4 +524,63 @@ test('TG-28 connect picker asks the ban right for channels too; if Telegram refu
   assert.equal(tgCalls.length, 2);
   assert.equal(channelReq(tgCalls[1]).bot_administrator_rights.can_restrict_members, false);
   assert.equal(channelReq(tgCalls[1]).bot_administrator_rights.can_invite_users, true);
+});
+
+// G1 (Owner 25/11): a Telegram course without a group/channel is never on sale.
+test('TG-29 G1: new course is a draft; opening sale on an unconnected Telegram course is refused; storefront hides it', async () => {
+  const { default: coursesHandler } = await import('../api/courses.js');
+  const { default: configHandler } = await import('../api/config.js');
+  const call = async (handler, req) => {
+    process.env.ADMIN_PASSWORD = 'pw'; process.env.LEGACY_HOST_ALLOWLIST = 'legacy.example.test';
+    const res = fakeRes();
+    try { await handler({ headers: { host: 'legacy.example.test', 'x-admin-password': 'pw' }, query: {}, body: {}, ...req }, res); } finally { delete process.env.ADMIN_PASSWORD; delete process.env.LEGACY_HOST_ALLOWLIST; }
+    return res;
+  };
+  const course = slug => db.courses.find(c => c.slug === slug);
+  const newCourse = { courseName: 'Khoá TG mới', price: '1.000đ', deliveryMode: 'telegram', bankAccount: '1' };
+  reset();
+
+  // No "active" in the request -> draft (was: on sale by default).
+  let res = await call(coursesHandler, { method: 'POST', body: { ...newCourse, slug: 'tg-moi' } });
+  assert.equal(res.statusCode, 201);
+  assert.equal(course('tg-moi').active, false);
+  // Asking to sell at creation without a channel -> 409, nothing created.
+  res = await call(coursesHandler, { method: 'POST', body: { ...newCourse, slug: 'tg-moi-2', active: true } });
+  assert.equal(res.statusCode, 409);
+  assert.equal(res.body.code, 'telegram_not_connected');
+  assert.equal(course('tg-moi-2'), undefined);
+  // Opening sale later, still unconnected -> 409; the course stays off sale.
+  const id = course('tg-moi').id;
+  res = await call(coursesHandler, { method: 'PUT', body: { ...newCourse, id, slug: 'tg-moi', active: true } });
+  assert.equal(res.statusCode, 409);
+  assert.equal(course('tg-moi').active, false);
+  // Storefront: unconnected Telegram course on sale (old data) is hidden before payment.
+  Object.assign(course('tg-moi'), { active: true });
+  res = await call(configHandler, { method: 'GET', query: { course: 'tg-moi' } });
+  assert.equal(res.statusCode, 404);
+  assert.equal(res.body.code, 'telegram_not_connected');
+  // Old course already on sale stays editable (no lock-out), still hidden.
+  res = await call(coursesHandler, { method: 'PUT', body: { ...newCourse, id, slug: 'tg-moi', active: true, description: 'sửa mô tả' } });
+  assert.equal(res.statusCode, 200);
+  // Connected (as the bot webhook writes it) -> sale opens and storefront shows it.
+  Object.assign(course('tg-moi'), { active: false, telegram_chat_id: '-100777', telegram_chat_title: 'Kênh' });
+  res = await call(coursesHandler, { method: 'PUT', body: { ...newCourse, id, slug: 'tg-moi', active: true } });
+  assert.equal(res.statusCode, 200);
+  assert.equal(course('tg-moi').active, true);
+  res = await call(configHandler, { method: 'GET', query: { course: 'tg-moi' } });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.telegramReady, true);
+  // A stale Admin tab saving with an empty channel does not disconnect the course.
+  res = await call(coursesHandler, { method: 'PUT', body: { ...newCourse, id, slug: 'tg-moi', active: true, telegramChatId: '', telegramChatTitle: '' } });
+  assert.equal(res.statusCode, 200);
+  assert.equal(course('tg-moi').telegram_chat_id, '-100777');
+  assert.equal(course('tg-moi').telegram_chat_title, 'Kênh');
+});
+
+test('TG-30 G1: Admin page defaults new courses to off sale and marks an unconnected Telegram course', () => {
+  const admin = fs.readFileSync(new URL('../admin.html', import.meta.url), 'utf8');
+  assert.match(admin, /<input type="checkbox" id="courseActiveInput" class="sr-only peer">/);
+  assert.match(admin, /getElementById\("courseActiveInput"\)\.checked = false; \/\/ new course = draft/);
+  assert.match(admin, /const selling = active && !salePaused && !telegramMissing;/);
+  assert.match(admin, /Telegram: chưa kết nối kênh/);
 });

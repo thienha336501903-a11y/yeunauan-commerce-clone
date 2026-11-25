@@ -3,7 +3,7 @@ import { normalizeDeliveryMode } from '../utils/delivery-policy.js';
 import { cloneConfig } from '../utils/clone-config.js';
 import { getV5Readiness } from '../utils/v5-readiness.js';
 import { enforceSameOriginAdminRequest } from '../utils/admin-cors.js';
-import { isCourseForSale, isPublicCheckoutDisabled, isSalePaused } from '../utils/sale-state.js';
+import { isCourseForSale, isPublicCheckoutDisabled, isSalePaused, telegramNotConnected } from '../utils/sale-state.js';
 import { resolveRequestRoute } from '../utils/agency-routing.js';
 import { getAgencyCommerceConfig } from '../utils/agency-commerce.js';
 import { requireAgencyMembership } from '../utils/agency-auth.js';
@@ -141,6 +141,10 @@ async function storefrontBlock(course) {
   const rawData = course.raw_data || {};
   if (isSalePaused(course) || isPublicCheckoutDisabled()) {
     return { error: `Khóa học đang tạm dừng nhận đăng ký với slug: ${courseSlug}`, code: 'sale_paused' };
+  }
+  // Hidden before the customer pays: otherwise the bill upload fails with 409 after the transfer.
+  if (telegramNotConnected(course)) {
+    return { error: `Khóa học chưa mở đăng ký với slug: ${courseSlug}`, code: 'telegram_not_connected' };
   }
   const deliveryMode = normalizeDeliveryMode(course.delivery_mode);
   if (deliveryMode === 'v4' && course.is_published !== true && rawData.v4SellBeforePublishAcknowledged !== true) {
