@@ -101,7 +101,7 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'PUT') {
-      const { id, status, note, customer_name, customer_phone, gmail, action } = req.body || {};
+      const { id, status, note, customer_name, customer_phone, gmail, action, revokeMode } = req.body || {};
       if (!id) return res.status(400).json({ error: 'Thiếu ID đơn hàng để cập nhật' });
 
       const { data: existingOrder, error: fetchErr } = await supabase.from('orders').select('*').eq('id', id).maybeSingle();
@@ -157,7 +157,7 @@ export default async function handler(req, res) {
         if ([note, customer_name, customer_phone, gmail].some(v => v !== undefined)) {
           return res.status(400).json({ error: 'Đổi trạng thái đơn Telegram riêng; sửa ghi chú/thông tin ở lần lưu khác.', code: 'telegram_mixed_update' });
         }
-        const result = await telegramAdminAction(existingOrder, { status, action });
+        const result = await telegramAdminAction(existingOrder, { status, action, revokeMode });
         return res.status(result.statusCode).json(result.body);
       }
 

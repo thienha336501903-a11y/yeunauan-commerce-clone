@@ -584,3 +584,43 @@ test('TG-30 G1: Admin page defaults new courses to off sale and marks an unconne
   assert.match(admin, /const selling = active && !salePaused && !telegramMissing;/);
   assert.match(admin, /Telegram: chưa kết nối kênh/);
 });
+
+test('TG-31 shared channel: member with another approved order is not removed until the Admin chooses remove or keep', async () => {
+  const revoke = async extra => {
+    process.env.ADMIN_PASSWORD = 'pw'; process.env.LEGACY_HOST_ALLOWLIST = 'legacy.example.test';
+    const res = fakeRes();
+    try { await ordersHandler({ method: 'PUT', headers: { host: 'legacy.example.test', 'x-admin-password': 'pw' }, body: { id: ORDER, action: 'telegram_revoke', ...extra }, query: {} }, res); } finally { delete process.env.ADMIN_PASSWORD; delete process.env.LEGACY_HOST_ALLOWLIST; }
+    return res;
+  };
+  const other = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', course_slug: 'tg-khoa-2', course_title: 'Khoá TG 2', delivery_mode: 'telegram', status: 'Đã duyệt', telegram_chat_id: CHAT, telegram_user_id: 5, telegram_join_status: 'approved' };
+  const setup = () => { reset({ status: 'Đã duyệt', telegram_user_id: 5, telegram_join_status: 'approved' }); db.orders.push({ ...other }); memberStatus = 'left'; };
+
+  setup();
+  let res = await revoke({});
+  assert.equal(res.statusCode, 409);
+  assert.equal(res.body.code, 'telegram_shared_member');
+  assert.deepEqual(res.body.others.map(o => o.course_slug), ['tg-khoa-2']);
+  assert.deepEqual(methods(), []); // nobody removed
+  assert.equal(row().status, 'Đã duyệt');
+  // Status select (Đã duyệt -> Từ chối) asks the same way.
+  assert.equal((await put({ id: ORDER, status: 'Từ chối' })).body.code, 'telegram_shared_member');
+
+  // keep: only this order closes; Telegram untouched; the other order stays approved.
+  res = await revoke({ revokeMode: 'keep' });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(methods(), []);
+  assert.equal(row().status, 'Từ chối');
+  assert.equal(row().raw_data.telegram_history.at(-1).member, 'kept_shared');
+  assert.equal(db.orders[1].status, 'Đã duyệt');
+
+  // remove: Admin confirmed -> removed and verified as usual.
+  setup();
+  res = await revoke({ revokeMode: 'remove' });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(methods(), ['banChatMember', 'unbanChatMember', 'getChatMember']);
+  assert.deepEqual(row().raw_data.telegram_history.at(-1).sharedWith, [other.id]);
+
+  // No other approved order: unchanged behaviour, no question.
+  reset({ status: 'Đã duyệt', telegram_user_id: 5, telegram_join_status: 'approved' }); memberStatus = 'left';
+  assert.equal((await revoke({})).statusCode, 200);
+});

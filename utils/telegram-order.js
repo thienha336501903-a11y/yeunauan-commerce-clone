@@ -134,12 +134,33 @@ export async function declineTelegramOrder(order, { db = supabase, tg = telegram
 // Takes back access of an approved order: removes the member from the group, then marks the order rejected.
 // Done only when Telegram says the member is out (left/kicked); a member still inside keeps the order approved.
 // Channel without the ban right: the Admin removes the member by hand, presses again, and this re-checks.
-export async function revokeTelegramOrder(order, { db = supabase, tg = telegram, by = 'admin_web' } = {}) {
+// Shared group/channel (Owner 25/11, option b): if the same Telegram account has another APPROVED order in this
+// chat, nothing is removed until the Admin chooses: revokeMode 'remove' (take them out anyway) or 'keep'
+// (close only this order, the member stays for the other course).
+export async function revokeTelegramOrder(order, { db = supabase, tg = telegram, by = 'admin_web', revokeMode = 'ask' } = {}) {
   if (order.status !== APPROVED) return fail(409, 'Chỉ thu hồi được đơn đã duyệt.', 'telegram_not_approved');
   if (!order.telegram_user_id || !order.telegram_chat_id) return fail(409, 'Đơn không có tài khoản Telegram đã vào nhóm.', 'telegram_no_member');
   if (busyBlocked(order)) return fail(409, 'Đơn đang được xử lý, thử lại sau 2 phút.', 'telegram_busy');
+  const { data: others, error: othersError } = await db.from('orders').select('id,course_slug,course_title')
+    .eq('delivery_mode', 'telegram').eq('telegram_chat_id', String(order.telegram_chat_id))
+    .eq('telegram_user_id', order.telegram_user_id).eq('status', APPROVED).neq('id', order.id).limit(5);
+  if (othersError) throw othersError;
+  const sharedWith = (others || []).map(o => o.id);
+  if (sharedWith.length && !['remove', 'keep'].includes(revokeMode)) {
+    const courses = [...new Set((others || []).map(o => o.course_title || o.course_slug))].join(', ');
+    return { ...fail(409, `Học viên này còn đơn ĐÃ DUYỆT ở khoá khác dùng chung nhóm/kênh: ${courses}. Chưa xoá khỏi kênh. Chọn: xoá khỏi kênh, hoặc chỉ đóng đơn này và giữ học viên trong kênh.`, 'telegram_shared_member'), others: others || [] };
+  }
   const claimed = await claim(db, order, 'revoking');
   if (!claimed) return fail(409, 'Đơn vừa được xử lý ở nơi khác. Tải lại danh sách.', 'telegram_busy');
+
+  if (sharedWith.length && revokeMode === 'keep') {
+    const kept = await save(db, order.id, {
+      status: REJECTED, telegram_join_status: 'revoked', sync_error: null,
+      raw_data: withHistory(claimed, { action: 'revoke', by, member: 'kept_shared', sharedWith })
+    }, 'revoking');
+    if (!kept) return fail(409, 'Đơn vừa được xử lý ở nơi khác. Tải lại danh sách.', 'telegram_busy');
+    return { ok: true, data: kept };
+  }
 
   let removeError = null;
   try { await tg.removeTelegramMember(order.telegram_chat_id, order.telegram_user_id); } catch (error) { removeError = error; }
@@ -162,7 +183,7 @@ export async function revokeTelegramOrder(order, { db = supabase, tg = telegram,
   }
   const saved = await save(db, order.id, {
     status: REJECTED, telegram_join_status: 'revoked', sync_error: null,
-    raw_data: withHistory(claimed, { action: 'revoke', by, member, manual: Boolean(removeError) })
+    raw_data: withHistory(claimed, { action: 'revoke', by, member, manual: Boolean(removeError), ...(sharedWith.length ? { sharedWith } : {}) })
   }, 'revoking');
   if (!saved) return fail(409, 'Đơn vừa được xử lý ở nơi khác. Tải lại danh sách.', 'telegram_busy');
   return { ok: true, data: saved };
@@ -197,14 +218,14 @@ export async function reissueTelegramInvite(order, { db = supabase, tg = telegra
 }
 
 // Admin web: status change or action on a Telegram order -> { statusCode, body }.
-export async function telegramAdminAction(order, { status, action } = {}, deps) {
+export async function telegramAdminAction(order, { status, action, revokeMode } = {}, deps) {
   let result;
   if (action === 'telegram_reissue_invite') result = await reissueTelegramInvite(order, deps);
-  else if (action === 'telegram_revoke') result = await revokeTelegramOrder(order, deps);
+  else if (action === 'telegram_revoke') result = await revokeTelegramOrder(order, { ...deps, revokeMode });
   else if (status === APPROVED) result = await approveTelegramOrder(order, deps);
   else if (status === REJECTED) result = order.status === APPROVED ? await revokeTelegramOrder(order, deps) : await declineTelegramOrder(order, deps);
   else result = fail(409, 'Đơn Telegram chỉ đổi được sang "Đã duyệt" hoặc "Từ chối" (Từ chối đơn đã duyệt = xoá khỏi nhóm).', 'telegram_status_unsupported');
-  if (!result.ok) return { statusCode: result.statusCode, body: { success: false, error: result.error, code: result.code } };
+  if (!result.ok) return { statusCode: result.statusCode, body: { success: false, error: result.error, code: result.code, ...(result.others ? { others: result.others } : {}) } };
   const syncResults = { lms: 'SKIPPED_TELEGRAM', portal: 'SKIPPED_TELEGRAM', error: null };
   return { statusCode: 200, body: { success: true, data: { ...result.data, syncResults } } };
 }
