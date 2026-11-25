@@ -669,3 +669,15 @@ test('TG-33 G2/G3 Admin form: mode cards first, connect saves a draft itself, re
   assert.match(admin, /try \{ localStorage\.setItem\(COURSE_DRAFT_KEY, JSON\.stringify\(draft\)\); \} catch \(e\) \{\}/);
   assert.match(admin, /onclick="checkTelegramBotRights\(\)"/);
 });
+
+test('TG-34 shared channel: "keep" when the other order is no longer approved removes the member (nobody left to keep them)', async () => {
+  reset({ status: 'Đã duyệt', telegram_user_id: 5, telegram_join_status: 'approved' });
+  db.orders.push({ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', course_slug: 'tg-khoa-2', delivery_mode: 'telegram', status: 'Từ chối', telegram_chat_id: CHAT, telegram_user_id: 5 });
+  memberStatus = 'left';
+  process.env.ADMIN_PASSWORD = 'pw'; process.env.LEGACY_HOST_ALLOWLIST = 'legacy.example.test';
+  const res = fakeRes();
+  try { await ordersHandler({ method: 'PUT', headers: { host: 'legacy.example.test', 'x-admin-password': 'pw' }, body: { id: ORDER, action: 'telegram_revoke', revokeMode: 'keep' }, query: {} }, res); } finally { delete process.env.ADMIN_PASSWORD; delete process.env.LEGACY_HOST_ALLOWLIST; }
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(methods(), ['banChatMember', 'unbanChatMember', 'getChatMember']);
+  assert.notEqual(row().raw_data.telegram_history.at(-1).member, 'kept_shared');
+});

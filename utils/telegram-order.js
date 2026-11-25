@@ -152,6 +152,14 @@ export async function revokeTelegramOrder(order, { db = supabase, tg = telegram,
   }
   const claimed = await claim(db, order, 'revoking');
   if (!claimed) return fail(409, 'Đơn vừa được xử lý ở nơi khác. Tải lại danh sách.', 'telegram_busy');
+  if (sharedWith.length) {
+    // Re-read after the claim: another order may have been closed meanwhile. "keep" with nothing left to keep = remove.
+    const { data: still, error: stillError } = await db.from('orders').select('id')
+      .eq('delivery_mode', 'telegram').eq('telegram_chat_id', String(order.telegram_chat_id))
+      .eq('telegram_user_id', order.telegram_user_id).eq('status', APPROVED).neq('id', order.id).limit(5);
+    if (stillError) throw stillError;
+    sharedWith.splice(0, sharedWith.length, ...(still || []).map(o => o.id));
+  }
 
   if (sharedWith.length && revokeMode === 'keep') {
     const kept = await save(db, order.id, {

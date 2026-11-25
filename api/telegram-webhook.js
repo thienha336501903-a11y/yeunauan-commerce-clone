@@ -121,6 +121,9 @@ async function handleSharedChat(message) {
   }
 
   const title = String(shared.title || '').trim() || String(shared.username || '').trim() || `Telegram ${shared.chat_id}`;
+  // Fresh raw_data right before the write: an Admin edit made while Telegram answered is kept.
+  const { data: fresh, error: freshError } = await supabase.from('courses').select('raw_data').eq('id', course.id).maybeSingle();
+  if (freshError) throw freshError;
   const { error: bindError } = await supabase
     .from('courses')
     .update({
@@ -130,7 +133,7 @@ async function handleSharedChat(message) {
       telegram_connect_user_id: null,
       telegram_connect_expires_at: null,
       // Bot rights at connect time, shown on the Admin page (request_id base+1 = the channel button).
-      raw_data: { ...(course.raw_data || {}), telegramBot: telegramBotSnapshot(permission, requestId === Number(course.telegram_connect_request_id) + 1 ? 'channel' : 'group') },
+      raw_data: { ...(fresh?.raw_data || {}), telegramBot: telegramBotSnapshot(permission, requestId === Number(course.telegram_connect_request_id) + 1 ? 'channel' : 'group') },
       updated_at: new Date().toISOString()
     })
     .eq('id', course.id);

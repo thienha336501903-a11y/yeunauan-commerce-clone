@@ -44,7 +44,10 @@ export default async function handler(req, res) {
         let permission;
         try { permission = await verifyBotInvitePermission(course.telegram_chat_id); } catch (error) { permission = { ok: false, canRestrict: false, member: { status: 'unreachable' }, error: error.message || String(error) }; }
         telegramBot = { ...telegramBotSnapshot(permission, telegramBot?.chatType), ...(permission.error ? { error: String(permission.error).slice(0, 200) } : {}) };
-        const { error: saveError } = await supabase.from('courses').update({ raw_data: { ...(course.raw_data || {}), telegramBot } }).eq('id', course.id);
+        // Fresh raw_data right before the write: an Admin edit made while Telegram answered is kept.
+        const { data: fresh, error: freshError } = await supabase.from('courses').select('raw_data').eq('id', course.id).maybeSingle();
+        if (freshError) throw freshError;
+        const { error: saveError } = await supabase.from('courses').update({ raw_data: { ...(fresh?.raw_data || {}), telegramBot } }).eq('id', course.id);
         if (saveError) throw saveError;
       }
       const { count: approvedOrders, error: countError } = await supabase.from('orders').select('id', { count: 'exact', head: true })

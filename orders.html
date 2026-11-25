@@ -1782,23 +1782,25 @@
 Hệ thống sẽ xoá học viên khỏi nhóm/kênh, rồi hỏi Telegram để chắc học viên đã ra. Chỉ khi Telegram xác nhận, đơn mới chuyển sang "Từ chối".`)) return;
       telegramRevokeRunning = true;
       showLoader("Đang thu hồi quyền học Telegram...");
+      let next = null; // the Admin's choice for a shared channel, sent after this request is fully finished
       try {
         const response = await fetch("/api/orders", { method: "PUT", headers: { "Content-Type": "application/json", "X-Admin-Password": currentAdminPassword }, body: JSON.stringify({ id, action: "telegram_revoke", ...(revokeMode ? { revokeMode } : {}) }) });
         const data = await response.json().catch(() => ({}));
-        if (response.ok) { showToast(revokeMode === "keep" ? "Đã đóng đơn. Học viên vẫn ở trong kênh vì còn khoá khác." : "Đã thu hồi: Telegram xác nhận học viên không còn trong nhóm/kênh."); }
+        // The toast follows what the server did (a "keep" falls back to removal when no other approved order is left).
+        if (response.ok) { showToast(data?.data?.raw_data?.telegram_history?.at(-1)?.member === "kept_shared" ? "Đã đóng đơn. Học viên vẫn ở trong kênh vì còn khoá khác." : "Đã thu hồi: Telegram xác nhận học viên không còn trong nhóm/kênh."); }
         else if (data.code === "telegram_shared_member") {
           // Shared group/channel: never removed without the Admin's explicit choice.
           const courses = (data.others || []).map(o => o.course_title || o.course).filter(Boolean).join(", ");
-          telegramRevokeRunning = false; hideLoader();
+          hideLoader();
           if (confirm(`"${who}" còn đơn ĐÃ DUYỆT ở khoá khác dùng chung kênh: ${courses}.
 
 OK = VẪN XOÁ khỏi kênh (mất quyền cả khoá kia).
-Huỷ = không xoá, xem lựa chọn tiếp.`)) return telegramRevoke(id, "remove");
+Huỷ = không xoá, xem lựa chọn tiếp.`)) next = "remove";
           if (confirm(`Chỉ đóng đơn khoá này và GIỮ "${who}" trong kênh (vì còn khoá kia)?
 
 OK = đóng đơn, giữ trong kênh.
-Huỷ = không làm gì.`)) return telegramRevoke(id, "keep");
-          return;
+Huỷ = không làm gì.`)) next = "keep";
+          if (!next) return;
         }
         else if (data.code === "telegram_still_member") {
           alert(`CHƯA THU HỒI XONG — học viên vẫn còn trong nhóm/kênh.
@@ -1810,8 +1812,9 @@ Làm tay:
 
 Chi tiết: ${data.error || ""}`);
         } else { alert(data.error || "Không thu hồi được"); }
-        loadOrders();
+        if (!next) loadOrders();
       } catch { alert("Lỗi kết nối máy chủ"); } finally { telegramRevokeRunning = false; hideLoader(); }
+      if (next) return telegramRevoke(id, next);
     }
     async function telegramReissue(id) {
       if (!confirm("Tạo link mời mới cho đơn Telegram này? Link cũ sẽ bị huỷ.")) return;
