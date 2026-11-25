@@ -334,11 +334,11 @@ let supa;
 function globalDb() { return supa; }
 test.before(async () => { supa = await importSupabase(); });
 
-test('TG-15 wiring: register refuses a duplicate nick before upload; groups get "ban users", channels not; Admin page shows Telegram info', () => {
+test('TG-15 wiring: register refuses a duplicate nick before upload; groups and channels get "ban users"; Admin page shows Telegram info', () => {
   const bill = fs.readFileSync(new URL('../utils/bill-order.js', import.meta.url), 'utf8');
   assert.ok(bill.indexOf('findOpenTelegramOrder(supabase, cleanTelegramNick, courseSlug)') < bill.indexOf('cloudinary.uploader.upload('));
   assert.equal(telegramBotAdminRights().can_restrict_members, true);
-  assert.equal(telegramBotAdminRights({ forChannel: true }).can_restrict_members, false);
+  assert.equal(telegramBotAdminRights({ restrict: false }).can_restrict_members, false);
   assert.equal(telegramBotAdminRights().can_invite_users, true);
   const page = fs.readFileSync(new URL('../orders.html', import.meta.url), 'utf8');
   assert.equal((page.match(/\$\{telegramInfoHtml\(order\)\}/g) || []).length, 2);
@@ -362,7 +362,7 @@ test('TG-21 setup: a rate-limited default-rights call does not block setWebhook;
   assert.equal(tgCalls[3].payload.secret_token, 'tg-secret');
   assert.equal(res.body.warnings.length, 2);
   assert.deepEqual(tgCalls.slice(1, 3).map(c => c.payload.for_channels), [false, true]);
-  assert.equal(tgCalls[2].payload.rights.can_restrict_members, false);
+  assert.equal(tgCalls[2].payload.rights.can_restrict_members, true);
 
   reset();
   tgFail.setWebhook = 'Too Many Requests: retry after 5';
@@ -496,4 +496,27 @@ test('TG-27 approve / decline write who decided into the order history', async (
   reset({ telegram_user_id: 5, telegram_join_status: 'requested' });
   await put({ id: ORDER, status: 'Từ chối' });
   assert.deepEqual(row().raw_data.telegram_history.map(h => [h.action, h.by]), [['decline', 'admin_web']]);
+});
+
+test('TG-28 connect picker asks the ban right for channels too; if Telegram refuses it, the picker is resent without it', async () => {
+  const { sendCourseChatPicker } = await import('../utils/telegram.js');
+  const channelReq = call => call.payload.reply_markup.keyboard[1][0].request_chat;
+  reset();
+  await sendCourseChatPicker({ adminChatId: 777, course: { slug: 'k' }, requestId: 1000 });
+  assert.deepEqual(methods(), ['sendMessage']);
+  assert.equal(channelReq(tgCalls[0]).chat_is_channel, true);
+  assert.equal(channelReq(tgCalls[0]).bot_administrator_rights.can_restrict_members, true);
+  assert.equal(tgCalls[0].payload.reply_markup.keyboard[0][0].request_chat.bot_administrator_rights.can_restrict_members, true);
+
+  reset();
+  let first = true;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('/sendMessage') && first) { first = false; tgCalls.push({ method: 'sendMessage', payload: JSON.parse(init.body) }); return new Response(JSON.stringify({ ok: false, description: 'Bad Request: invalid administrator rights' }), { status: 400 }); }
+    return realFetch(url, init);
+  };
+  try { await sendCourseChatPicker({ adminChatId: 777, course: { slug: 'k' }, requestId: 1000 }); } finally { globalThis.fetch = realFetch; }
+  assert.equal(tgCalls.length, 2);
+  assert.equal(channelReq(tgCalls[1]).bot_administrator_rights.can_restrict_members, false);
+  assert.equal(channelReq(tgCalls[1]).bot_administrator_rights.can_invite_users, true);
 });

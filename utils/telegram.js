@@ -107,13 +107,14 @@ export async function verifyCourseConnectToken(token) {
 
 // Groups: ask for "ban users" so a revoked student can be removed. Channels: left off so the
 // chat picker keeps working; removing a channel subscriber is not verified (Admin removes by hand).
-export function telegramBotAdminRights({ forChannel = false } = {}) {
+export function telegramBotAdminRights({ restrict = true } = {}) {
   return {
     is_anonymous: false,
     can_manage_chat: true,
     can_delete_messages: false,
     can_manage_video_chats: false,
-    can_restrict_members: !forChannel,
+    // Channels too: banChatMember works in a channel when the bot has this right, so a revoke needs no manual removal.
+    can_restrict_members: restrict,
     can_promote_members: false,
     can_change_info: false,
     can_invite_users: true,
@@ -137,12 +138,12 @@ export async function sendCourseChatPicker({ adminChatId, course, requestId }) {
   }
 
   const requestCommon = { request_title: true, request_username: true };
-  const rightsFor = forChannel => ({
-    user_administrator_rights: telegramSelectingUserRights({ forChannel }),
-    bot_administrator_rights: telegramBotAdminRights({ forChannel })
+  const rightsFor = restrict => ({
+    user_administrator_rights: telegramSelectingUserRights({ restrict }),
+    bot_administrator_rights: telegramBotAdminRights({ restrict })
   });
 
-  return telegramApi('sendMessage', {
+  const send = channelRestrict => telegramApi('sendMessage', {
     chat_id: String(adminChatId),
     text: `🔗 KẾT NỐI KHÓA HỌC TELEGRAM\n\nKhóa: ${course.title || course.slug}\n\nChọn đúng nhóm hoặc kênh chứa nội dung khóa học. Telegram sẽ cấp cho bot quyền cần thiết để tạo link xin gia nhập và duyệt học viên.`,
     reply_markup: {
@@ -152,7 +153,7 @@ export async function sendCourseChatPicker({ adminChatId, course, requestId }) {
           request_chat: {
             request_id: baseRequestId,
             chat_is_channel: false,
-            ...rightsFor(false),
+            ...rightsFor(true),
             ...requestCommon
           }
         }],
@@ -161,7 +162,7 @@ export async function sendCourseChatPicker({ adminChatId, course, requestId }) {
           request_chat: {
             request_id: baseRequestId + 1,
             chat_is_channel: true,
-            ...rightsFor(true),
+            ...rightsFor(channelRestrict),
             ...requestCommon
           }
         }]
@@ -171,6 +172,13 @@ export async function sendCourseChatPicker({ adminChatId, course, requestId }) {
       input_field_placeholder: 'Chọn group/channel cần kết nối'
     }
   });
+  try {
+    return await send(true);
+  } catch (error) {
+    // shortcut: unverified that Telegram accepts the ban right in a channel picker; if it refuses, fall back to the old rights (manual removal on revoke).
+    console.error('TELEGRAM_PICKER_CHANNEL_RESTRICT_REFUSED:', error.message || error);
+    return send(false);
+  }
 }
 
 export async function sendTelegramPrivateMessage(chatId, text, removeKeyboard = false) {

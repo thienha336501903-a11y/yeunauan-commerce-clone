@@ -135,7 +135,7 @@ async function handleSharedChat(message) {
 
   await sendTelegramPrivateMessage(
     message.chat.id,
-    `✅ Kết nối thành công!\n\nKhóa: ${course.title || course.slug}\nTelegram: ${title}\nChat ID: ${shared.chat_id}\n\nTừ giờ mỗi order Telegram của khóa này có thể nhận một link xin gia nhập riêng.${permission.canRestrict ? '' : '\n\n⚠️ Bot chưa có quyền "Cấm thành viên" (Ban users): hệ thống không tự xoá được học viên khi thu hồi đơn. Với nhóm, cấp quyền này cho bot; với kênh, Admin xoá tay.'}`,
+    `✅ Kết nối thành công!\n\nKhóa: ${course.title || course.slug}\nTelegram: ${title}\nChat ID: ${shared.chat_id}\n\nTừ giờ mỗi order Telegram của khóa này có thể nhận một link xin gia nhập riêng.${permission.canRestrict ? '' : '\n\n⚠️ Bot chưa có quyền "Cấm thành viên" (Ban users): hệ thống không tự xoá được học viên khi thu hồi đơn. Cấp quyền này cho bot trong Telegram (hoặc bấm Kết nối Telegram lại và đồng ý quyền bot xin); nếu không, khi thu hồi Admin xoá học viên bằng tay rồi bấm lại.'}`,
     true
   );
   return true;

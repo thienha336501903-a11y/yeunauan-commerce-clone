@@ -39,7 +39,7 @@ export default async function handler(req, res) {
     const warnings = [];
     for (const forChannel of [false, true]) {
       try {
-        await telegramApi('setMyDefaultAdministratorRights', { rights: telegramBotAdminRights({ forChannel }), for_channels: forChannel });
+        await telegramApi('setMyDefaultAdministratorRights', { rights: telegramBotAdminRights(), for_channels: forChannel });
       } catch (error) {
         warnings.push(`setMyDefaultAdministratorRights(${forChannel ? 'channel' : 'group'}): ${error.message || error}`);
       }
