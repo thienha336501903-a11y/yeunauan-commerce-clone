@@ -79,6 +79,10 @@ function setupAdminModalContext() {
     toggleTelegramFields: () => {},
     updateTelegramConnectUi: () => {},
     refreshV5ModalState: () => {},
+    // G2/G3 helpers called by openCourseModal (connect wait, local draft, readiness list): no-ops here.
+    stopTelegramConnectWait: () => {},
+    restoreCourseDraftLocal: () => {},
+    updateSaleReadiness: () => {},
     elements
   };
 

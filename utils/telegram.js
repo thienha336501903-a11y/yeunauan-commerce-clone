@@ -198,6 +198,17 @@ export async function verifyBotInvitePermission(chatId) {
   return { ok: Boolean(isAdmin && canInvite), canRestrict: Boolean(isAdmin && canRestrict), bot, member };
 }
 
+// What the Admin page shows about the bot in a course's group/channel (kept in courses.raw_data.telegramBot).
+export function telegramBotSnapshot(permission, chatType) {
+  return {
+    canInvite: Boolean(permission?.ok),
+    canRestrict: Boolean(permission?.canRestrict),
+    status: permission?.member?.status || 'unknown',
+    ...(chatType ? { chatType } : {}),
+    checkedAt: new Date().toISOString()
+  };
+}
+
 export async function createOrderInvite({ chatId, orderId, courseSlug, ttlHours = 72 }) {
   const ttl = Math.min(720, Math.max(1, Number.parseInt(ttlHours, 10) || 72));
   const expireUnix = Math.floor(Date.now() / 1000) + ttl * 3600;

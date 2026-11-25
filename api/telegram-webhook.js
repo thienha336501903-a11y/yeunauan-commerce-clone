@@ -8,6 +8,7 @@ import {
   markTelegramDecision,
   notifyAdminJoinRequest,
   telegramDecisionLabel,
+  telegramBotSnapshot,
   sendCourseChatPicker,
   sendTelegramPrivateMessage,
   verifyBotInvitePermission,
@@ -85,7 +86,7 @@ async function handleSharedChat(message) {
   const possibleBaseIds = [requestId, requestId - 1].filter(v => Number.isInteger(v) && v > 0);
   const { data: courses, error } = await supabase
     .from('courses')
-    .select('id, slug, title, telegram_connect_request_id, telegram_connect_user_id, telegram_connect_expires_at')
+    .select('id, slug, title, raw_data, telegram_connect_request_id, telegram_connect_user_id, telegram_connect_expires_at')
     .eq('delivery_mode', 'telegram')
     .eq('telegram_connect_user_id', Number(adminUserId))
     .in('telegram_connect_request_id', possibleBaseIds)
@@ -128,6 +129,8 @@ async function handleSharedChat(message) {
       telegram_connect_request_id: null,
       telegram_connect_user_id: null,
       telegram_connect_expires_at: null,
+      // Bot rights at connect time, shown on the Admin page (request_id base+1 = the channel button).
+      raw_data: { ...(course.raw_data || {}), telegramBot: telegramBotSnapshot(permission, requestId === Number(course.telegram_connect_request_id) + 1 ? 'channel' : 'group') },
       updated_at: new Date().toISOString()
     })
     .eq('id', course.id);

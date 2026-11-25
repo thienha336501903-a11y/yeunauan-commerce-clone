@@ -78,6 +78,8 @@ async function fakeFetch(url, init = {}) {
     const inserted = (Array.isArray(body) ? body : [body]).map(r => ({ ...r }));
     rows.push(...inserted);
     out = inserted;
+  } else if (method === 'HEAD') {
+    return new Response(null, { status: 200, headers: { 'content-range': `*/${hit.length}` } }); // count: 'exact', head: true
   } else if (method !== 'GET') throw new Error('fake PostgREST: ' + method);
   const limit = Number(u.searchParams.get('limit')) || out.length;
   out = out.slice(0, limit).map(r => ({ ...r }));
@@ -623,4 +625,47 @@ test('TG-31 shared channel: member with another approved order is not removed un
   // No other approved order: unchanged behaviour, no question.
   reset({ status: 'Đã duyệt', telegram_user_id: 5, telegram_join_status: 'approved' }); memberStatus = 'left';
   assert.equal((await revoke({})).statusCode, 200);
+});
+
+test('TG-32 G2: connect stores the bot rights; "check" asks Telegram again and returns the approved-member count', async () => {
+  const { default: connectHandler } = await import('../api/telegram-connect.js');
+  const call = async query => {
+    process.env.ADMIN_PASSWORD = 'pw';
+    const res = fakeRes();
+    try { await connectHandler({ method: 'GET', headers: { host: 'legacy.example.test', 'x-admin-password': 'pw' }, query, body: {} }, res); } finally { delete process.env.ADMIN_PASSWORD; }
+    return res;
+  };
+  reset({ status: 'Đã duyệt', telegram_user_id: 5, telegram_join_status: 'approved' });
+  Object.assign(db.courses[0], { slug: 'tg-khoa', delivery_mode: 'telegram', telegram_chat_id: CHAT, telegram_chat_title: 'Kênh', raw_data: { bankAccount: '1' } });
+  // Plain read: no Telegram call, nothing stored yet.
+  let res = await call({ courseId: 'c1' });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.telegramBot, null);
+  assert.equal(res.body.approvedOrders, 1);
+  assert.deepEqual(methods(), []);
+  // check=1: getMe + getChatMember, answer kept on the course (other raw_data untouched).
+  memberStatus = 'administrator';
+  res = await call({ courseId: 'c1', check: '1' });
+  assert.deepEqual(methods(), ['getMe', 'getChatMember']);
+  assert.equal(typeof res.body.telegramBot.checkedAt, 'string');
+  assert.deepEqual(db.courses[0].raw_data.telegramBot, res.body.telegramBot);
+  assert.equal(db.courses[0].raw_data.bankAccount, '1');
+  // Telegram unreachable: stored as "cannot invite", never as ok.
+  tgFail.getMe = 'Bad Gateway';
+  res = await call({ courseId: 'c1', check: '1' });
+  assert.equal(res.body.telegramBot.canInvite, false);
+  assert.equal(res.body.telegramBot.status, 'unreachable');
+});
+
+test('TG-33 G2/G3 Admin form: mode cards first, connect saves a draft itself, readiness list, local draft', () => {
+  const admin = fs.readFileSync(new URL('../admin.html', import.meta.url), 'utf8');
+  assert.equal((admin.match(/data-mode-pick="(telegram|v5|v4|lms)"/g) || []).length, 4);
+  assert.ok(admin.indexOf('id="courseModePicker"') < admin.indexOf('id="courseTitleInput"'));
+  assert.doesNotMatch(admin, /Hãy lưu khóa học trước/);
+  assert.match(admin, /courseId = await saveCourse\(\{ forConnect: true \}\);/);
+  assert.match(admin, /const active = forConnect \? false : document\.getElementById\("courseActiveInput"\)\.checked;/);
+  assert.match(admin, /const TELEGRAM_CONNECT_WINDOW_MS = 10 \* 60 \* 1000;/);
+  assert.match(admin, /id="saleReadinessList"/);
+  assert.match(admin, /try \{ localStorage\.setItem\(COURSE_DRAFT_KEY, JSON\.stringify\(draft\)\); \} catch \(e\) \{\}/);
+  assert.match(admin, /onclick="checkTelegramBotRights\(\)"/);
 });

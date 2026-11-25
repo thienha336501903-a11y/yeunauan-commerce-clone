@@ -70,7 +70,8 @@ globalThis.fetch = async (url, init = {}) => {
     const body = JSON.parse(init.body || '[]');
     const list = (Array.isArray(body) ? body : [body]).map(r => ({ created_at: new Date().toISOString(), id: r.id || crypto.randomUUID(), ...r }));
     rows.push(...list);
-    return json(list, 201);
+    // .single() asks for one object (like PostgREST), otherwise an array.
+    return String(new Headers(init.headers).get('accept') || '').includes('vnd.pgrst.object') ? json(list[0], 201) : json(list, 201);
   }
   const hit = rows.filter(r => filters.every(([k, v]) => matches(r, k, v)));
   if (method === 'PATCH') hit.forEach(r => Object.assign(r, JSON.parse(init.body)));
